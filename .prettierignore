@@ -1,0 +1,12 @@
+.git
+.git-local
+.agents
+.aws
+.codex
+.venv
+.cache
+node_modules
+uv.lock
+engine/uv.lock
+*.py
+*.toml

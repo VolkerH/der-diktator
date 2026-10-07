@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Record your voice, edit the transcript, and copy your text."
+    />
+    <title>Phonon · Dictation</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/assets/styles.css" />
+    <script type="module" src="/assets/app.js"></script>
+  </head>
+  <body>
+    <main>
+      <header class="masthead">
+        <a class="brand" href="/" aria-label="Phonon home">
+          <span class="brand-mark" aria-hidden="true">p</span>
+          Phonon
+        </a>
+        <span class="language">English dictation</span>
+      </header>
+      <section class="introduction" aria-labelledby="page-title">
+        <p class="eyebrow">A little space for your words</p>
+        <h1 id="page-title">Turn your voice<br />into text.</h1>
+        <p class="description">Speak at your own pace. Then edit, copy, and carry on.</p>
+      </section>
+      <section class="workspace" aria-label="Dictation workspace">
+        <div class="recording-toolbar">
+          <div class="recording-controls">
+            <button id="record" class="button primary" type="button">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="9" y="3" width="6" height="12" rx="3" />
+                <path d="M6 11v1a6 6 0 0 0 12 0v-1M12 18v3M9 21h6" />
+              </svg>
+              Record
+            </button>
+            <button id="stop" class="button secondary" type="button" disabled>
+              Stop &amp; transcribe
+            </button>
+          </div>
+          <span id="timer" class="timer" aria-label="Recording duration">00:00</span>
+        </div>
+        <div class="recording-status">
+          <span id="activity-dot" class="activity-dot" aria-hidden="true"></span>
+          <p id="status" role="status" aria-live="polite">Choose Record to begin.</p>
+        </div>
+        <p id="error" class="error" role="alert" hidden></p>
+        <audio id="playback" controls aria-label="Listen to your recording" hidden></audio>
+        <div class="transcript-heading">
+          <label for="transcript">Your transcript</label>
+          <span id="word-count" class="word-count">0 words</span>
+        </div>
+        <textarea
+          id="transcript"
+          placeholder="Your words will appear here after you stop recording."
+          spellcheck="true"
+          aria-describedby="status"
+        ></textarea>
+        <div class="transcript-actions">
+          <div class="utility-actions">
+            <button id="retry" class="button text-button" type="button" disabled>
+              Retry transcription
+            </button>
+            <button id="clear" class="button text-button" type="button" disabled>Clear</button>
+          </div>
+          <button id="copy" class="button secondary" type="button" disabled>Copy text</button>
+        </div>
+      </section>
+      <footer>
+        <span id="engine-status">Checking the transcription engine…</span>
+        <span>Up to 10 minutes per recording</span>
+      </footer>
+      <noscript>Enable JavaScript to record and transcribe audio.</noscript>
+    </main>
+  </body>
+</html>

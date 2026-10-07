@@ -1,0 +1,43 @@
+[project]
+name = "phonon-web"
+version = "0.1.0"
+description = "Local browser dictation with Phonon-2 on WSL"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.136.3,<0.137",
+    "httpx>=0.28.1,<0.29",
+    "pydantic>=2.13.4,<2.14",
+    "uvicorn>=0.35.0,<0.36",
+]
+
+[project.scripts]
+phonon-web = "phonon_web.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3,<9.1",
+    "ruff==0.15.15",
+    "ty==0.0.42",
+]
+
+[build-system]
+requires = ["uv_build==0.10.8"]
+build-backend = "uv_build"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.ty.rules]
+all = "error"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-config --strict-markers"
