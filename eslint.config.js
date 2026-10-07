@@ -22,7 +22,7 @@ const rules = {
 };
 
 export default [
-  { ignores: [".cache/**", ".git-local/**", ".venv/**", "node_modules/**"] },
+  { ignores: [".cache/**", ".git-local/**", "**/.venv/**", "node_modules/**"] },
   { files: ["**/*.js"], languageOptions: { ecmaVersion: "latest" }, rules },
   { files: ["src/phonon_web/static/*.js"], languageOptions: { globals: globals.browser } },
   {

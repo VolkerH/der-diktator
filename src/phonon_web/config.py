@@ -12,6 +12,7 @@ class Settings:
     transcription_timeout_seconds: float = 180.0
     max_audio_bytes: int = 20_000_044
     max_duration_seconds: int = 600
+    max_stream_frame_bytes: int = 65_536
 
     @classmethod
     def from_environment(cls) -> "Settings":

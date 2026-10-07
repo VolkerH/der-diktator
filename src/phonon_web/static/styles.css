@@ -95,6 +95,24 @@ h1 {
   flex-wrap: wrap;
   gap: 10px;
 }
+.live-option {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 18px 26px 0;
+  font-size: 13px;
+  cursor: pointer;
+}
+.live-option input {
+  accent-color: var(--green);
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+.live-option span {
+  color: var(--muted);
+}
 .button {
   display: inline-flex;
   justify-content: center;
@@ -270,7 +288,8 @@ footer {
   .transcript-actions {
     padding-inline: 18px;
   }
-  .recording-status {
+  .recording-status,
+  .live-option {
     margin-inline: 18px;
   }
   .transcript-heading {

@@ -1,7 +1,7 @@
 # Phonon dictation
 
 A local English dictation app: record in a Windows browser, transcribe with
-Phonon-2 running on the CPU in WSL, edit the text, and copy it.
+Phonon-2 running on the CPU in WSL, see text as you speak, edit it, and copy it.
 
 ## Requirements
 
@@ -22,20 +22,29 @@ make download-model
 make run
 ```
 
-Open <http://localhost:8080> in your **Windows browser**. Click **Record**, speak,
-then click **Stop & transcribe**. The transcript is editable; **Copy text** copies
-your current edits. **Retry transcription** reuses the last recording if the
-engine was starting or a request failed. **Clear** removes the recording and text
-from the tab. Recording stops automatically after ten minutes.
+Open <http://localhost:8080> in your **Windows browser**. Leave **Live
+transcription** checked, click **Record**, and speak. Text appears while you speak;
+provisional words can change as more audio arrives. Click **Stop** to finalize the
+transcript, then edit it or use **Copy text**. Turn off **Live transcription** to
+use the original **Stop & transcribe** workflow.
+
+The full recording is kept for playback and **Retry transcription**. If the live
+connection fails during recording or finalization, the app transcribes that WAV
+after you stop. **Clear** removes the recording and text from the tab. Recording
+stops automatically after ten minutes.
 
 The microphone is captured by the browser. The WSL service receives a 16 kHz mono
-16-bit PCM WAV recording. The web application handles audio in memory; it has no
+16-bit PCM audio over WebSocket during live recording, or a WAV after stopping
+in batch mode. The web application handles audio in memory; it has no
 recording history or database. The model cache is ignored by Git and stays in
 `.cache/fermion/`. Phonon-2 supports English.
 
 `make run` runs the engine on `127.0.0.1:8010` and the web app on
 `127.0.0.1:8080`. Ctrl-C stops both processes. The engine needs time to load on
 first startup; the page shows whether it is ready.
+
+After updating the application, restart the services and refresh the browser:
+the web process loads its bundled frontend when it starts.
 
 To run the services separately, use `make engine` in one terminal and `make web`
 in another. `PHONON_ENGINE_URL` overrides the engine endpoint for the web app.
@@ -56,13 +65,16 @@ make format
 ```
 
 `make check` runs Ruff formatting, Ruff linting, ty, pytest, Prettier, ESLint,
-TypeScript checking of JavaScript, and Node audio tests. `make format` applies
+TypeScript checking of JavaScript, and Node frontend tests. `make format` applies
 Python and frontend formatting and safe Ruff fixes. The frontend is served
 directly from `src/phonon_web/static/`; there is no frontend build step or CDN.
 
-Python tests simulate the engine at its HTTP boundary. They validate the request
-format, upload limits, WAV validation, health status, and failure handling. They
-do not establish real model accuracy or hardware latency.
+Python tests simulate the engine at its HTTP and WebSocket boundaries. They
+validate audio forwarding, upload limits, WAV validation, health status, live
+events, finalization, and connection cleanup. Frontend tests cover PCM encoding,
+microphone cleanup, partial corrections, stream failure, and the recording flow.
+Real microphone behavior, model accuracy, and live latency need browser checks on
+the target machine.
 
 ## Git in the restricted workspace
 
@@ -90,23 +102,17 @@ Apache-2.0. Model attribution: Fermion Research, based on NVIDIA
 parakeet-tdt-0.6b-v3. See the upstream [model card](https://huggingface.co/FermionResearch/Phonon-2)
 and [installation guide](https://github.com/fermionresearch/phonon/blob/main/docs/install.md).
 
-This version transcribes after recording stops. The engine already exposes
-`/v1/audio/stream` for live transcription. A later version can reuse the microphone
-capture code, stream resampled PCM over WebSocket, and display provisional and
-completed text. The engine supports one live stream per process.
+The app relays browser PCM through `/api/stream` to the engine's
+`/v1/audio/stream`. Completed phrases stay in the transcript while the current
+phrase's partial text is replaced. Stopping flushes the microphone's final audio,
+sends an end message, and waits for the complete transcript before closing.
 
-## Setup status in this session
-
-The web environment and frontend tools are installed, with `uv.lock` and
-`package-lock.json` tracked. All configured checks pass: 30 Python tests and 12
-frontend tests, plus both formatters, both linters, and both type checkers.
-
-The managed sandbox blocks external shell DNS/network access, localhost binding,
-and Chromium startup, and mounts `.git` read-only. An attempt to escalate the
-engine installation was automatically rejected because sandbox approvals are
-disabled. The Fermion runtime and model download must be completed in an ordinary
-WSL terminal with internet access using `make download-model`. Browser preview,
-real microphone transcription, and inference latency remain unverified.
+The engine supports one live stream per process. A second tab attempting live
+transcription receives an engine-busy error. Live mode requires a browser audio
+context running at 16 kHz; if the browser cannot provide it, turn off live mode
+and use batch recording, which can resample audio after capture. The first live
+session can take extra time while the engine warms up. Update frequency depends
+on CPU speed and phrase length; speech pauses help the engine finalize phrases.
 
 Reference: [WSL localhost networking](https://learn.microsoft.com/en-us/windows/wsl/networking),
 [Fermion speech API](https://www.fermionresearch.com/docs/speech/),

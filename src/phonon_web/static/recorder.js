@@ -16,7 +16,10 @@ export class MicrophoneRecorder {
     this.onStopped = null;
   }
 
-  async start() {
+  /** Live callbacks receive mono 16 kHz chunks, including the final worklet flush.
+   * @param {((samples: Float32Array) => void) | null} [onSamples]
+   */
+  async start(onSamples = null) {
     this.chunks = [];
     this.sampleCount = 0;
     try {
@@ -27,6 +30,11 @@ export class MicrophoneRecorder {
         this.context = new AudioContext({ sampleRate: SAMPLE_RATE });
       } catch {
         this.context = new AudioContext();
+      }
+      if (onSamples && this.context.sampleRate !== SAMPLE_RATE) {
+        throw new Error(
+          "This browser cannot capture at 16 kHz for live transcription. Turn off Live transcription and record again.",
+        );
       }
       await this.context.audioWorklet.addModule("/assets/recorder-worklet.js");
       this.node = new AudioWorkletNode(this.context, "phonon-recorder");
@@ -39,6 +47,7 @@ export class MicrophoneRecorder {
             const chunk = samples.subarray(0, remaining);
             this.chunks.push(chunk);
             this.sampleCount += chunk.length;
+            onSamples?.(chunk);
           }
         } else if (event.data.type === "stopped") {
           this.onStopped?.();

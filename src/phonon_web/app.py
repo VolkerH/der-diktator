@@ -1,16 +1,25 @@
 """Serve the browser interface and bounded audio uploads from the same origin."""
 
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
+from starlette.websockets import WebSocketState
+from websockets.exceptions import WebSocketException
 
 from phonon_web.audio import validate_recording
 from phonon_web.config import Settings
 from phonon_web.engine import EngineClient, EngineUnavailable, Transcription
+from phonon_web.streaming import (
+    StreamConnector,
+    StreamError,
+    connect_engine,
+    relay_stream,
+    stream_url,
+)
 
 STATIC_DIRECTORY = Path(__file__).parent / "static"
 
@@ -19,8 +28,9 @@ def create_app(
     settings: Settings | None = None,
     *,
     transport: httpx.AsyncBaseTransport | None = None,
+    stream_connector: StreamConnector = connect_engine,
 ) -> FastAPI:
-    """Create an application; an injectable HTTP transport keeps tests model-free."""
+    """Create an application with injectable HTTP and streaming engine boundaries."""
     settings = settings or Settings.from_environment()
     client = httpx.AsyncClient(
         base_url=settings.engine_url,
@@ -82,5 +92,35 @@ def create_app(
             return await engine.transcribe(recording)
         except EngineUnavailable as error:
             raise HTTPException(error.status_code, str(error)) from error
+
+    @app.websocket("/api/stream")
+    async def live_transcription(browser: WebSocket) -> None:
+        await browser.accept()
+        try:
+            async with stream_connector(stream_url(settings.engine_url)) as upstream:
+                await upstream.send('{"sample_rate":16000,"format":"pcm_s16le"}')
+                await browser.send_json({"type": "ready"})
+                await relay_stream(browser, upstream, settings)
+        except WebSocketDisconnect:
+            pass
+        except (OSError, TimeoutError, WebSocketException, StreamError, ValueError) as error:
+            message = (
+                str(error)
+                if isinstance(error, StreamError)
+                else "Live transcription is unavailable. Stop recording and retry transcription."
+            )
+            if (
+                browser.client_state == WebSocketState.CONNECTED
+                and browser.application_state == WebSocketState.CONNECTED
+            ):
+                with suppress(WebSocketDisconnect):
+                    await browser.send_json({"type": "error", "message": message})
+        finally:
+            if (
+                browser.client_state == WebSocketState.CONNECTED
+                and browser.application_state == WebSocketState.CONNECTED
+            ):
+                with suppress(WebSocketDisconnect):
+                    await browser.close()
 
     return app

@@ -1,4 +1,5 @@
 import { MAX_DURATION_SECONDS, wordCount } from "./audio.js";
+import { LiveTranscriber } from "./live.js";
 import { MicrophoneRecorder } from "./recorder.js";
 
 const recordButton = /** @type {HTMLButtonElement} */ (document.getElementById("record"));
@@ -14,7 +15,10 @@ const activity = /** @type {HTMLElement} */ (document.getElementById("activity-d
 const timer = /** @type {HTMLElement} */ (document.getElementById("timer"));
 const count = /** @type {HTMLElement} */ (document.getElementById("word-count"));
 const engineStatus = /** @type {HTMLElement} */ (document.getElementById("engine-status"));
+const liveMode = /** @type {HTMLInputElement} */ (document.getElementById("live-mode"));
 const recorder = new MicrophoneRecorder();
+/** @type {LiveTranscriber | null} */
+let activeStream = null;
 let recording = false;
 let busy = false;
 let startedAt = 0;
@@ -27,6 +31,11 @@ let playbackUrl = null;
 
 function updateControls() {
   const active = recording || busy;
+  liveMode.disabled = active;
+  stopButton.textContent = liveMode.checked ? "Stop" : "Stop & transcribe";
+  transcript.placeholder = liveMode.checked
+    ? "Your words will appear here as you speak."
+    : "Your words will appear here after you stop recording.";
   recordButton.disabled = active;
   stopButton.disabled = !recording || busy;
   retryButton.disabled = active || !lastRecording;
@@ -67,17 +76,49 @@ recordButton.addEventListener("click", async () => {
   status.textContent = "Waiting for microphone permission…";
   try {
     playback.pause();
-    await recorder.start();
+    if (liveMode.checked) {
+      status.textContent = "Connecting live transcription…";
+      const stream = new LiveTranscriber(
+        (text) => {
+          transcript.value = text;
+          updateControls();
+        },
+        (error) => {
+          if (recording) {
+            showError(error);
+            status.textContent = "Recording continues. Stop to transcribe the complete recording.";
+          }
+        },
+      );
+      activeStream = stream;
+      const url = new URL("/api/stream", window.location.href);
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+      await stream.start(url.href);
+      status.textContent = "Waiting for microphone permission…";
+      await recorder.start((samples) => stream.sendSamples(samples));
+      transcript.value = stream.transcript.text;
+    } else {
+      await recorder.start();
+    }
     recording = true;
     startedAt = performance.now();
     updateTimer(0);
-    status.textContent = "Recording. Choose Stop & transcribe when you’re ready.";
+    if (activeStream?.failure) {
+      showError(activeStream.failure);
+      status.textContent = "Recording continues. Stop to transcribe the complete recording.";
+    } else {
+      status.textContent = activeStream
+        ? "Transcribing as you speak. Text may change until you stop."
+        : "Recording. Choose Stop & transcribe when you’re ready.";
+    }
     timerId = window.setInterval(() => {
       const elapsed = (performance.now() - startedAt) / 1000;
       updateTimer(Math.min(elapsed, MAX_DURATION_SECONDS));
       if (elapsed >= MAX_DURATION_SECONDS) void stopRecording();
     }, 200);
   } catch (error) {
+    activeStream?.cancel();
+    activeStream = null;
     if (error instanceof DOMException && error.name === "NotAllowedError") {
       showError(new Error("Allow microphone access in your browser, then choose Record again."));
     } else if (error instanceof DOMException && error.name === "NotFoundError") {
@@ -106,13 +147,25 @@ async function stopRecording() {
     playbackUrl = URL.createObjectURL(audio);
     playback.src = playbackUrl;
     playback.hidden = false;
-    await transcribe(audio);
+    if (activeStream && !activeStream.failure) {
+      status.textContent = "Finishing your live transcript…";
+      try {
+        setTranscript(await activeStream.finish());
+      } catch {
+        // A complete WAV is already kept, so recover a failed stream in batch mode.
+        await transcribe(audio);
+      }
+    } else {
+      await transcribe(audio);
+    }
   } catch (error) {
     showError(error);
     status.textContent = lastRecording
       ? "Your recording is kept in this tab. You can retry."
       : "Try recording again.";
   } finally {
+    activeStream?.cancel();
+    activeStream = null;
     busy = false;
     updateControls();
   }
@@ -135,13 +188,20 @@ async function transcribe(audio) {
     );
   if (typeof result.text !== "string")
     throw new Error("An invalid transcript was returned. Try again.");
-  transcript.value = result.text;
-  status.textContent = result.text.trim()
+  setTranscript(result.text);
+}
+
+/** @param {string} text */
+function setTranscript(text) {
+  hideError();
+  transcript.value = text;
+  status.textContent = text.trim()
     ? "Ready. Edit your transcript or copy the text."
     : "No speech was recognized. Try another recording.";
 }
 
 stopButton.addEventListener("click", () => void stopRecording());
+liveMode.addEventListener("change", updateControls);
 retryButton.addEventListener("click", async () => {
   if (!lastRecording || busy || recording) return;
   busy = true;
@@ -195,6 +255,7 @@ async function checkEngine() {
 
 window.addEventListener("pagehide", () => {
   window.clearInterval(timerId);
+  activeStream?.cancel();
   void recorder.release();
   if (playbackUrl) URL.revokeObjectURL(playbackUrl);
 });

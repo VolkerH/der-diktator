@@ -44,6 +44,8 @@ async def test_page_and_audio_worklet_are_served_from_the_application() -> None:
         assert page.status_code == 200
         assert 'id="transcript"' in page.text
         assert 'src="/assets/app.js"' in page.text
+        assert 'id="live-mode" type="checkbox" checked' in page.text
+        assert (await client.get("/assets/live.js")).status_code == 200
         assert (await client.get("/assets/recorder-worklet.js")).status_code == 200
         assert (await client.get("/assets/missing.js")).status_code == 404
 

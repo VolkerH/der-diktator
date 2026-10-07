@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { encodeWav, joinSamples, wordCount } from "../../src/phonon_web/static/audio.js";
+import {
+  encodePcm16,
+  encodeWav,
+  joinSamples,
+  wordCount,
+} from "../../src/phonon_web/static/audio.js";
+
+test("streaming PCM matches the retained WAV sample bytes", () => {
+  const samples = new Float32Array([-2, -0.5, 0, 0.5, 2]);
+  assert.deepEqual(new Uint8Array(encodePcm16(samples)), new Uint8Array(encodeWav(samples), 44));
+});
 
 test("WAV header declares the exact PCM format accepted by the engine", () => {
   const samples = new Float32Array([0, 0.5, -0.5]);

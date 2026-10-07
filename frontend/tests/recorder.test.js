@@ -126,3 +126,25 @@ test("a 48 kHz context is resampled to the engine's 16 kHz format", async (t) =>
   assert.equal(header.getUint32(24, true), 16_000);
   assert.equal(header.getUint32(40, true), 4);
 });
+
+test("live callbacks receive the final PCM flush while a complete WAV is retained", async (t) => {
+  audioEnvironment(t);
+  const recorder = new MicrophoneRecorder();
+  const chunks = [];
+  await recorder.start((samples) => chunks.push(samples));
+  const recording = await recorder.stop();
+  assert.equal(chunks.length, 1);
+  assert.equal(chunks[0].length, 6);
+  assert.equal(recording.size, 44 + chunks[0].length * 2);
+});
+
+test("unsupported live sample rate releases the microphone and offers batch recording", async (t) => {
+  const state = audioEnvironment(t, { fallback: true });
+  const recorder = new MicrophoneRecorder();
+  await assert.rejects(
+    recorder.start(() => {}),
+    /Turn off Live transcription/,
+  );
+  assert.equal(state.trackStops, 1);
+  assert.equal(state.contextCloses, 1);
+});

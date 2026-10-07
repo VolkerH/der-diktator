@@ -42,6 +42,11 @@
           </div>
           <span id="timer" class="timer" aria-label="Recording duration">00:00</span>
         </div>
+        <label class="live-option" for="live-mode">
+          <input id="live-mode" type="checkbox" checked />
+          Live transcription
+          <span>Show text as you speak</span>
+        </label>
         <div class="recording-status">
           <span id="activity-dot" class="activity-dot" aria-hidden="true"></span>
           <p id="status" role="status" aria-live="polite">Choose Record to begin.</p>
@@ -54,7 +59,7 @@
         </div>
         <textarea
           id="transcript"
-          placeholder="Your words will appear here after you stop recording."
+          placeholder="Your words will appear here as you speak."
           spellcheck="true"
           aria-describedby="status"
         ></textarea>

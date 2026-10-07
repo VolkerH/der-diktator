@@ -2,6 +2,24 @@
 export const SAMPLE_RATE = 16_000;
 export const MAX_DURATION_SECONDS = 600;
 
+/** Raw little-endian PCM for the live stream (without a WAV header).
+ * @param {Float32Array} samples
+ * @returns {ArrayBuffer}
+ */
+export function encodePcm16(samples) {
+  const buffer = new ArrayBuffer(samples.length * 2);
+  writeSamples(new DataView(buffer), samples, 0);
+  return buffer;
+}
+
+/** @param {DataView} view @param {Float32Array} samples @param {number} offset */
+function writeSamples(view, samples, offset) {
+  for (let index = 0; index < samples.length; index++) {
+    const sample = Math.max(-1, Math.min(1, samples[index]));
+    view.setInt16(offset + index * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+  }
+}
+
 /**
  * Encode mono samples as a little-endian, signed 16-bit PCM WAV file.
  * @param {Float32Array} samples
@@ -30,10 +48,7 @@ export function encodeWav(samples, sampleRate = SAMPLE_RATE) {
   view.setUint16(34, 16, true);
   writeText(36, "data");
   view.setUint32(40, samples.length * 2, true);
-  for (let index = 0; index < samples.length; index++) {
-    const sample = Math.max(-1, Math.min(1, samples[index]));
-    view.setInt16(44 + index * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
-  }
+  writeSamples(view, samples, 44);
   return buffer;
 }
 
