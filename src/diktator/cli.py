@@ -15,7 +15,7 @@ from diktator.config import (
 
 
 def main() -> None:
-    """Bind to localhost, which Windows browsers can access through WSL forwarding."""
+    """Bind to localhost by default; a VPN proxy or --host exposes it to other devices."""
     parser = argparse.ArgumentParser(
         description="Run Der Diktator, a local dictation and transcription web app."
     )
@@ -26,7 +26,15 @@ def main() -> None:
         type=Path,
         help=f"Where chats are stored (default: $DIKTATOR_DATA_DIR or {default_data_directory()}).",
     )
+    parser.add_argument(
+        "--ssl-certfile",
+        type=Path,
+        help="Serve HTTPS with this certificate; browsers need HTTPS for the microphone.",
+    )
+    parser.add_argument("--ssl-keyfile", type=Path, help="Private key for --ssl-certfile.")
     arguments = parser.parse_args()
+    if bool(arguments.ssl_certfile) != bool(arguments.ssl_keyfile):
+        parser.error("--ssl-certfile and --ssl-keyfile must be given together.")
     settings = Settings.from_environment(
         arguments.data_dir.expanduser() if arguments.data_dir else None
     )
@@ -36,4 +44,10 @@ def main() -> None:
                 print(f"Moved existing chats from {legacy}", flush=True)
                 break
     print(f"Storing chats in {settings.data_directory}", flush=True)
-    uvicorn.run(create_app(settings), host=arguments.host, port=arguments.port)
+    uvicorn.run(
+        create_app(settings),
+        host=arguments.host,
+        port=arguments.port,
+        ssl_certfile=arguments.ssl_certfile,
+        ssl_keyfile=arguments.ssl_keyfile,
+    )

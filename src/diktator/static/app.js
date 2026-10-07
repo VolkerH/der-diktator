@@ -562,7 +562,11 @@ async function retryUnsaved() {
 recordButton.addEventListener("click", async () => {
   hideError();
   if (!window.isSecureContext || !navigator.mediaDevices) {
-    showError(new Error("Open this app at http://localhost:8080 to enable microphone access."));
+    showError(
+      new Error(
+        "Browsers allow the microphone only over HTTPS or on localhost. Open this app through an HTTPS address.",
+      ),
+    );
     return;
   }
   busy = true;
@@ -759,7 +763,7 @@ async function loadChats() {
   // Keep the splash up briefly so it does not flash on a fast load.
   setTimeout(
     () => splash.classList.toggle("done", true),
-    Math.max(0, 700 - (performance.now() - splashShownAt)),
+    Math.max(0, 1400 - (performance.now() - splashShownAt)),
   );
 }
 
