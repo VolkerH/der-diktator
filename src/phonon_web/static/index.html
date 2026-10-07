@@ -17,71 +17,82 @@
     <script type="module" src="/assets/app.js"></script>
   </head>
   <body>
-    <main>
-      <header class="app-bar">
+    <div class="shell">
+      <aside id="sidebar" class="sidebar" aria-label="Chats">
         <span class="brand">
           <span class="brand-mark" aria-hidden="true">
             <svg viewBox="0 0 24 24"><path d="M5 14V10M9.5 18V6M14 15V9M18.5 13v-2" /></svg>
           </span>
           Phonon
         </span>
-        <span id="engine-status" class="engine-pill">Connecting…</span>
-      </header>
+        <button id="new-chat" class="new-chat" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+          New chat
+        </button>
+        <ul id="chat-list" class="chat-list"></ul>
+      </aside>
+      <div id="scrim" class="scrim" hidden></div>
 
-      <section id="stage" class="stage" aria-label="Recorder">
-        <canvas id="meter" class="meter" aria-hidden="true"></canvas>
-        <div class="controls">
-          <button id="record" class="orb-button record" type="button">
-            <span class="orb" aria-hidden="true">
-              <svg viewBox="0 0 24 24">
-                <rect x="9" y="3" width="6" height="12" rx="3" />
-                <path d="M6 11v1a6 6 0 0 0 12 0v-1M12 18v3" />
-              </svg>
+      <main>
+        <header class="app-bar">
+          <button
+            id="menu"
+            class="menu-button"
+            type="button"
+            aria-label="Show chats"
+            aria-controls="sidebar"
+            aria-expanded="false"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
+          </button>
+          <h1 id="chat-title" class="chat-title">New chat</h1>
+          <span id="engine-status" class="engine-pill">Connecting…</span>
+        </header>
+
+        <section id="stage" class="stage" aria-label="Recorder">
+          <canvas id="meter" class="meter" aria-hidden="true"></canvas>
+          <div class="controls">
+            <button id="record" class="orb-button record" type="button">
+              <span class="orb" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <rect x="9" y="3" width="6" height="12" rx="3" />
+                  <path d="M6 11v1a6 6 0 0 0 12 0v-1M12 18v3" />
+                </svg>
+              </span>
+              Record
+            </button>
+            <button id="stop" class="orb-button stop" type="button" disabled hidden>
+              Stop &amp; transcribe
+            </button>
+          </div>
+          <p class="clock">
+            <span id="timer" aria-label="Recording duration">00:00</span>
+            <span class="limit">/ 10:00</span>
+          </p>
+          <p id="status" class="status" role="status" aria-live="polite">Tap the mic to start.</p>
+          <label class="switch" for="live-mode" title="Show text while you speak">
+            <input id="live-mode" type="checkbox" checked />
+            <span class="track" aria-hidden="true"></span>
+            Live text
+          </label>
+        </section>
+
+        <p id="error" class="error" role="alert" hidden></p>
+
+        <section class="sheet" aria-label="Transcript">
+          <label class="visually-hidden" for="transcript">Transcript</label>
+          <textarea
+            id="transcript"
+            placeholder="Your words will appear here as you speak."
+            spellcheck="true"
+            aria-describedby="status"
+          ></textarea>
+          <ul id="clips" class="clips" aria-label="Recordings" hidden></ul>
+          <div class="sheet-bar">
+            <span class="sheet-info">
+              <span id="word-count">0 words</span>
+              <span id="save-state" class="save-state"></span>
             </span>
-            Record
-          </button>
-          <button id="stop" class="orb-button stop" type="button" disabled hidden>
-            Stop &amp; transcribe
-          </button>
-        </div>
-        <p class="clock">
-          <span id="timer" aria-label="Recording duration">00:00</span>
-          <span class="limit">/ 10:00</span>
-        </p>
-        <p id="status" class="status" role="status" aria-live="polite">Tap the mic to start.</p>
-        <label class="switch" for="live-mode" title="Show text while you speak">
-          <input id="live-mode" type="checkbox" checked />
-          <span class="track" aria-hidden="true"></span>
-          Live text
-        </label>
-      </section>
-
-      <p id="error" class="error" role="alert" hidden></p>
-
-      <section class="sheet" aria-label="Transcript">
-        <audio id="playback" controls aria-label="Listen to your recording" hidden></audio>
-        <label class="visually-hidden" for="transcript">Your transcript</label>
-        <textarea
-          id="transcript"
-          placeholder="Your words will appear here as you speak."
-          spellcheck="true"
-          aria-describedby="status"
-        ></textarea>
-        <div class="sheet-bar">
-          <span id="word-count" class="word-count">0 words</span>
-          <div class="sheet-actions">
-            <button id="retry" class="chip" type="button" disabled title="Transcribe again">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4" />
-              </svg>
-              Retry
-            </button>
-            <button id="clear" class="chip" type="button" disabled title="Clear text and recording">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" />
-              </svg>
-              Clear
-            </button>
             <button id="copy" class="chip accent" type="button" disabled>
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <rect x="8" y="8" width="11" height="12" rx="2" />
@@ -90,9 +101,10 @@
               <span class="copy-label">Copy</span>
             </button>
           </div>
-        </div>
-      </section>
-      <noscript>Enable JavaScript to record and transcribe audio.</noscript>
-    </main>
+        </section>
+        <audio id="playback" hidden></audio>
+        <noscript>Enable JavaScript to record and transcribe audio.</noscript>
+      </main>
+    </div>
   </body>
 </html>

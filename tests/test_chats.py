@@ -1,0 +1,116 @@
+"""Chats persist transcripts and recordings in the configured directory."""
+
+from pathlib import Path
+
+import httpx
+import pytest
+
+from phonon_web.chats import ChatNotFound, ChatStore, title_for
+from phonon_web.config import Settings, default_data_directory
+from tests.test_app import client_for
+from tests.test_audio import make_wav
+
+pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+def transcribing_engine(request: httpx.Request) -> httpx.Response:
+    if request.url.path == "/v1/audio/transcriptions":
+        return httpx.Response(200, json={"text": "From the stored audio."})
+    return httpx.Response(200, json={"status": "ok", "model": "phonon-2"})
+
+
+async def test_chat_lifecycle_keeps_text_and_audio_on_disk(tmp_path: Path) -> None:
+    settings = Settings(data_directory=tmp_path / "chats")
+    async with client_for(transcribing_engine, settings) as client:
+        assert (await client.get("/api/chats")).json() == []
+        created = await client.post("/api/chats")
+        assert created.status_code == 201
+        chat_id = created.json()["id"]
+
+        audio = make_wav()
+        upload = await client.post(
+            f"/api/chats/{chat_id}/recordings",
+            content=audio,
+            headers={"Content-Type": "audio/wav"},
+        )
+        assert upload.status_code == 201
+        recording = upload.json()
+        assert recording["duration_seconds"] == 0.01
+
+        saved = await client.put(
+            f"/api/chats/{chat_id}/text", json={"text": "Hello  there\nfriend"}
+        )
+        assert saved.json()["text"] == "Hello  there\nfriend"
+
+        chats = (await client.get("/api/chats")).json()
+        assert [(chat["id"], chat["title"], chat["recording_count"]) for chat in chats] == [
+            (chat_id, "Hello there friend", 1)
+        ]
+        chat = (await client.get(f"/api/chats/{chat_id}")).json()
+        assert chat["recordings"] == [recording]
+
+        stored = await client.get(f"/api/chats/{chat_id}/recordings/{recording['id']}")
+        assert stored.headers["content-type"] == "audio/wav"
+        assert stored.content == audio
+        transcription = await client.post(
+            f"/api/chats/{chat_id}/recordings/{recording['id']}/transcribe"
+        )
+        assert transcription.json() == {"text": "From the stored audio."}
+
+    # A new application instance reads the same chats back.
+    async with client_for(transcribing_engine, settings) as client:
+        assert (await client.get(f"/api/chats/{chat_id}")).json()["text"] == "Hello  there\nfriend"
+        assert (await client.delete(f"/api/chats/{chat_id}")).status_code == 204
+        assert (await client.get(f"/api/chats/{chat_id}")).status_code == 404
+        assert (await client.get("/api/chats")).json() == []
+    assert not (tmp_path / "chats" / chat_id).exists()
+
+
+async def test_invalid_requests_do_not_touch_storage(tmp_path: Path) -> None:
+    settings = Settings(data_directory=tmp_path, max_text_characters=5)
+    missing = "0" * 32
+    async with client_for(transcribing_engine, settings) as client:
+        assert (await client.get("/api/chats/..%2F..%2Fetc")).status_code in {404, 422}
+        assert (await client.get(f"/api/chats/{missing}")).status_code == 404
+        assert (await client.delete(f"/api/chats/{missing}")).status_code == 404
+        chat_id = (await client.post("/api/chats")).json()["id"]
+        too_long = await client.put(f"/api/chats/{chat_id}/text", json={"text": "123456"})
+        assert too_long.status_code == 422
+        bad_audio = await client.post(
+            f"/api/chats/{chat_id}/recordings",
+            content=b"not audio",
+            headers={"Content-Type": "audio/wav"},
+        )
+        assert bad_audio.status_code == 400
+        unknown = await client.post(f"/api/chats/{chat_id}/recordings/{missing}/transcribe")
+        assert unknown.status_code == 404
+        assert (await client.get(f"/api/chats/{chat_id}")).json()["recordings"] == []
+
+
+def test_unreadable_chats_are_skipped_and_identifiers_are_strict(tmp_path: Path) -> None:
+    store = ChatStore(tmp_path)
+    chat = store.create()
+    (tmp_path / ("a" * 32)).mkdir()
+    (tmp_path / ("a" * 32) / "chat.json").write_text("{broken")
+    assert [summary.id for summary in store.list()] == [chat.id]
+    with pytest.raises(ChatNotFound):
+        store.get("../" + chat.id)
+
+
+def test_titles_and_default_location() -> None:
+    assert title_for("  ") == "New chat"
+    assert title_for("word " * 20) == " ".join(["word"] * 9) + "…"
+    assert default_data_directory() == Path.home() / ".phonon" / "chats"
+
+
+def test_storage_location_can_be_configured(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("PHONON_DATA_DIR", str(tmp_path / "env"))
+    assert Settings.from_environment().data_directory == tmp_path / "env"
+    assert Settings.from_environment(tmp_path / "flag").data_directory == tmp_path / "flag"

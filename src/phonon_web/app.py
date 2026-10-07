@@ -1,16 +1,19 @@
 """Serve the browser interface and bounded audio uploads from the same origin."""
 
+import pathlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
-from pathlib import Path
+from typing import Annotated
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import Response
+from fastapi import FastAPI, HTTPException, Path, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, Field
 from starlette.websockets import WebSocketState
 from websockets.exceptions import WebSocketException
 
-from phonon_web.audio import validate_recording
+from phonon_web.audio import RecordingInfo, validate_recording
+from phonon_web.chats import Chat, ChatNotFound, ChatStore, ChatSummary, Recording
 from phonon_web.config import Settings
 from phonon_web.engine import EngineClient, EngineUnavailable, Transcription
 from phonon_web.streaming import (
@@ -21,7 +24,8 @@ from phonon_web.streaming import (
     stream_url,
 )
 
-STATIC_DIRECTORY = Path(__file__).parent / "static"
+STATIC_DIRECTORY = pathlib.Path(__file__).parent / "static"
+ChatId = Annotated[str, Path(pattern=r"^[0-9a-f]{32}$")]
 
 
 def create_app(
@@ -39,6 +43,11 @@ def create_app(
         trust_env=False,
     )
     engine = EngineClient(client)
+    store = ChatStore(settings.data_directory)
+
+    class TextUpdate(BaseModel):
+        text: str = Field(max_length=settings.max_text_characters)
+
     # The bundled interface is small: load once rather than reading files per request.
     html = (STATIC_DIRECTORY / "index.html").read_bytes()
     assets = {
@@ -73,8 +82,7 @@ def create_app(
             "max_duration_seconds": settings.max_duration_seconds,
         }
 
-    @app.post("/api/transcribe")
-    async def transcribe(request: Request) -> Transcription:
+    async def read_recording(request: Request) -> tuple[bytes, RecordingInfo]:
         content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
         if content_type not in {"audio/wav", "audio/x-wav"}:
             raise HTTPException(415, "Send the recording as PCM WAV audio.")
@@ -85,13 +93,59 @@ def create_app(
             audio.extend(chunk)
         recording = bytes(audio)
         try:
-            validate_recording(recording, max_duration_seconds=settings.max_duration_seconds)
+            info = validate_recording(recording, max_duration_seconds=settings.max_duration_seconds)
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
+        return recording, info
+
+    async def transcribe_audio(audio: bytes) -> Transcription:
         try:
-            return await engine.transcribe(recording)
+            return await engine.transcribe(audio)
         except EngineUnavailable as error:
             raise HTTPException(error.status_code, str(error)) from error
+
+    @app.post("/api/transcribe")
+    async def transcribe(request: Request) -> Transcription:
+        recording, _info = await read_recording(request)
+        return await transcribe_audio(recording)
+
+    @app.exception_handler(ChatNotFound)
+    async def chat_not_found(_request: Request, _error: ChatNotFound) -> Response:
+        return JSONResponse({"detail": "This chat no longer exists."}, status_code=404)
+
+    @app.get("/api/chats")
+    async def list_chats() -> list[ChatSummary]:
+        return store.list()
+
+    @app.post("/api/chats", status_code=201)
+    async def create_chat() -> Chat:
+        return store.create()
+
+    @app.get("/api/chats/{chat_id}")
+    async def get_chat(chat_id: ChatId) -> Chat:
+        return store.get(chat_id)
+
+    @app.put("/api/chats/{chat_id}/text")
+    async def update_text(chat_id: ChatId, update: TextUpdate) -> Chat:
+        return store.update_text(chat_id, update.text)
+
+    @app.delete("/api/chats/{chat_id}", status_code=204)
+    async def delete_chat(chat_id: ChatId) -> None:
+        store.delete(chat_id)
+
+    @app.post("/api/chats/{chat_id}/recordings", status_code=201)
+    async def add_recording(chat_id: ChatId, request: Request) -> Recording:
+        store.get(chat_id)
+        audio, info = await read_recording(request)
+        return store.add_recording(chat_id, audio, info.duration_seconds)
+
+    @app.get("/api/chats/{chat_id}/recordings/{recording_id}")
+    async def recording_audio(chat_id: ChatId, recording_id: ChatId) -> Response:
+        return Response(store.recording_audio(chat_id, recording_id), media_type="audio/wav")
+
+    @app.post("/api/chats/{chat_id}/recordings/{recording_id}/transcribe")
+    async def transcribe_recording(chat_id: ChatId, recording_id: ChatId) -> Transcription:
+        return await transcribe_audio(store.recording_audio(chat_id, recording_id))
 
     @app.websocket("/api/stream")
     async def live_transcription(browser: WebSocket) -> None:

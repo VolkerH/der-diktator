@@ -1,12 +1,17 @@
 import { MAX_DURATION_SECONDS, wordCount } from "./audio.js";
+import { chatApi, spliceText, titleFor } from "./chats.js";
 import { LiveTranscriber } from "./live.js";
 import { MicrophoneRecorder } from "./recorder.js";
 
+/** @typedef {import("./chats.js").Chat} Chat */
+/** @typedef {import("./chats.js").ChatSummary} ChatSummary */
+/** @typedef {import("./chats.js").Recording} Recording */
+
 const recordButton = /** @type {HTMLButtonElement} */ (document.getElementById("record"));
 const stopButton = /** @type {HTMLButtonElement} */ (document.getElementById("stop"));
-const retryButton = /** @type {HTMLButtonElement} */ (document.getElementById("retry"));
-const clearButton = /** @type {HTMLButtonElement} */ (document.getElementById("clear"));
 const copyButton = /** @type {HTMLButtonElement} */ (document.getElementById("copy"));
+const newChatButton = /** @type {HTMLButtonElement} */ (document.getElementById("new-chat"));
+const menuButton = /** @type {HTMLButtonElement} */ (document.getElementById("menu"));
 const transcript = /** @type {HTMLTextAreaElement} */ (document.getElementById("transcript"));
 const playback = /** @type {HTMLAudioElement} */ (document.getElementById("playback"));
 const status = /** @type {HTMLElement} */ (document.getElementById("status"));
@@ -15,8 +20,14 @@ const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
 const meter = /** @type {HTMLCanvasElement} */ (document.getElementById("meter"));
 const timer = /** @type {HTMLElement} */ (document.getElementById("timer"));
 const count = /** @type {HTMLElement} */ (document.getElementById("word-count"));
+const saveState = /** @type {HTMLElement} */ (document.getElementById("save-state"));
 const engineStatus = /** @type {HTMLElement} */ (document.getElementById("engine-status"));
 const liveMode = /** @type {HTMLInputElement} */ (document.getElementById("live-mode"));
+const chatList = /** @type {HTMLElement} */ (document.getElementById("chat-list"));
+const chatTitle = /** @type {HTMLElement} */ (document.getElementById("chat-title"));
+const clips = /** @type {HTMLElement} */ (document.getElementById("clips"));
+const sidebar = /** @type {HTMLElement} */ (document.getElementById("sidebar"));
+const scrim = /** @type {HTMLElement} */ (document.getElementById("scrim"));
 const recorder = new MicrophoneRecorder();
 /** @type {LiveTranscriber | null} */
 let activeStream = null;
@@ -25,10 +36,28 @@ let busy = false;
 let startedAt = 0;
 /** @type {number | undefined} */
 let timerId;
-/** @type {Blob | null} */
-let lastRecording = null;
+/** The open chat; null is a new chat that is stored once it has text or audio.
+ * @type {Chat | null} */
+let chat = null;
+/** @type {ChatSummary[]} */
+let chats = [];
+/** @type {Promise<Chat> | null} */
+let creating = null;
+let textDirty = false;
+/** @type {ReturnType<typeof setTimeout> | undefined} */
+let saveTimer;
+/** Saves run one after another so an older text never overwrites a newer one. */
+let saving = Promise.resolve();
+/** Where the next transcript goes: the text and selection when it was requested. */
+let insertion = { text: "", start: 0, end: 0 };
+/** A recording the server could not store; it stays in this tab for a retry.
+ * @type {Blob | null} */
+let unsaved = null;
 /** @type {string | null} */
-let playbackUrl = null;
+let unsavedUrl = null;
+/** Which clip the shared player has loaded, and whether it is playing. */
+let playbackKey = "";
+let playingKey = "";
 /** Recent microphone levels for the scrolling meter, oldest first. */
 const levels = new Array(160).fill(0);
 let peakLevel = 0;
@@ -85,14 +114,22 @@ function updateControls() {
   recordButton.hidden = recording;
   stopButton.hidden = !recording;
   stopButton.disabled = !recording || busy;
-  retryButton.disabled = active || !lastRecording;
-  clearButton.disabled = active || (!transcript.value && !lastRecording);
   copyButton.disabled = active || !transcript.value.trim();
+  newChatButton.disabled = active;
   transcript.readOnly = active;
   const words = wordCount(transcript.value);
   count.textContent = `${words} ${words === 1 ? "word" : "words"}`;
+  chatTitle.textContent = titleFor(transcript.value);
   stage.classList.toggle("recording", recording);
   stage.classList.toggle("busy", busy && !recording);
+  sidebar.classList.toggle("locked", active);
+  clips.classList.toggle("locked", active);
+}
+
+function idleStatus() {
+  status.textContent = transcript.value.trim()
+    ? "Tap the mic to add more at the cursor."
+    : "Tap the mic to start.";
 }
 
 /** @param {unknown} error */
@@ -108,8 +145,416 @@ function hideError() {
 }
 
 /** @param {number} seconds */
+function formatDuration(seconds) {
+  return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+}
+
+/** @param {number} seconds */
 function updateTimer(seconds) {
-  timer.textContent = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+  timer.textContent = formatDuration(seconds);
+}
+
+/** @param {string} iso */
+function formatWhen(iso) {
+  const date = new Date(iso);
+  const now = new Date();
+  if (date.toDateString() === now.toDateString()) {
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return date.toLocaleDateString([], {
+    day: "numeric",
+    month: "short",
+    year: date.getFullYear() === now.getFullYear() ? undefined : "numeric",
+  });
+}
+
+/** @param {string} tag @param {string} className @param {string} [text] */
+function element(tag, className, text = "") {
+  const node = document.createElement(tag);
+  node.className = className;
+  node.textContent = text;
+  return node;
+}
+
+/** @param {string | null} id @param {string} title @param {string} meta */
+function chatItem(id, title, meta) {
+  const item = element("li", "chat-item");
+  item.classList.toggle("active", id === (chat?.id ?? null));
+  const open = /** @type {HTMLButtonElement} */ (element("button", "chat-open"));
+  open.type = "button";
+  open.append(element("span", "chat-name", title), element("span", "chat-meta", meta));
+  open.addEventListener("click", () => {
+    if (id) void openChat(id);
+    else closeDrawer();
+  });
+  item.append(open);
+  if (id) {
+    // Deleting takes a second click on the same button, which turns red to confirm.
+    const remove = /** @type {HTMLButtonElement} */ (element("button", "chat-delete"));
+    remove.type = "button";
+    /** @param {boolean} confirming */
+    const setConfirming = (confirming) => {
+      remove.classList.toggle("confirm", confirming);
+      remove.textContent = confirming ? "Delete" : "";
+      remove.setAttribute(
+        "aria-label",
+        confirming ? `Confirm delete “${title}”` : `Delete “${title}”`,
+      );
+    };
+    setConfirming(false);
+    remove.addEventListener("click", () => {
+      if (remove.classList.contains("confirm")) void deleteChat(id);
+      else setConfirming(true);
+    });
+    remove.addEventListener("blur", () => setConfirming(false));
+    item.append(remove);
+  }
+  return item;
+}
+
+function renderChats() {
+  const items = chats.map((summary) =>
+    chatItem(
+      summary.id,
+      summary.id === chat?.id ? titleFor(transcript.value) : summary.title,
+      `${formatWhen(summary.updated)} · ${summary.recording_count} ${summary.recording_count === 1 ? "clip" : "clips"}`,
+    ),
+  );
+  if (!chat) items.unshift(chatItem(null, titleFor(transcript.value), "Not saved yet"));
+  chatList.replaceChildren(...items);
+}
+
+/**
+ * @param {string} key
+ * @param {string} label
+ * @param {string} source
+ * @param {string} actionLabel
+ * @param {() => Promise<void>} action
+ */
+function clipItem(key, label, source, actionLabel, action) {
+  const item = element("li", "clip");
+  item.classList.toggle("playing", playingKey === key);
+  const play = /** @type {HTMLButtonElement} */ (element("button", "clip-play", label));
+  play.type = "button";
+  play.setAttribute("aria-label", `${playingKey === key ? "Pause" : "Play"} recording ${label}`);
+  play.addEventListener("click", () => togglePlayback(key, source));
+  const insert = /** @type {HTMLButtonElement} */ (element("button", "clip-insert"));
+  insert.type = "button";
+  insert.title = actionLabel;
+  insert.setAttribute("aria-label", actionLabel);
+  insert.addEventListener("click", () => {
+    if (!recording && !busy) void action();
+  });
+  item.append(play, insert);
+  return item;
+}
+
+function renderClips() {
+  const current = chat;
+  const items = (current?.recordings ?? []).map((clip, index) =>
+    clipItem(
+      clip.id,
+      `${index + 1} · ${formatDuration(clip.duration_seconds)}`,
+      chatApi.recordingUrl(current?.id ?? "", clip.id),
+      `Transcribe recording ${index + 1} again at the cursor`,
+      () => transcribeClip(clip.id),
+    ),
+  );
+  if (unsaved && unsavedUrl) {
+    const item = clipItem(
+      "unsaved",
+      "Unsaved",
+      unsavedUrl,
+      "Save and transcribe this recording at the cursor",
+      retryUnsaved,
+    );
+    item.classList.toggle("unsaved", true);
+    items.push(item);
+  }
+  clips.replaceChildren(...items);
+  clips.hidden = items.length === 0;
+}
+
+/** @param {string} key @param {string} source */
+function togglePlayback(key, source) {
+  if (playbackKey === key && !playback.paused) {
+    playback.pause();
+    return;
+  }
+  if (playbackKey !== key) {
+    playback.src = source;
+    playbackKey = key;
+  }
+  playback.play().catch(showError);
+}
+
+function stopPlayback() {
+  playback.pause();
+  playback.removeAttribute("src");
+  playback.load();
+  playbackKey = "";
+  playingKey = "";
+}
+
+/** @param {Blob} audio */
+function keepUnsaved(audio) {
+  if (unsaved === audio) return;
+  discardUnsaved();
+  unsaved = audio;
+  unsavedUrl = URL.createObjectURL(audio);
+}
+
+function discardUnsaved() {
+  if (unsavedUrl) URL.revokeObjectURL(unsavedUrl);
+  if (playbackKey === "unsaved") stopPlayback();
+  unsaved = null;
+  unsavedUrl = null;
+}
+
+/** @param {string} text */
+function setSaveState(text) {
+  saveState.textContent = text;
+}
+
+/** A new chat is created on the server the first time it needs to store something. */
+async function ensureChat() {
+  if (chat) return chat;
+  creating ??= chatApi
+    .create()
+    .then((created) => {
+      chat = created;
+      chats = [
+        { id: created.id, title: "New chat", updated: created.updated, recording_count: 0 },
+        ...chats,
+      ];
+      renderChats();
+      return created;
+    })
+    .finally(() => {
+      creating = null;
+    });
+  return await creating;
+}
+
+async function refreshChats() {
+  try {
+    chats = await chatApi.list();
+  } catch {
+    // The list is refreshed again after the next save.
+  }
+  renderChats();
+}
+
+async function writeText() {
+  clearTimeout(saveTimer);
+  if (!textDirty) return;
+  textDirty = false;
+  const text = transcript.value;
+  if (!chat && !text) return;
+  setSaveState("Saving…");
+  try {
+    const target = await ensureChat();
+    const saved = await chatApi.saveText(target.id, text);
+    target.text = saved.text;
+    target.updated = saved.updated;
+    setSaveState(textDirty ? "Saving…" : "Saved");
+    await refreshChats();
+  } catch (error) {
+    textDirty = true;
+    setSaveState("Not saved");
+    showError(error);
+  }
+}
+
+function saveText() {
+  saving = saving.then(writeText);
+  return saving;
+}
+
+function scheduleSave() {
+  textDirty = true;
+  setSaveState("Editing…");
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => void saveText(), 700);
+}
+
+/** @param {Chat | null} next */
+function setChat(next) {
+  stopPlayback();
+  discardUnsaved();
+  hideError();
+  chat = next;
+  textDirty = false;
+  transcript.value = next?.text ?? "";
+  transcript.setSelectionRange(transcript.value.length, transcript.value.length);
+  setSaveState("");
+  updateTimer(0);
+  idleStatus();
+  renderChats();
+  renderClips();
+  updateControls();
+}
+
+/** Leaving a chat drops an unsaved recording, so ask first. */
+function canLeaveChat() {
+  return (
+    !unsaved ||
+    window.confirm("A recording in this chat could not be saved. Leave it and discard it?")
+  );
+}
+
+/** @param {string} id */
+async function openChat(id) {
+  closeDrawer();
+  if (recording || busy || id === chat?.id || !canLeaveChat()) return;
+  await saveText();
+  busy = true;
+  updateControls();
+  try {
+    setChat(await chatApi.get(id));
+  } catch (error) {
+    showError(error);
+    await refreshChats();
+  } finally {
+    busy = false;
+    updateControls();
+  }
+}
+
+async function newChat() {
+  closeDrawer();
+  if (recording || busy || !canLeaveChat()) return;
+  await saveText();
+  if (chat) setChat(null);
+  transcript.focus();
+}
+
+/** @param {string} id */
+async function deleteChat(id) {
+  if (recording || busy) return;
+  if (chat?.id === id) {
+    textDirty = false;
+    clearTimeout(saveTimer);
+  }
+  await saving;
+  try {
+    await chatApi.remove(id);
+  } catch (error) {
+    showError(error);
+  }
+  if (chat?.id === id) setChat(null);
+  await refreshChats();
+}
+
+function captureInsertion() {
+  return {
+    text: transcript.value,
+    start: transcript.selectionStart,
+    end: transcript.selectionEnd,
+  };
+}
+
+/** @param {string} text */
+function insertTranscript(text) {
+  const result = spliceText(insertion.text, insertion.start, insertion.end, text);
+  transcript.value = result.text;
+  transcript.setSelectionRange(result.caret, result.caret);
+  if (result.text !== insertion.text) textDirty = true;
+  status.textContent = text.trim()
+    ? "Added at the cursor. Edit, copy, or record more."
+    : "No speech was recognized. Try another recording.";
+}
+
+/** Put back the text and selection from before a failed transcription. */
+function restoreInsertion() {
+  transcript.value = insertion.text;
+  transcript.setSelectionRange(insertion.start, insertion.end);
+}
+
+/** Store audio with the open chat, or keep it in this tab if the server cannot.
+ * @param {Blob} audio
+ * @returns {Promise<{ chatId: string, recording: Recording } | Error>}
+ */
+async function storeRecording(audio) {
+  try {
+    const target = await ensureChat();
+    const stored = await chatApi.addRecording(target.id, audio);
+    target.recordings.push(stored);
+    if (unsaved === audio) discardUnsaved();
+    renderClips();
+    void refreshChats();
+    return { chatId: target.id, recording: stored };
+  } catch (error) {
+    keepUnsaved(audio);
+    renderClips();
+    return error instanceof Error ? error : new Error("The recording could not be saved.");
+  }
+}
+
+/** @param {Blob} audio @param {string | null} text */
+async function storeAndInsert(audio, text) {
+  status.textContent = "Saving your recording…";
+  const stored = await storeRecording(audio);
+  if (text === null) {
+    status.textContent = "Transcribing your recording…";
+    text =
+      stored instanceof Error
+        ? await chatApi.transcribe(audio)
+        : await chatApi.transcribeRecording(stored.chatId, stored.recording.id);
+  }
+  // The transcript is recovered, so an earlier live-connection error no longer applies.
+  hideError();
+  insertTranscript(text);
+  await saveText();
+  if (stored instanceof Error) {
+    showError(
+      new Error(
+        `Your recording could not be saved: ${stored.message} It stays in this tab; retry from its clip.`,
+      ),
+    );
+  }
+}
+
+/** @param {() => Promise<void>} task @param {string} failure */
+async function runBusy(task, failure) {
+  busy = true;
+  hideError();
+  updateControls();
+  try {
+    await task();
+  } catch (error) {
+    restoreInsertion();
+    showError(error);
+    status.textContent = failure;
+  } finally {
+    busy = false;
+    updateControls();
+    renderChats();
+  }
+}
+
+/** @param {string} recordingId */
+async function transcribeClip(recordingId) {
+  const target = chat;
+  if (!target) return;
+  await runBusy(async () => {
+    insertion = captureInsertion();
+    status.textContent = "Transcribing your recording…";
+    insertTranscript(await chatApi.transcribeRecording(target.id, recordingId));
+    await saveText();
+  }, "Transcription failed. Try the clip again.");
+}
+
+async function retryUnsaved() {
+  const audio = unsaved;
+  if (!audio) return;
+  await runBusy(async () => {
+    insertion = captureInsertion();
+    await storeAndInsert(audio, null);
+  }, "Your recording is kept in this tab. You can retry.");
 }
 
 recordButton.addEventListener("click", async () => {
@@ -120,14 +565,16 @@ recordButton.addEventListener("click", async () => {
   }
   busy = true;
   updateControls();
+  stopPlayback();
+  renderClips();
+  insertion = captureInsertion();
   status.textContent = "Waiting for microphone permission…";
   try {
-    playback.pause();
     if (liveMode.checked) {
       status.textContent = "Connecting live transcription…";
       const stream = new LiveTranscriber(
         (text) => {
-          transcript.value = text;
+          transcript.value = spliceText(insertion.text, insertion.start, insertion.end, text).text;
           updateControls();
         },
         (error) => {
@@ -143,7 +590,6 @@ recordButton.addEventListener("click", async () => {
       await stream.start(url.href);
       status.textContent = "Waiting for microphone permission…";
       await recorder.start((samples) => stream.sendSamples(samples));
-      transcript.value = stream.transcript.text;
     } else {
       await recorder.start();
     }
@@ -190,97 +636,64 @@ async function stopRecording() {
   busy = true;
   updateControls();
   status.textContent = "Preparing your recording…";
+  /** @type {Blob | null} */
+  let audio = null;
   try {
-    const audio = await recorder.stop();
-    lastRecording = audio;
-    if (playbackUrl) URL.revokeObjectURL(playbackUrl);
-    playbackUrl = URL.createObjectURL(audio);
-    playback.src = playbackUrl;
-    playback.hidden = false;
+    audio = await recorder.stop();
+    /** @type {string | null} */
+    let text = null;
     if (activeStream && !activeStream.failure) {
       status.textContent = "Finishing your live transcript…";
-      try {
-        setTranscript(await activeStream.finish());
-      } catch {
-        // A complete WAV is already kept, so recover a failed stream in batch mode.
-        await transcribe(audio);
-      }
-    } else {
-      await transcribe(audio);
+      // A failed stream is recovered by transcribing the complete WAV.
+      text = await activeStream.finish().catch(() => null);
     }
+    await storeAndInsert(audio, text);
   } catch (error) {
+    restoreInsertion();
     showError(error);
-    status.textContent = lastRecording
-      ? "Your recording is kept in this tab. You can retry."
+    status.textContent = audio
+      ? "Transcription failed. Use the clip’s button to retry at the cursor."
       : "Try recording again.";
   } finally {
     activeStream?.cancel();
     activeStream = null;
     busy = false;
     updateControls();
+    renderChats();
   }
 }
 
-/** @param {Blob} audio */
-async function transcribe(audio) {
-  hideError();
-  status.textContent = "Transcribing your recording…";
-  const response = await fetch("/api/transcribe", {
-    method: "POST",
-    headers: { "Content-Type": "audio/wav" },
-    body: audio,
-    signal: AbortSignal.timeout(190_000),
-  });
-  const result = await response.json();
-  if (!response.ok)
-    throw new Error(
-      typeof result.detail === "string" ? result.detail : "Transcription failed. Try again.",
-    );
-  if (typeof result.text !== "string")
-    throw new Error("An invalid transcript was returned. Try again.");
-  setTranscript(result.text);
-}
-
-/** @param {string} text */
-function setTranscript(text) {
-  hideError();
-  transcript.value = text;
-  status.textContent = text.trim()
-    ? "Ready. Edit your transcript or copy the text."
-    : "No speech was recognized. Try another recording.";
+function closeDrawer() {
+  sidebar.classList.toggle("open", false);
+  scrim.hidden = true;
+  menuButton.setAttribute("aria-expanded", "false");
 }
 
 stopButton.addEventListener("click", () => void stopRecording());
 liveMode.addEventListener("change", updateControls);
-retryButton.addEventListener("click", async () => {
-  if (!lastRecording || busy || recording) return;
-  busy = true;
-  updateControls();
-  try {
-    await transcribe(lastRecording);
-  } catch (error) {
-    showError(error);
-    status.textContent = "Your recording is kept in this tab. You can retry.";
-  } finally {
-    busy = false;
-    updateControls();
-  }
+newChatButton.addEventListener("click", () => void newChat());
+menuButton.addEventListener("click", () => {
+  const open = !sidebar.classList.contains("open");
+  sidebar.classList.toggle("open", open);
+  scrim.hidden = !open;
+  menuButton.setAttribute("aria-expanded", String(open));
 });
-transcript.addEventListener("input", updateControls);
-clearButton.addEventListener("click", () => {
-  transcript.value = "";
-  lastRecording = null;
-  playback.pause();
-  playback.removeAttribute("src");
-  playback.load();
-  playback.hidden = true;
-  if (playbackUrl) URL.revokeObjectURL(playbackUrl);
-  playbackUrl = null;
-  hideError();
-  updateTimer(0);
-  status.textContent = "Tap the mic to start.";
+scrim.addEventListener("click", closeDrawer);
+transcript.addEventListener("input", () => {
+  scheduleSave();
   updateControls();
+  renderChats();
 });
+playback.addEventListener("play", () => {
+  playingKey = playbackKey;
+  renderClips();
+});
+for (const type of ["pause", "ended"]) {
+  playback.addEventListener(type, () => {
+    playingKey = "";
+    renderClips();
+  });
+}
 copyButton.addEventListener("click", async () => {
   try {
     await navigator.clipboard.writeText(transcript.value);
@@ -312,9 +725,11 @@ async function checkEngine() {
 
 window.addEventListener("pagehide", () => {
   window.clearInterval(timerId);
+  clearTimeout(saveTimer);
+  if (textDirty && chat) void chatApi.saveText(chat.id, transcript.value, true).catch(() => {});
   activeStream?.cancel();
   void recorder.release();
-  if (playbackUrl) URL.revokeObjectURL(playbackUrl);
+  discardUnsaved();
 });
 // Space starts and stops recording unless a control or the transcript has focus.
 window.addEventListener("keydown", (event) => {
@@ -324,7 +739,25 @@ window.addEventListener("keydown", (event) => {
   else if (!recordButton.disabled) recordButton.click();
 });
 window.addEventListener("resize", drawMeter);
-updateControls();
+
+/** Reopen the most recently used chat, or start a new one. */
+async function loadChats() {
+  busy = true;
+  updateControls();
+  try {
+    chats = await chatApi.list();
+  } catch {
+    showError(new Error("Saved chats could not be loaded. Check that the app is running."));
+  } finally {
+    busy = false;
+  }
+  const latest = chats[0];
+  if (latest) await openChat(latest.id);
+  else setChat(null);
+}
+
 drawMeter();
+setChat(null);
+void loadChats();
 void checkEngine();
 window.setInterval(() => void checkEngine(), 5000);

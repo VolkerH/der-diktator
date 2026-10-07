@@ -28,16 +28,37 @@ speak; provisional words can change as more audio arrives. Click **Stop** to
 finalize the transcript, then edit it or use **Copy**. Turn off **Live text** to
 use the original **Stop & transcribe** workflow.
 
-The full recording is kept for playback and **Retry**. If the live
-connection fails during recording or finalization, the app transcribes that WAV
-after you stop. **Clear** removes the recording and text from the tab. Recording
-stops automatically after ten minutes.
+Each dictation lives in a **chat**: one editable transcript plus every recording
+made for it. The sidebar lists your chats, newest first; **New chat** starts a
+fresh one, and the trash button (click twice to confirm) deletes a chat with its
+audio. The app reopens your most recent chat. Recording again never replaces
+text: the new transcript is inserted at the cursor, or replaces the selected
+text. Edits are saved automatically.
+
+Each recording appears as a clip under the transcript. Play it back, or use its
+↻ button to transcribe it again at the cursor. If the live connection fails
+during recording or finalization, the app transcribes the stored WAV after you
+stop. If the recording cannot be stored, it stays in the tab as an **Unsaved**
+clip that you can retry. Recording stops automatically after ten minutes.
 
 The microphone is captured by the browser. The WSL service receives a 16 kHz mono
-16-bit PCM audio over WebSocket during live recording, or a WAV after stopping
-in batch mode. The web application handles audio in memory; it has no
-recording history or database. The model cache is ignored by Git and stays in
+16-bit PCM audio over WebSocket during live recording, and each finished
+recording as a WAV. The model cache is ignored by Git and stays in
 `.cache/fermion/`. Phonon-2 supports English.
+
+### Chat storage
+
+Chats are stored as plain files in `~/.phonon/chats/`, one folder per chat
+containing `chat.json` (the transcript and recording list) and one `.wav` file
+per recording. To store them elsewhere, set `PHONON_DATA_DIR` or pass
+`--data-dir`:
+
+```bash
+PHONON_DATA_DIR=/mnt/c/Users/me/Documents/phonon make run
+uv run phonon-web --data-dir ~/dictation
+```
+
+The web app prints the storage location when it starts.
 
 `make run` runs the engine on `127.0.0.1:8010` and the web app on
 `127.0.0.1:8080`. Ctrl-C stops both processes. The engine needs time to load on
