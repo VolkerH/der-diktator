@@ -2,26 +2,32 @@
 
 import os
 import shutil
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from platformdirs import user_data_path
+
 
 def default_data_directory() -> Path:
-    """Keep chats in the user's home directory unless configured otherwise."""
-    return Path.home() / ".diktator" / "chats"
+    """The platform's per-user data folder, e.g. ~/.local/share/diktator/chats on Linux."""
+    return user_data_path("diktator", appauthor=False) / "chats"
 
 
-def legacy_data_directory() -> Path:
-    """Where chats were stored before the app was named Der Diktator."""
-    return Path.home() / ".phonon" / "chats"
+def legacy_data_directories() -> list[Path]:
+    """Chat folders used by earlier versions, most recent first."""
+    return [Path.home() / ".diktator" / "chats", Path.home() / ".phonon" / "chats"]
 
 
 def migrate_chats(legacy: Path, target: Path) -> bool:
-    """Move chats from the legacy location once, only when the new location is unused."""
+    """Move chats from a legacy location once, only when the new location is unused."""
     if target.exists() or not legacy.is_dir():
         return False
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(legacy, target)
+    # Remove the old application folder when the chats were all it held.
+    with suppress(OSError):
+        legacy.parent.rmdir()
     return True
 
 

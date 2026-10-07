@@ -4,6 +4,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from platformdirs import user_data_path
 
 from diktator.chats import ChatNotFound, ChatStore, title_for
 from diktator.config import Settings, default_data_directory, migrate_chats
@@ -105,7 +106,7 @@ def test_unreadable_chats_are_skipped_and_identifiers_are_strict(tmp_path: Path)
 def test_titles_and_default_location() -> None:
     assert title_for("  ") == "New chat"
     assert title_for("word " * 20) == " ".join(["word"] * 9) + "…"
-    assert default_data_directory() == Path.home() / ".diktator" / "chats"
+    assert default_data_directory() == user_data_path("diktator", appauthor=False) / "chats"
 
 
 def test_storage_location_can_be_configured(
@@ -122,7 +123,15 @@ def test_legacy_chats_move_once_without_overwriting(tmp_path: Path) -> None:
     target = tmp_path / ".diktator" / "chats"
     assert migrate_chats(legacy, target)
     assert (target / "a").is_dir()
-    assert not legacy.exists()
-    legacy.mkdir()
+    assert not legacy.parent.exists(), "the emptied legacy folder is removed"
+    legacy.mkdir(parents=True)
     assert not migrate_chats(legacy, target), "an existing target is never replaced"
     assert not migrate_chats(tmp_path / "missing", tmp_path / "new")
+
+
+def test_legacy_folder_with_other_files_is_kept(tmp_path: Path) -> None:
+    legacy = tmp_path / ".phonon" / "chats"
+    legacy.mkdir(parents=True)
+    (tmp_path / ".phonon" / "notes.txt").write_text("keep me")
+    assert migrate_chats(legacy, tmp_path / "data" / "chats")
+    assert (tmp_path / ".phonon" / "notes.txt").read_text() == "keep me"

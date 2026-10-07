@@ -90,22 +90,33 @@ stops automatically after ten minutes.
 ## Storage and configuration
 
 Chats are stored as plain files, one folder per chat, containing `chat.json` (the
-transcript and the list of recordings) and one 16 kHz WAV file per recording.
+transcript and the list of recordings) and one 16 kHz WAV file per recording. By
+default they live in your user data folder, as chosen by
+[platformdirs](https://pypi.org/project/platformdirs/) for your operating system:
 
-| Setting         | Default                 | How to change                                    |
-| --------------- | ----------------------- | ------------------------------------------------ |
-| Chat storage    | `~/.diktator/chats/`    | `DIKTATOR_DATA_DIR=…` or `diktator --data-dir …` |
-| Engine endpoint | `http://127.0.0.1:8010` | `DIKTATOR_ENGINE_URL=…`                          |
-| Web address     | `127.0.0.1:8080`        | `diktator --host … --port …`                     |
+| System        | Default chat folder                                         |
+| ------------- | ----------------------------------------------------------- |
+| Linux and WSL | `~/.local/share/diktator/chats` (respects `$XDG_DATA_HOME`) |
+| macOS         | `~/Library/Application Support/diktator/chats`              |
+| Windows       | `%LOCALAPPDATA%\diktator\chats`                             |
+
+When running in WSL, the Linux location applies.
+
+| Setting         | Default                  | How to change                                    |
+| --------------- | ------------------------ | ------------------------------------------------ |
+| Chat storage    | user data folder (above) | `DIKTATOR_DATA_DIR=…` or `diktator --data-dir …` |
+| Engine endpoint | `http://127.0.0.1:8010`  | `DIKTATOR_ENGINE_URL=…`                          |
+| Web address     | `127.0.0.1:8080`         | `diktator --host … --port …`                     |
 
 ```bash
 DIKTATOR_DATA_DIR=/mnt/c/Users/me/Documents/diktator make run
 uv run diktator --data-dir ~/dictation
 ```
 
-The web app prints the storage location when it starts. Chats from earlier
-versions in `~/.phonon/chats/` are moved to the default location on first start,
-unless that location already exists.
+The web app prints the storage location when it starts, and `diktator --help`
+shows the default. Chats from earlier versions in `~/.diktator/chats` or
+`~/.phonon/chats` are moved to the default location on first start, unless that
+location already exists.
 
 ## How it works
 

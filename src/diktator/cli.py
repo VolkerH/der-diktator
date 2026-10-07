@@ -9,7 +9,7 @@ from diktator.app import create_app
 from diktator.config import (
     Settings,
     default_data_directory,
-    legacy_data_directory,
+    legacy_data_directories,
     migrate_chats,
 )
 
@@ -24,15 +24,16 @@ def main() -> None:
     parser.add_argument(
         "--data-dir",
         type=Path,
-        help="Where chats are stored (default: $DIKTATOR_DATA_DIR or ~/.diktator/chats).",
+        help=f"Where chats are stored (default: $DIKTATOR_DATA_DIR or {default_data_directory()}).",
     )
     arguments = parser.parse_args()
     settings = Settings.from_environment(
         arguments.data_dir.expanduser() if arguments.data_dir else None
     )
-    if settings.data_directory == default_data_directory() and migrate_chats(
-        legacy_data_directory(), settings.data_directory
-    ):
-        print(f"Moved existing chats from {legacy_data_directory()}", flush=True)
+    if settings.data_directory == default_data_directory():
+        for legacy in legacy_data_directories():
+            if migrate_chats(legacy, settings.data_directory):
+                print(f"Moved existing chats from {legacy}", flush=True)
+                break
     print(f"Storing chats in {settings.data_directory}", flush=True)
     uvicorn.run(create_app(settings), host=arguments.host, port=arguments.port)
