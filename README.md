@@ -22,13 +22,13 @@ make download-model
 make run
 ```
 
-Open <http://localhost:8080> in your **Windows browser**. Leave **Live
-transcription** checked, click **Record**, and speak. Text appears while you speak;
-provisional words can change as more audio arrives. Click **Stop** to finalize the
-transcript, then edit it or use **Copy text**. Turn off **Live transcription** to
+Open <http://localhost:8080> in your **Windows browser**. Leave **Live text** on,
+click the microphone button (or press Space), and speak. Text appears while you
+speak; provisional words can change as more audio arrives. Click **Stop** to
+finalize the transcript, then edit it or use **Copy**. Turn off **Live text** to
 use the original **Stop & transcribe** workflow.
 
-The full recording is kept for playback and **Retry transcription**. If the live
+The full recording is kept for playback and **Retry**. If the live
 connection fails during recording or finalization, the app transcribes that WAV
 after you stop. **Clear** removes the recording and text from the tab. Recording
 stops automatically after ten minutes.

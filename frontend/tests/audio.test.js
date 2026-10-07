@@ -4,6 +4,7 @@ import {
   encodePcm16,
   encodeWav,
   joinSamples,
+  rms,
   wordCount,
 } from "../../src/phonon_web/static/audio.js";
 
@@ -50,4 +51,9 @@ test("editing a transcript updates whitespace-aware word counts", () => {
   assert.equal(wordCount(""), 0);
   assert.equal(wordCount(" \n\t "), 0);
   assert.equal(wordCount("Hello,\nworld!  It's working."), 4);
+});
+
+test("meter levels are the RMS amplitude of a chunk", () => {
+  assert.equal(rms(new Float32Array()), 0);
+  assert.equal(rms(new Float32Array([0.5, -0.5])), 0.5);
 });

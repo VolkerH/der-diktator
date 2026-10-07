@@ -25,6 +25,9 @@ class Element {
   pause() {}
   load() {}
   removeAttribute() {}
+  getContext() {
+    return null;
+  }
   focus() {}
   select() {}
 }

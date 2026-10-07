@@ -11,7 +11,8 @@ const transcript = /** @type {HTMLTextAreaElement} */ (document.getElementById("
 const playback = /** @type {HTMLAudioElement} */ (document.getElementById("playback"));
 const status = /** @type {HTMLElement} */ (document.getElementById("status"));
 const errorMessage = /** @type {HTMLElement} */ (document.getElementById("error"));
-const activity = /** @type {HTMLElement} */ (document.getElementById("activity-dot"));
+const stage = /** @type {HTMLElement} */ (document.getElementById("stage"));
+const meter = /** @type {HTMLCanvasElement} */ (document.getElementById("meter"));
 const timer = /** @type {HTMLElement} */ (document.getElementById("timer"));
 const count = /** @type {HTMLElement} */ (document.getElementById("word-count"));
 const engineStatus = /** @type {HTMLElement} */ (document.getElementById("engine-status"));
@@ -28,6 +29,50 @@ let timerId;
 let lastRecording = null;
 /** @type {string | null} */
 let playbackUrl = null;
+/** Recent microphone levels for the scrolling meter, oldest first. */
+const levels = new Array(160).fill(0);
+let peakLevel = 0;
+recorder.onLevel = (/** @type {number} */ level) => {
+  peakLevel = Math.max(peakLevel, level);
+};
+
+/** Draw the level history as mirrored bars; quiet input still shows a baseline. */
+function drawMeter() {
+  const context = meter.getContext("2d");
+  if (!context) return;
+  const ratio = window.devicePixelRatio || 1;
+  const width = Math.round(meter.clientWidth * ratio);
+  const height = Math.round(meter.clientHeight * ratio);
+  if (meter.width !== width || meter.height !== height) {
+    meter.width = width;
+    meter.height = height;
+  }
+  context.clearRect(0, 0, width, height);
+  // Show as many recent levels as fit at a fixed bar pitch.
+  const visible = levels.slice(-Math.max(1, Math.floor(width / (7 * ratio))));
+  const step = width / visible.length;
+  const bar = step * 0.55;
+  const gradient = context.createLinearGradient(0, 0, width, 0);
+  gradient.addColorStop(0, "#19d3a200");
+  gradient.addColorStop(0.35, "#5eead4");
+  gradient.addColorStop(0.75, "#ff7ab8");
+  gradient.addColorStop(1, "#ffb199");
+  context.fillStyle = gradient;
+  visible.forEach((level, index) => {
+    const size = Math.max(bar, Math.min(1, Math.sqrt(level * 8)) * height * 0.92);
+    const x = index * step + (step - bar) / 2;
+    context.beginPath();
+    context.roundRect(x, (height - size) / 2, bar, size, bar / 2);
+    context.fill();
+  });
+}
+
+function pushLevel() {
+  levels.shift();
+  levels.push(recording ? peakLevel : 0);
+  peakLevel = 0;
+  drawMeter();
+}
 
 function updateControls() {
   const active = recording || busy;
@@ -37,6 +82,8 @@ function updateControls() {
     ? "Your words will appear here as you speak."
     : "Your words will appear here after you stop recording.";
   recordButton.disabled = active;
+  recordButton.hidden = recording;
+  stopButton.hidden = !recording;
   stopButton.disabled = !recording || busy;
   retryButton.disabled = active || !lastRecording;
   clearButton.disabled = active || (!transcript.value && !lastRecording);
@@ -44,8 +91,8 @@ function updateControls() {
   transcript.readOnly = active;
   const words = wordCount(transcript.value);
   count.textContent = `${words} ${words === 1 ? "word" : "words"}`;
-  activity.classList.toggle("recording", recording);
-  activity.classList.toggle("busy", busy && !recording);
+  stage.classList.toggle("recording", recording);
+  stage.classList.toggle("busy", busy && !recording);
 }
 
 /** @param {unknown} error */
@@ -109,13 +156,14 @@ recordButton.addEventListener("click", async () => {
     } else {
       status.textContent = activeStream
         ? "Transcribing as you speak. Text may change until you stop."
-        : "Recording. Choose Stop & transcribe when you’re ready.";
+        : "Recording. Stop when you’re ready to transcribe.";
     }
     timerId = window.setInterval(() => {
       const elapsed = (performance.now() - startedAt) / 1000;
       updateTimer(Math.min(elapsed, MAX_DURATION_SECONDS));
+      pushLevel();
       if (elapsed >= MAX_DURATION_SECONDS) void stopRecording();
-    }, 200);
+    }, 60);
   } catch (error) {
     activeStream?.cancel();
     activeStream = null;
@@ -137,6 +185,8 @@ async function stopRecording() {
   if (!recording || busy) return;
   window.clearInterval(timerId);
   recording = false;
+  levels.fill(0);
+  drawMeter();
   busy = true;
   updateControls();
   status.textContent = "Preparing your recording…";
@@ -228,13 +278,15 @@ clearButton.addEventListener("click", () => {
   playbackUrl = null;
   hideError();
   updateTimer(0);
-  status.textContent = "Choose Record to begin.";
+  status.textContent = "Tap the mic to start.";
   updateControls();
 });
 copyButton.addEventListener("click", async () => {
   try {
     await navigator.clipboard.writeText(transcript.value);
     status.textContent = "Text copied.";
+    copyButton.classList.toggle("copied", true);
+    setTimeout(() => copyButton.classList.toggle("copied", false), 1500);
   } catch {
     transcript.focus();
     transcript.select();
@@ -246,10 +298,15 @@ async function checkEngine() {
   try {
     const response = await fetch("/api/health", { signal: AbortSignal.timeout(3000) });
     const health = await response.json();
-    engineStatus.textContent =
-      response.ok && health.ready ? "Phonon-2 is ready" : "Waiting for Phonon-2 to start…";
+    const ready = response.ok && health.ready;
+    engineStatus.textContent = ready ? "Phonon-2 ready" : "Engine starting…";
+    engineStatus.classList.toggle("ready", ready);
+    engineStatus.classList.toggle("offline", false);
   } catch {
-    engineStatus.textContent = "The app is unavailable. Check that it is running.";
+    engineStatus.textContent = "App offline";
+    engineStatus.title = "Check that the app is running.";
+    engineStatus.classList.toggle("ready", false);
+    engineStatus.classList.toggle("offline", true);
   }
 }
 
@@ -259,6 +316,15 @@ window.addEventListener("pagehide", () => {
   void recorder.release();
   if (playbackUrl) URL.revokeObjectURL(playbackUrl);
 });
+// Space starts and stops recording unless a control or the transcript has focus.
+window.addEventListener("keydown", (event) => {
+  if (event.code !== "Space" || event.repeat || event.target !== document.body) return;
+  event.preventDefault();
+  if (recording) void stopRecording();
+  else if (!recordButton.disabled) recordButton.click();
+});
+window.addEventListener("resize", drawMeter);
 updateControls();
+drawMeter();
 void checkEngine();
 window.setInterval(() => void checkEngine(), 5000);

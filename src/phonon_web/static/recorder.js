@@ -1,4 +1,4 @@
-import { encodeWav, joinSamples, MAX_DURATION_SECONDS, SAMPLE_RATE } from "./audio.js";
+import { encodeWav, joinSamples, MAX_DURATION_SECONDS, rms, SAMPLE_RATE } from "./audio.js";
 
 /** Capture microphone PCM and release all microphone resources on every exit path. */
 export class MicrophoneRecorder {
@@ -14,6 +14,9 @@ export class MicrophoneRecorder {
     this.sampleCount = 0;
     /** @type {(() => void) | null} */
     this.onStopped = null;
+    /** Receives the RMS level of each captured chunk, for a level meter.
+     * @type {((level: number) => void) | null} */
+    this.onLevel = null;
   }
 
   /** Live callbacks receive mono 16 kHz chunks, including the final worklet flush.
@@ -48,6 +51,7 @@ export class MicrophoneRecorder {
             this.chunks.push(chunk);
             this.sampleCount += chunk.length;
             onSamples?.(chunk);
+            this.onLevel?.(rms(chunk));
           }
         } else if (event.data.type === "stopped") {
           this.onStopped?.();

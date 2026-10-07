@@ -7,76 +7,91 @@
       name="description"
       content="Record your voice, edit the transcript, and copy your text."
     />
+    <meta name="theme-color" content="#1c1240" />
     <title>Phonon · Dictation</title>
-    <link rel="icon" href="data:," />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ff6a3d'/%3E%3Cstop offset='.5' stop-color='%23ff2e88'/%3E%3Cstop offset='1' stop-color='%237c3aed'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='9' fill='url(%23g)'/%3E%3Cpath d='M9 19v-6M13 23V9M17 20v-8M21 17v-2' stroke='white' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E"
+    />
     <link rel="stylesheet" href="/assets/styles.css" />
     <script type="module" src="/assets/app.js"></script>
   </head>
   <body>
     <main>
-      <header class="masthead">
-        <a class="brand" href="/" aria-label="Phonon home">
-          <span class="brand-mark" aria-hidden="true">p</span>
+      <header class="app-bar">
+        <span class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M5 14V10M9.5 18V6M14 15V9M18.5 13v-2" /></svg>
+          </span>
           Phonon
-        </a>
-        <span class="language">English dictation</span>
+        </span>
+        <span id="engine-status" class="engine-pill">Connecting…</span>
       </header>
-      <section class="introduction" aria-labelledby="page-title">
-        <p class="eyebrow">A little space for your words</p>
-        <h1 id="page-title">Turn your voice<br />into text.</h1>
-        <p class="description">Speak at your own pace. Then edit, copy, and carry on.</p>
-      </section>
-      <section class="workspace" aria-label="Dictation workspace">
-        <div class="recording-toolbar">
-          <div class="recording-controls">
-            <button id="record" class="button primary" type="button">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
+
+      <section id="stage" class="stage" aria-label="Recorder">
+        <canvas id="meter" class="meter" aria-hidden="true"></canvas>
+        <div class="controls">
+          <button id="record" class="orb-button record" type="button">
+            <span class="orb" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
                 <rect x="9" y="3" width="6" height="12" rx="3" />
-                <path d="M6 11v1a6 6 0 0 0 12 0v-1M12 18v3M9 21h6" />
+                <path d="M6 11v1a6 6 0 0 0 12 0v-1M12 18v3" />
               </svg>
-              Record
-            </button>
-            <button id="stop" class="button secondary" type="button" disabled>
-              Stop &amp; transcribe
-            </button>
-          </div>
-          <span id="timer" class="timer" aria-label="Recording duration">00:00</span>
+            </span>
+            Record
+          </button>
+          <button id="stop" class="orb-button stop" type="button" disabled hidden>
+            Stop &amp; transcribe
+          </button>
         </div>
-        <label class="live-option" for="live-mode">
+        <p class="clock">
+          <span id="timer" aria-label="Recording duration">00:00</span>
+          <span class="limit">/ 10:00</span>
+        </p>
+        <p id="status" class="status" role="status" aria-live="polite">Tap the mic to start.</p>
+        <label class="switch" for="live-mode" title="Show text while you speak">
           <input id="live-mode" type="checkbox" checked />
-          Live transcription
-          <span>Show text as you speak</span>
+          <span class="track" aria-hidden="true"></span>
+          Live text
         </label>
-        <div class="recording-status">
-          <span id="activity-dot" class="activity-dot" aria-hidden="true"></span>
-          <p id="status" role="status" aria-live="polite">Choose Record to begin.</p>
-        </div>
-        <p id="error" class="error" role="alert" hidden></p>
+      </section>
+
+      <p id="error" class="error" role="alert" hidden></p>
+
+      <section class="sheet" aria-label="Transcript">
         <audio id="playback" controls aria-label="Listen to your recording" hidden></audio>
-        <div class="transcript-heading">
-          <label for="transcript">Your transcript</label>
-          <span id="word-count" class="word-count">0 words</span>
-        </div>
+        <label class="visually-hidden" for="transcript">Your transcript</label>
         <textarea
           id="transcript"
           placeholder="Your words will appear here as you speak."
           spellcheck="true"
           aria-describedby="status"
         ></textarea>
-        <div class="transcript-actions">
-          <div class="utility-actions">
-            <button id="retry" class="button text-button" type="button" disabled>
-              Retry transcription
+        <div class="sheet-bar">
+          <span id="word-count" class="word-count">0 words</span>
+          <div class="sheet-actions">
+            <button id="retry" class="chip" type="button" disabled title="Transcribe again">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4" />
+              </svg>
+              Retry
             </button>
-            <button id="clear" class="button text-button" type="button" disabled>Clear</button>
+            <button id="clear" class="chip" type="button" disabled title="Clear text and recording">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" />
+              </svg>
+              Clear
+            </button>
+            <button id="copy" class="chip accent" type="button" disabled>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="8" y="8" width="11" height="12" rx="2" />
+                <path d="M16 8V6a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h1" />
+              </svg>
+              <span class="copy-label">Copy</span>
+            </button>
           </div>
-          <button id="copy" class="button secondary" type="button" disabled>Copy text</button>
         </div>
       </section>
-      <footer>
-        <span id="engine-status">Checking the transcription engine…</span>
-        <span>Up to 10 minutes per recording</span>
-      </footer>
       <noscript>Enable JavaScript to record and transcribe audio.</noscript>
     </main>
   </body>

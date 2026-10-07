@@ -79,3 +79,13 @@ export function wordCount(text) {
   const trimmed = text.trim();
   return trimmed ? trimmed.split(/\s+/u).length : 0;
 }
+
+/** Root-mean-square amplitude, 0 for an empty chunk.
+ * @param {Float32Array} samples
+ * @returns {number}
+ */
+export function rms(samples) {
+  let sum = 0;
+  for (const sample of samples) sum += sample * sample;
+  return samples.length ? Math.sqrt(sum / samples.length) : 0;
+}
