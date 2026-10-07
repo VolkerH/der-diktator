@@ -20,7 +20,7 @@ run:
 	./scripts/run.sh
 
 web:
-	uv run --locked phonon-web
+	uv run --locked diktator
 
 engine:
 	FERMION_CACHE_DIR="$(CURDIR)/.cache/fermion" uv run --project engine fermion serve phonon-2 --port 8010

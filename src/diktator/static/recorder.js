@@ -40,7 +40,7 @@ export class MicrophoneRecorder {
         );
       }
       await this.context.audioWorklet.addModule("/assets/recorder-worklet.js");
-      this.node = new AudioWorkletNode(this.context, "phonon-recorder");
+      this.node = new AudioWorkletNode(this.context, "diktator-recorder");
       const maxSamples = this.context.sampleRate * MAX_DURATION_SECONDS;
       this.node.port.onmessage = (event) => {
         if (event.data.type === "samples") {

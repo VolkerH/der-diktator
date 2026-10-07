@@ -10,7 +10,7 @@ from urllib.parse import urlsplit, urlunsplit
 from fastapi import WebSocket, WebSocketDisconnect
 from websockets.asyncio.client import connect
 
-from phonon_web.config import Settings
+from diktator.config import Settings
 
 
 class EngineStream(Protocol):

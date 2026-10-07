@@ -18,7 +18,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 engine/.venv/bin/fermion serve phonon-2 --port 8010 &
 task_engine_pid=$!
-.venv/bin/phonon-web &
+.venv/bin/diktator &
 task_web_pid=$!
 printf 'Open http://localhost:8080 in your Windows browser. Ctrl-C stops both services.\n'
 set +e

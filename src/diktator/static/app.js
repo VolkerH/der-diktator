@@ -28,6 +28,8 @@ const chatTitle = /** @type {HTMLElement} */ (document.getElementById("chat-titl
 const clips = /** @type {HTMLElement} */ (document.getElementById("clips"));
 const sidebar = /** @type {HTMLElement} */ (document.getElementById("sidebar"));
 const scrim = /** @type {HTMLElement} */ (document.getElementById("scrim"));
+const splash = /** @type {HTMLElement} */ (document.getElementById("splash"));
+const splashShownAt = performance.now();
 const recorder = new MicrophoneRecorder();
 /** @type {LiveTranscriber | null} */
 let activeStream = null;
@@ -754,6 +756,11 @@ async function loadChats() {
   const latest = chats[0];
   if (latest) await openChat(latest.id);
   else setChat(null);
+  // Keep the splash up briefly so it does not flash on a fast load.
+  setTimeout(
+    () => splash.classList.toggle("done", true),
+    Math.max(0, 700 - (performance.now() - splashShownAt)),
+  );
 }
 
 drawMeter();

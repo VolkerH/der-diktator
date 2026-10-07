@@ -24,9 +24,9 @@ const rules = {
 export default [
   { ignores: [".cache/**", ".git-local/**", "**/.venv/**", "node_modules/**"] },
   { files: ["**/*.js"], languageOptions: { ecmaVersion: "latest" }, rules },
-  { files: ["src/phonon_web/static/*.js"], languageOptions: { globals: globals.browser } },
+  { files: ["src/diktator/static/*.js"], languageOptions: { globals: globals.browser } },
   {
-    files: ["src/phonon_web/static/recorder-worklet.js"],
+    files: ["src/diktator/static/recorder-worklet.js"],
     languageOptions: {
       globals: { AudioWorkletProcessor: "readonly", registerProcessor: "readonly" },
     },

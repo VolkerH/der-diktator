@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { spliceText, titleFor } from "../../src/phonon_web/static/chats.js";
+import { spliceText, titleFor } from "../../src/diktator/static/chats.js";
 
 test("transcripts are inserted at the cursor with spaces only where words would touch", () => {
   assert.deepEqual(spliceText("", 0, 0, " Hello. "), { text: "Hello.", caret: 6 });

@@ -12,11 +12,11 @@ from pydantic import BaseModel, Field
 from starlette.websockets import WebSocketState
 from websockets.exceptions import WebSocketException
 
-from phonon_web.audio import RecordingInfo, validate_recording
-from phonon_web.chats import Chat, ChatNotFound, ChatStore, ChatSummary, Recording
-from phonon_web.config import Settings
-from phonon_web.engine import EngineClient, EngineUnavailable, Transcription
-from phonon_web.streaming import (
+from diktator.audio import RecordingInfo, validate_recording
+from diktator.chats import Chat, ChatNotFound, ChatStore, ChatSummary, Recording
+from diktator.config import Settings
+from diktator.engine import EngineClient, EngineUnavailable, Transcription
+from diktator.streaming import (
     StreamConnector,
     StreamError,
     connect_engine,
@@ -25,6 +25,7 @@ from phonon_web.streaming import (
 )
 
 STATIC_DIRECTORY = pathlib.Path(__file__).parent / "static"
+MEDIA_TYPES = {".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml"}
 ChatId = Annotated[str, Path(pattern=r"^[0-9a-f]{32}$")]
 
 
@@ -53,7 +54,7 @@ def create_app(
     assets = {
         path.name: path.read_bytes()
         for path in STATIC_DIRECTORY.iterdir()
-        if path.suffix in {".js", ".css"}
+        if path.suffix in MEDIA_TYPES
     }
 
     @asynccontextmanager
@@ -61,7 +62,7 @@ def create_app(
         async with client:
             yield
 
-    app = FastAPI(title="Phonon dictation", lifespan=lifespan)
+    app = FastAPI(title="Der Diktator", lifespan=lifespan)
 
     @app.get("/", include_in_schema=False)
     async def index() -> Response:
@@ -72,8 +73,7 @@ def create_app(
         content = assets.get(filename)
         if content is None:
             raise HTTPException(404, "Asset not found.")
-        media_type = "text/css" if filename.endswith(".css") else "text/javascript"
-        return Response(content, media_type=media_type)
+        return Response(content, media_type=MEDIA_TYPES[pathlib.Path(filename).suffix])
 
     @app.get("/api/health")
     async def health() -> dict[str, bool | int]:

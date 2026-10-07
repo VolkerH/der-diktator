@@ -5,8 +5,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from phonon_web.chats import ChatNotFound, ChatStore, title_for
-from phonon_web.config import Settings, default_data_directory
+from diktator.chats import ChatNotFound, ChatStore, title_for
+from diktator.config import Settings, default_data_directory, migrate_chats
 from tests.test_app import client_for
 from tests.test_audio import make_wav
 
@@ -105,12 +105,24 @@ def test_unreadable_chats_are_skipped_and_identifiers_are_strict(tmp_path: Path)
 def test_titles_and_default_location() -> None:
     assert title_for("  ") == "New chat"
     assert title_for("word " * 20) == " ".join(["word"] * 9) + "…"
-    assert default_data_directory() == Path.home() / ".phonon" / "chats"
+    assert default_data_directory() == Path.home() / ".diktator" / "chats"
 
 
 def test_storage_location_can_be_configured(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("PHONON_DATA_DIR", str(tmp_path / "env"))
+    monkeypatch.setenv("DIKTATOR_DATA_DIR", str(tmp_path / "env"))
     assert Settings.from_environment().data_directory == tmp_path / "env"
     assert Settings.from_environment(tmp_path / "flag").data_directory == tmp_path / "flag"
+
+
+def test_legacy_chats_move_once_without_overwriting(tmp_path: Path) -> None:
+    legacy = tmp_path / ".phonon" / "chats"
+    (legacy / "a").mkdir(parents=True)
+    target = tmp_path / ".diktator" / "chats"
+    assert migrate_chats(legacy, target)
+    assert (target / "a").is_dir()
+    assert not legacy.exists()
+    legacy.mkdir()
+    assert not migrate_chats(legacy, target), "an existing target is never replaced"
+    assert not migrate_chats(tmp_path / "missing", tmp_path / "new")

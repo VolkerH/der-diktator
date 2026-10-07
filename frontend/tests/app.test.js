@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { setImmediate } from "node:timers/promises";
-import { encodeWav } from "../../src/phonon_web/static/audio.js";
-import { MicrophoneRecorder } from "../../src/phonon_web/static/recorder.js";
+import { encodeWav } from "../../src/diktator/static/audio.js";
+import { MicrophoneRecorder } from "../../src/diktator/static/recorder.js";
 import { FakeSocket } from "./fake-socket.js";
 
 class Element {
@@ -200,7 +200,7 @@ async function appEnvironment(t, setup = () => {}) {
     }
   });
   // Each test gets fresh application state; the audio, stream, and chat modules stay real.
-  await import(`../../src/phonon_web/static/app.js?case=${encodeURIComponent(t.name)}`);
+  await import(`../../src/diktator/static/app.js?case=${encodeURIComponent(t.name)}`);
   const app = { element, server, sockets, copied, state, wav };
   await waitForIdle(app);
   return app;

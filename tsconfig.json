@@ -11,5 +11,5 @@
     "types": [],
     "skipLibCheck": true
   },
-  "include": ["src/phonon_web/static/*.js", "frontend/types/*.d.ts"]
+  "include": ["src/diktator/static/*.js", "frontend/types/*.d.ts"]
 }

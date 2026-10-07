@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { LiveTranscript, LiveTranscriber } from "../../src/phonon_web/static/live.js";
+import { LiveTranscript, LiveTranscriber } from "../../src/diktator/static/live.js";
 import { FakeSocket } from "./fake-socket.js";
 
 async function connected(t, options = {}) {

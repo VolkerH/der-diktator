@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MicrophoneRecorder } from "../../src/phonon_web/static/recorder.js";
+import { MicrophoneRecorder } from "../../src/diktator/static/recorder.js";
 
 /** Supply the browser audio boundary while keeping the recorder itself real. */
 function audioEnvironment(t, { failModule = false, empty = false, fallback = false } = {}) {

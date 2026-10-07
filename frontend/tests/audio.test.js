@@ -6,7 +6,7 @@ import {
   joinSamples,
   rms,
   wordCount,
-} from "../../src/phonon_web/static/audio.js";
+} from "../../src/diktator/static/audio.js";
 
 test("streaming PCM matches the retained WAV sample bytes", () => {
   const samples = new Float32Array([-2, -0.5, 0, 0.5, 2]);

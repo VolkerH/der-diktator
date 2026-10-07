@@ -36,4 +36,4 @@ class RecorderProcessor extends AudioWorkletProcessor {
   }
 }
 
-registerProcessor("phonon-recorder", RecorderProcessor);
+registerProcessor("diktator-recorder", RecorderProcessor);

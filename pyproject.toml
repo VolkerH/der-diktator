@@ -1,8 +1,10 @@
 [project]
-name = "phonon-web"
+name = "diktator"
 version = "0.1.0"
-description = "Local browser dictation with Phonon-2 on WSL"
+description = "Der Diktator: local dictation and transcription in the browser, powered by Phonon-2"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE.md"]
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi>=0.136.3,<0.137",
@@ -13,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-phonon-web = "phonon_web.cli:main"
+diktator = "diktator.cli:main"
 
 [dependency-groups]
 dev = [

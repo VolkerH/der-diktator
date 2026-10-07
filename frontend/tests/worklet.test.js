@@ -19,7 +19,7 @@ function processor() {
     Float32Array,
   });
   const source = readFileSync(
-    new URL("../../src/phonon_web/static/recorder-worklet.js", import.meta.url),
+    new URL("../../src/diktator/static/recorder-worklet.js", import.meta.url),
     "utf8",
   );
   vm.runInContext(source, context);

@@ -9,9 +9,9 @@ from dataclasses import dataclass, field
 import pytest
 from starlette.types import Message, Scope
 
-from phonon_web.app import create_app
-from phonon_web.config import Settings
-from phonon_web.streaming import EngineStream, stream_url
+from diktator.app import create_app
+from diktator.config import Settings
+from diktator.streaming import EngineStream, stream_url
 
 pytestmark = pytest.mark.anyio
 

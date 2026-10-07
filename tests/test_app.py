@@ -6,8 +6,8 @@ from contextlib import asynccontextmanager
 import httpx
 import pytest
 
-from phonon_web.app import create_app
-from phonon_web.config import Settings
+from diktator.app import create_app
+from diktator.config import Settings
 from tests.test_audio import make_wav
 
 pytestmark = pytest.mark.anyio
@@ -47,6 +47,9 @@ async def test_page_and_audio_worklet_are_served_from_the_application() -> None:
         assert 'id="live-mode" type="checkbox" checked' in page.text
         assert (await client.get("/assets/live.js")).status_code == 200
         assert (await client.get("/assets/recorder-worklet.js")).status_code == 200
+        splash = await client.get("/assets/splash.svg")
+        assert splash.headers["content-type"].startswith("image/svg+xml")
+        assert "Der Diktator" in page.text
         assert (await client.get("/assets/missing.js")).status_code == 404
 
 

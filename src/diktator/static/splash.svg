@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="splash-title">
+  <title id="splash-title">A vintage ribbon microphone</title>
+  <defs>
+    <radialGradient id="background" cx="50%" cy="0%" r="120%">
+      <stop offset="0" stop-color="#3a1d8f" />
+      <stop offset="0.6" stop-color="#1c1240" />
+      <stop offset="1" stop-color="#140c30" />
+    </radialGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#ff2e88" stop-opacity="0.55" />
+      <stop offset="1" stop-color="#ff2e88" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="chrome" x1="0" x2="1">
+      <stop offset="0" stop-color="#6d6a8a" />
+      <stop offset="0.28" stop-color="#f4f2ff" />
+      <stop offset="0.5" stop-color="#b6b1d6" />
+      <stop offset="0.68" stop-color="#ffffff" />
+      <stop offset="1" stop-color="#6f6b90" />
+    </linearGradient>
+    <linearGradient id="band" x1="0" x2="1">
+      <stop offset="0" stop-color="#ff6a3d" />
+      <stop offset="0.5" stop-color="#ff2e88" />
+      <stop offset="1" stop-color="#7c3aed" />
+    </linearGradient>
+    <linearGradient id="waves" x1="0" x2="1">
+      <stop offset="0" stop-color="#5eead4" />
+      <stop offset="1" stop-color="#ff7ab8" />
+    </linearGradient>
+    <clipPath id="capsule">
+      <rect x="181" y="78" width="150" height="236" rx="75" />
+    </clipPath>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#background)" />
+  <ellipse cx="256" cy="210" rx="210" ry="190" fill="url(#glow)" />
+
+  <!-- Sound waves -->
+  <g fill="none" stroke="url(#waves)" stroke-linecap="round" stroke-width="9">
+    <path d="M150 160 a60 60 0 0 0 0 72" />
+    <path d="M122 136 a95 95 0 0 0 0 120" opacity="0.65" />
+    <path d="M94 112 a130 130 0 0 0 0 168" opacity="0.35" />
+    <path d="M362 160 a60 60 0 0 1 0 72" />
+    <path d="M390 136 a95 95 0 0 1 0 120" opacity="0.65" />
+    <path d="M418 112 a130 130 0 0 1 0 168" opacity="0.35" />
+  </g>
+
+  <!-- Stand -->
+  <rect x="248" y="352" width="16" height="78" rx="6" fill="url(#chrome)" />
+  <ellipse cx="256" cy="440" rx="98" ry="20" fill="#0b0720" opacity="0.6" />
+  <ellipse cx="256" cy="434" rx="96" ry="18" fill="url(#chrome)" />
+  <ellipse cx="256" cy="430" rx="70" ry="9" fill="#ffffff" opacity="0.35" />
+
+  <!-- Yoke -->
+  <path
+    d="M166 196 V318 Q166 358 256 358 Q346 358 346 318 V196"
+    fill="none"
+    stroke="url(#chrome)"
+    stroke-width="14"
+    stroke-linecap="round"
+  />
+
+  <!-- Capsule with grille -->
+  <rect x="181" y="78" width="150" height="236" rx="75" fill="url(#chrome)" />
+  <g clip-path="url(#capsule)" stroke="#2b2350" stroke-width="4" opacity="0.5">
+    <path
+      d="M170 96H342M170 107H342M170 118H342M170 129H342M170 140H342M170 151H342M170 162H342M170 173H342
+         M170 219H342M170 230H342M170 241H342M170 252H342M170 263H342M170 274H342M170 285H342M170 296H342"
+    />
+  </g>
+  <rect x="181" y="78" width="150" height="236" rx="75" fill="none" stroke="#2b2350" stroke-opacity="0.35" stroke-width="3" />
+  <ellipse cx="222" cy="140" rx="12" ry="44" fill="#ffffff" opacity="0.35" />
+
+  <!-- Centre band and yoke knobs -->
+  <rect x="172" y="182" width="168" height="28" rx="10" fill="url(#band)" />
+  <rect x="180" y="186" width="152" height="5" rx="2.5" fill="#ffffff" opacity="0.35" />
+  <circle cx="166" cy="196" r="18" fill="url(#chrome)" stroke="#2b2350" stroke-opacity="0.4" stroke-width="3" />
+  <circle cx="346" cy="196" r="18" fill="url(#chrome)" stroke="#2b2350" stroke-opacity="0.4" stroke-width="3" />
+  <circle cx="166" cy="196" r="6" fill="#2b2350" opacity="0.5" />
+  <circle cx="346" cy="196" r="6" fill="#2b2350" opacity="0.5" />
+</svg>

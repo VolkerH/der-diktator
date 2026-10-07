@@ -5,7 +5,7 @@ import wave
 
 import pytest
 
-from phonon_web.audio import validate_recording
+from diktator.audio import validate_recording
 
 
 def make_wav(*, rate: int = 16_000, channels: int = 1, width: int = 2, frames: int = 160) -> bytes:
