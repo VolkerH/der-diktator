@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ApiRequestError } from "../../src/diktator/static/errors.js";
-import { chatApi, spliceText, titleFor } from "../../src/diktator/static/chats.js";
+import { chatApi, spliceText } from "../../src/diktator/static/chats.js";
 
 test("transcripts are inserted at the cursor with spaces only where words would touch", () => {
   assert.deepEqual(spliceText("", 0, 0, " Hello. "), { text: "Hello.", caret: 6 });
@@ -19,12 +19,6 @@ test("a selection is replaced, and empty speech changes nothing", () => {
     caret: 8,
   });
   assert.deepEqual(spliceText("Keep old keep", 5, 8, "  "), { text: "Keep old keep", caret: 8 });
-});
-
-test("chat titles match the server's", () => {
-  assert.equal(titleFor(" \n "), "New chat");
-  assert.equal(titleFor("Hello  there\nfriend"), "Hello there friend");
-  assert.equal(titleFor("word ".repeat(20)), Array(9).fill("word").join(" ") + "…");
 });
 
 for (const [name, payload, message, code] of [
@@ -85,4 +79,24 @@ test("recording upload reads the explicit parent validator without treating the 
   const uploaded = await chatApi.addRecording("a".repeat(32), new Blob(), recording.id);
   assert.deepEqual(uploaded, { recording, chatEtag: '"opaque-parent"', chatRevision: 3 });
   assert.equal(uploaded.recording.etag, undefined);
+});
+
+test("title API uses only the server's canonical name and preserves scoped validators", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    calls.push([url, options]);
+    return Response.json(
+      { title: "Server label", custom_title: "Server label", title_revision: 2 },
+      {
+        headers: { ETag: '"title-read"', "Title-ETag": '"title-write"' },
+      },
+    );
+  });
+  const current = await chatApi.getTitle("a".repeat(32));
+  assert.equal(current.title, "Server label");
+  assert.equal(current.titleEtag, '"title-read"');
+  const saved = await chatApi.saveTitle("a".repeat(32), null, current.titleEtag);
+  assert.equal(calls[1][1].headers["If-Match"], '"title-read"');
+  assert.equal(calls[1][1].body, '{"custom_title":null}');
+  assert.equal(saved.titleEtag, '"title-write"');
 });

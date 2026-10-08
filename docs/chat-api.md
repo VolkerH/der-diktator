@@ -88,3 +88,50 @@ There is no tombstone for chosen IDs: a chat ID can create a new incarnation aft
 A recording ID can be reused once its owning chat and recording row have been deleted. Retry
 responses report current resource state rather than a historical response. There is no generic
 `Idempotency-Key` ledger; transcription/share commands retain their own future recovery contract.
+
+## Shared chat names
+
+Every `Chat` and `ChatSummary` includes canonical `title` and nullable
+`custom_title`. Python owns automatic naming: normalize transcript whitespace,
+use its first 48 Unicode code points with the existing word-boundary ellipsis,
+or `New chat` for empty text. Custom names take precedence through subsequent
+text edits, recording uploads and retranscriptions. Titles are shared among
+chat members. Old SQLite/legacy-imported chats start with `custom_title: null`.
+
+`Chat` also includes `title_revision`, initially 1. Every complete-chat response
+now carries `Title-ETag`, alongside its existing whole-chat and text validators.
+`GET /api/chats/{id}/title` returns `{title, custom_title, title_revision}` with
+that title validator in `ETag`. The strong scoped validator covers exactly those
+fields, plus resource scope and creation incarnation. An automatic name change
+invalidates it; transcript edits under a custom name and recording uploads do
+not. The persisted metadata revision advances only when the override changes.
+
+`PUT /api/chats/{id}/title` requires `{"custom_title": "My notes"}` or
+`{"custom_title": null}` to restore automatic naming. Missing fields, wrong
+types and unknown fields return 422 `validation_error`. Strings are trimmed and
+must contain 1–120 Unicode code points. Controls, surrogate characters and line
+separators (including at the edges) return 422 `invalid_title`; ordinary Unicode,
+emoji and literal markup are accepted. Invalid requests mutate nothing.
+
+Title PUT checks optional `If-Match` against the **title** validator, atomically
+with the mutation. Strong lists and `*` follow the existing precondition rules;
+stale/weak/wrong-scope values return 412 `revision_conflict`. Omission retains
+legacy unconditional semantics. Missing/inaccessible chats return the same 404
+`chat_not_found`. A database write failure returns 500 `storage_error`, rolls
+back the mutation and exposes no internal diagnostics. A successful request
+returns a complete `Chat` with all three validators. Changed overrides advance
+whole-chat/title revisions and `updated`, preserving `text_revision`, text and
+recordings. An identical normalized override changes nothing. After a lost
+response, read the title and compare before retrying against its current validator.
+
+The browser displays acknowledged server titles while transcript autosaves are
+pending. Its labelled dialog supports Enter to save, Escape/Cancel to close and
+“Use automatic name” to reset. Cancelling an unpersisted chat creates nothing;
+a nonempty rename creates it lazily. Rename waits for queued text saves, captures
+the target/navigation version, and preserves newer editor drafts and retained
+audio. A conflict keeps the entered name, reads current title metadata and
+requires an explicit second save. Metadata responses never refresh a stale text
+validator. The browser adopts a whole-chat validator from a title response only
+if that response's text version was already acknowledged; otherwise unseen text
+continues to block conditional deletion. Late responses cannot replace a newer
+acknowledged title or a different open chat.

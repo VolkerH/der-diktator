@@ -24,7 +24,15 @@ from starlette.websockets import WebSocketState
 from websockets.exceptions import WebSocketException
 
 from diktator.audio import RecordingInfo, validate_recording
-from diktator.chats import Chat, ChatService, ChatSummary, ChatText, Recording
+from diktator.chats import (
+    Chat,
+    ChatService,
+    ChatSummary,
+    ChatText,
+    ChatTitle,
+    Recording,
+    TitleUpdate,
+)
 from diktator.config import Settings
 from diktator.db.rows import LOCAL_USER_ID
 from diktator.engine import EngineClient, Transcription
@@ -191,6 +199,10 @@ def create_app(
             "description": "Opaque quoted strong validator for the complete Chat.",
             "schema": {"type": "string"},
         },
+        "Title-ETag": {
+            "description": "Opaque quoted strong validator for the title subresource.",
+            "schema": {"type": "string"},
+        },
         "Text-ETag": {
             "description": "Opaque quoted strong validator for the text subresource.",
             "schema": {"type": "string"},
@@ -200,6 +212,7 @@ def create_app(
     def chat_headers(response: Response, chat: Chat) -> Chat:
         response.headers["ETag"] = chat.etag
         response.headers["Text-ETag"] = chat.text_etag
+        response.headers["Title-ETag"] = chat.title_etag
         return chat
 
     @app.post(
@@ -278,6 +291,46 @@ def create_app(
         if_match: Annotated[str | None, Header()] = None,
     ) -> Chat:
         return chat_headers(response, store().update_text(actor_id, chat_id, update.text, if_match))
+
+    @app.get(
+        "/api/chats/{chat_id}/title",
+        description="Read canonical shared title metadata. ETag covers title, custom_title and "
+        "title_revision. The automatic title can change after a text edit; recordings do not "
+        "change this validator. Retain the quoted validator for title PUT.",
+        responses={
+            **error_responses(404, 422),
+            200: {"headers": {"ETag": validator_headers["Title-ETag"]}},
+        },
+    )
+    def get_title(chat_id: ChatId, actor_id: Actor, response: Response) -> ChatTitle:
+        chat = store().get(actor_id, chat_id)
+        response.headers["ETag"] = chat.title_etag
+        return ChatTitle(
+            title=chat.title, custom_title=chat.custom_title, title_revision=chat.title_revision
+        )
+
+    @app.put(
+        "/api/chats/{chat_id}/title",
+        description="Rename a shared chat with required custom_title (string or null). Trim "
+        "strings and require 1-120 Unicode code points without controls or line breaks. Null "
+        "restores automatic naming. Invalid strings return 422 invalid_title; malformed bodies "
+        "return 422 validation_error. Optional If-Match checks the title validator atomically; "
+        "stale values return 412 revision_conflict. Missing headers retain legacy unconditional "
+        "writes. Changed overrides advance title/whole-chat revisions and recency, never the "
+        "text revision. Identical values change nothing. Returns a complete Chat and all scoped "
+        "validators. After a lost response, read and compare before retrying; preserve drafts.",
+        responses={**error_responses(404, 412, 422, 500), 200: {"headers": validator_headers}},
+    )
+    def update_title(
+        chat_id: ChatId,
+        update: TitleUpdate,
+        actor_id: Actor,
+        response: Response,
+        if_match: Annotated[str | None, Header()] = None,
+    ) -> Chat:
+        return chat_headers(
+            response, store().update_title(actor_id, chat_id, update.custom_title, if_match)
+        )
 
     @app.delete(
         "/api/chats/{chat_id}",

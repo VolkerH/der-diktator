@@ -69,7 +69,20 @@ main {
   gap: 12px;
   min-height: 40px;
 }
+.app-bar h1 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
 .chat-title {
+  display: block;
+  max-width: 100%;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
   flex: 1;
   min-width: 0;
   margin: 0;
@@ -1060,4 +1073,34 @@ textarea:read-only {
 
 .text-conflict[hidden] {
   display: none;
+}
+
+.title-editor {
+  width: min(32rem, calc(100vw - 2rem));
+  color: var(--text, #f8f5ff);
+  background: #211936;
+  border: 1px solid #655379;
+  border-radius: 1rem;
+  padding: 1.5rem;
+}
+.title-editor::backdrop {
+  background: #100a22aa;
+}
+.title-editor input {
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.7rem;
+  font: inherit;
+}
+.title-editor p {
+  font-size: 0.9rem;
+}
+.title-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+.title-actions button {
+  padding: 0.6rem 0.8rem;
+  cursor: pointer;
 }
