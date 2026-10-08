@@ -1,18 +1,25 @@
 import { ApiRequestError } from "./errors.js";
 
 /** @typedef {{ id: string, created: string, duration_seconds: number }} Recording */
-/** @typedef {{ id: string, created: string, updated: string, text: string, recordings: Recording[] }} Chat */
-/** @typedef {{ id: string, title: string, updated: string, recording_count: number }} ChatSummary */
+/** @typedef {{ id: string, created: string, updated: string, text: string, recordings: Recording[], revision: number, text_revision: number, etag: string | null, textEtag: string | null }} Chat */
+/** @typedef {{ id: string, title: string, updated: string, recording_count: number, etag: string }} ChatSummary */
+/** @typedef {{ recording: Recording, chatEtag: string | null, chatRevision: number | null }} RecordingUpload */
 
 /** @param {string} path @param {RequestInit} [options] */
 async function request(path, options = {}) {
   const response = await fetch(path, { signal: AbortSignal.timeout(190_000), ...options });
-  if (response.status === 204) return null;
-  const result = await response.json().catch(() => null);
+  const result = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) {
     throw new ApiRequestError(result, "The request failed. Try again.");
   }
-  return result;
+  return { body: result, headers: response.headers };
+}
+
+/** Preserve opaque validators explicitly for routes returning a complete Chat.
+ * @param {string} path @param {RequestInit} [options] @returns {Promise<Chat>} */
+async function chatRequest(path, options = {}) {
+  const { body, headers } = await request(path, options);
+  return { ...body, etag: headers.get("ETag"), textEtag: headers.get("Text-ETag") };
 }
 
 /** @param {unknown} result @returns {string} */
@@ -25,48 +32,60 @@ function transcriptText(result) {
 /** The server's chat storage and transcription endpoints. */
 export const chatApi = {
   /** @returns {Promise<ChatSummary[]>} */
-  list: () => request("/api/chats"),
-  /** @returns {Promise<Chat>} */
-  create: () => request("/api/chats", { method: "POST" }),
+  list: async () => (await request("/api/chats")).body,
   /** @param {string} id @returns {Promise<Chat>} */
-  get: (id) => request(`/api/chats/${id}`),
-  /** @param {string} id */
-  remove: (id) => request(`/api/chats/${id}`, { method: "DELETE" }),
+  create: (id) => chatRequest(`/api/chats/${id}`, { method: "PUT" }),
+  /** @param {string} id @returns {Promise<Chat>} */
+  get: (id) => chatRequest(`/api/chats/${id}`),
+  /** @param {string} id @param {string} etag */
+  remove: (id, etag) =>
+    request(`/api/chats/${id}`, { method: "DELETE", headers: { "If-Match": etag } }),
   /** Keepalive lets a save started while the page closes still reach the server.
-   * @param {string} id @param {string} text @param {boolean} [keepalive]
+   * @param {string} id @param {string} text @param {string} etag @param {boolean} [keepalive]
    * @returns {Promise<Chat>} */
-  saveText: (id, text, keepalive = false) =>
-    request(`/api/chats/${id}/text`, {
+  saveText: (id, text, etag, keepalive = false) =>
+    chatRequest(`/api/chats/${id}/text`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "If-Match": etag },
       body: JSON.stringify({ text }),
       keepalive,
     }),
-  /** @param {string} id @param {Blob} audio @returns {Promise<Recording>} */
-  addRecording: (id, audio) =>
-    request(`/api/chats/${id}/recordings`, {
-      method: "POST",
+  /** @param {string} id @param {Blob} audio @param {string} recordingId @returns {Promise<RecordingUpload>} */
+  addRecording: async (id, audio, recordingId) => {
+    const { body, headers } = await request(`/api/chats/${id}/recordings/${recordingId}`, {
+      method: "PUT",
       headers: { "Content-Type": "audio/wav" },
       body: audio,
-    }),
+    });
+    const revision = headers.get("Chat-Revision");
+    return {
+      recording: body,
+      chatEtag: headers.get("Chat-ETag"),
+      chatRevision: revision === null ? null : Number(revision),
+    };
+  },
   /** @param {string} id @param {string} recordingId */
   recordingUrl: (id, recordingId) => `/api/chats/${id}/recordings/${recordingId}`,
   /** @param {string} id @param {string} recordingId @param {string} [model] @returns {Promise<string>} */
   transcribeRecording: async (id, recordingId, model = "phonon-2") =>
     transcriptText(
-      await request(
-        `/api/chats/${id}/recordings/${recordingId}/transcribe?model=${encodeURIComponent(model)}`,
-        { method: "POST" },
-      ),
+      (
+        await request(
+          `/api/chats/${id}/recordings/${recordingId}/transcribe?model=${encodeURIComponent(model)}`,
+          { method: "POST" },
+        )
+      ).body,
     ),
   /** Transcribe audio that could not be stored. @param {Blob} audio @param {string} [model] @returns {Promise<string>} */
   transcribe: async (audio, model = "phonon-2") =>
     transcriptText(
-      await request(`/api/transcribe?model=${encodeURIComponent(model)}`, {
-        method: "POST",
-        headers: { "Content-Type": "audio/wav" },
-        body: audio,
-      }),
+      (
+        await request(`/api/transcribe?model=${encodeURIComponent(model)}`, {
+          method: "POST",
+          headers: { "Content-Type": "audio/wav" },
+          body: audio,
+        })
+      ).body,
     ),
 };
 

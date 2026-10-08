@@ -102,6 +102,11 @@
             aria-describedby="status"
           ></textarea>
           <ul id="clips" class="clips" aria-label="Recordings" hidden></ul>
+          <div id="text-conflict" class="text-conflict" role="status" hidden>
+            <span>This chat changed elsewhere. Your version is kept here.</span>
+            <button id="load-latest" class="chip" type="button">Load latest</button>
+            <button id="copy-version" class="chip" type="button">Copy my version</button>
+          </div>
           <div class="sheet-bar">
             <span class="sheet-info">
               <span id="word-count">0 words</span>

@@ -1,8 +1,8 @@
 # API conventions
 
 Status: shared design contract from [ADR 0002](adr/0002-api-conventions.md). The existing-error
-envelope and live error codes are implemented; conditional writes and safe-create retries below
-remain design contracts. Each feature documents and tests adoption, compatibility and its additions.
+envelope, live error codes, chat/text conditional writes and safe-create retries are implemented.
+Each feature documents and tests adoption, compatibility and its additions.
 Browser, TUI and other clients share this contract; responsibilities follow [AGENTS.md](../AGENTS.md).
 
 ## Schemas and errors
@@ -24,8 +24,7 @@ Clients use status/code, not message text. Map FastAPI validation and HTTP error
 validation details belong in context, not an array-valued `detail`. Keep context free of inaccessible
 information and internal diagnostics. Clients must also tolerate legacy/intermediary error formats.
 
-The existing-error codes below are implemented. `revision_conflict` and `idempotency_conflict`
-remain reserved for conditional writes and safe retries; this error-contract change adds neither:
+The error codes below are implemented:
 
 | Code                                       | HTTP | Meaning / client action                                                           |
 | ------------------------------------------ | ---- | --------------------------------------------------------------------------------- |
@@ -89,6 +88,9 @@ erase another person's edits. Conditional saves remain the interim contract unti
 [collaboration prototype](adr/0005-collaborative-editing-protocol.md) establishes merging. Document,
 chat-event and metadata revisions stay separate; metadata alone does not advance text revisions.
 
+Subresource validators can accompany a parent representation in a scoped header such as
+`Text-ETag`. [The chat API](chat-api.md) defines implemented routes and client obligations.
+
 ## Retries and idempotency
 
 Plain resource replacement/deletion (PUT/DELETE) normally needs no idempotency key. This does not
@@ -103,6 +105,10 @@ generates a random ID (UUID-sized) once per logical create and reuses it on retr
 different input, or an ID already used by an inaccessible resource, returns 409
 `idempotency_conflict`. This needs no ledger, and crash recovery follows the resource's own
 database/file boundary. Use `Idempotency-Key` for commands that cannot be expressed this way.
+
+Creation routes document 201 for creation, 200 for a matching retry and 409 for mismatches,
+or any compatibility exception. Client-chosen chat and recording IDs have no tombstones;
+see [the chat API](chat-api.md) for deletion, recreation and exact upload retry semantics.
 
 For `Idempotency-Key` commands, and equivalent stream/session identifiers:
 
@@ -151,7 +157,7 @@ implementation, not choices for individual clients.
 ## Chat recency
 
 Creation sets `created` and `updated` to the same UTC timestamp. Text replacement
-sets `updated` during its database mutation. Uploads update recency after audio
+sets `updated` during its database mutation; saving identical text changes nothing. Uploads update recency after audio
 finalization to the later of the database mutation time and the stored `updated`,
 so a text save during finalization cannot be overwritten by an earlier timestamp.
 The recording keeps its upload-start `created` timestamp. Reading and listing

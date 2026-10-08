@@ -33,7 +33,7 @@ def test_legacy_import_preserves_every_field_and_baseline(service: ChatService) 
     chat = legacy_chat(service.root)
     original = (service.root / chat.id / "chat.json").read_bytes()
     import_legacy(service.engine, service.root)
-    assert service.get(LOCAL_USER_ID, chat.id) == chat
+    assert service.get(LOCAL_USER_ID, chat.id).model_dump() == chat.model_dump()
     assert service.recording_audio(LOCAL_USER_ID, chat.id, chat.recordings[0].id) == make_wav()
     service.update_text(LOCAL_USER_ID, chat.id, "edited")
     import_legacy(service.engine, service.root)
@@ -129,7 +129,7 @@ def test_interrupted_import_rolls_back_whole_chat(service: ChatService) -> None:
         assert session.scalars(select(ChatMemberRow)).all() == []
         assert session.scalars(select(LegacyImportRow)).all() == []
     import_legacy(service.engine, service.root)
-    assert service.get(LOCAL_USER_ID, chat.id) == chat
+    assert service.get(LOCAL_USER_ID, chat.id).model_dump() == chat.model_dump()
 
 
 def test_failed_new_chat_delete_cleanup_is_logged_and_preserved(

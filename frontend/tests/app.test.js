@@ -66,6 +66,9 @@ class Element {
     this.open = false;
     void this.emit("close");
   }
+  click() {
+    void this.emit("click");
+  }
   load() {}
   removeAttribute() {}
   focus() {}
@@ -133,6 +136,8 @@ function chatServer() {
       updated: "2026-10-07T10:00:00Z",
       text,
       recordings,
+      revision: 1,
+      text_revision: 1,
     };
     server.chats.set(chat.id, chat);
     return chat;
@@ -143,7 +148,16 @@ function chatServer() {
     if (parsed.searchParams.has("model"))
       server.requestedModels.push(parsed.searchParams.get("model"));
     const method = options.method ?? "GET";
-    const json = (body, status = 200) => Response.json(body, { status });
+    const json = (body, status = 200) =>
+      Response.json(body, {
+        status,
+        headers: body?.recordings
+          ? {
+              ETag: `"chat-${body.id}-${body.revision}"`,
+              "Text-ETag": `"text-${body.id}-${body.text_revision}"`,
+            }
+          : undefined,
+      });
     if (url === "/api/models") return json(server.models);
     if (url.startsWith("/api/models/")) {
       server.modelRequests.push(url);
@@ -179,27 +193,60 @@ function chatServer() {
           title: chat.text || "New chat",
           updated: chat.updated,
           recording_count: chat.recordings.length,
+          etag: `"chat-${chat.id}-${chat.revision}"`,
         })),
       );
     }
     if (url === "/api/chats" && method === "POST") return json(server.add(""), 201);
     const [, chatId, rest] = url.match(/^\/api\/chats\/(\w+)(.*)$/) ?? [];
+    if (!rest && method === "PUT") {
+      let existing = server.chats.get(chatId);
+      if (existing) return json(existing);
+      existing = server.add("");
+      server.chats.delete(existing.id);
+      existing.id = chatId;
+      server.chats.set(chatId, existing);
+      return json(existing, 201);
+    }
     const chat = server.chats.get(chatId);
     if (!chat) return json({ detail: "This chat no longer exists." }, 404);
     if (!rest && method === "GET") return json(chat);
     if (!rest && method === "DELETE") {
+      if (options.headers?.["If-Match"] !== `"chat-${chat.id}-${chat.revision}"`)
+        return json({ detail: "This chat changed elsewhere.", code: "revision_conflict" }, 412);
       server.chats.delete(chatId);
       return new Response(null, { status: 204 });
     }
     if (rest === "/text") {
+      if (options.headers?.["If-Match"] !== `"text-${chat.id}-${chat.text_revision}"`)
+        return json({ detail: "This chat changed elsewhere.", code: "revision_conflict" }, 412);
       chat.text = JSON.parse(options.body).text;
+      chat.revision++;
+      chat.text_revision++;
       return json(chat);
     }
-    if (rest === "/recordings") {
+    if (rest === "/recordings" || /^\/recordings\/\w+$/u.test(rest)) {
       if (server.failRecordings) return json({ detail: "The disk is full." }, 500);
-      const recording = { id: id(server.nextId++), created: chat.updated, duration_seconds: 2 };
+      const recordingId = rest.split("/")[2] ?? id(server.nextId++);
+      const existing = chat.recordings.find((clip) => clip.id === recordingId);
+      if (existing) {
+        return Response.json(existing, {
+          headers: {
+            "Chat-ETag": `"chat-${chat.id}-${chat.revision}"`,
+            "Chat-Revision": String(chat.revision),
+          },
+        });
+      }
+      const recording = { id: recordingId, created: chat.updated, duration_seconds: 2 };
+      chat.revision++;
       chat.recordings.push(recording);
-      return json(recording, 201);
+      return Response.json(recording, {
+        status: 201,
+        headers: {
+          "Chat-ETag": `"chat-${chat.id}-${chat.revision}"`,
+          "Chat-Revision": String(chat.revision),
+        },
+      });
     }
     if (rest.endsWith("/transcribe")) {
       server.storedTranscriptions++;
@@ -279,7 +326,7 @@ async function appEnvironment(t, setup = () => {}, waitReady = true) {
   });
   // Each test gets fresh application state; the audio, stream, and chat modules stay real.
   await import(`../../src/diktator/static/app.js?case=${encodeURIComponent(t.name)}`);
-  const app = { element, server, sockets, copied, state, wav, intervals };
+  const app = { element, server, sockets, copied, state, wav, intervals, windowListeners };
   if (waitReady) await waitForIdle(app);
   else for (let i = 0; i < 5; i++) await setImmediate();
   return app;
@@ -684,3 +731,515 @@ for (const [name, body, message] of [
     assert.equal(downloadButton(app, "parakeet-v3").disabled, false);
   });
 }
+
+async function settle() {
+  for (let attempt = 0; attempt < 15; attempt++) await setImmediate();
+}
+
+async function editAndSave(t, app, text) {
+  app.element("transcript").value = text;
+  await app.element("transcript").emit("input");
+  t.mock.timers.tick(700);
+  await settle();
+}
+
+test("a conflict keeps the draft, drops queued saves, and confirms before switching", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => {
+    server.add("First");
+    server.add("Second");
+  });
+  const fetch = globalThis.fetch;
+  let resolveConflict;
+  let saves = 0;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url).endsWith("/text")) {
+      saves++;
+      return await new Promise((resolve) => {
+        resolveConflict = resolve;
+      });
+    }
+    return fetch(url, options);
+  });
+  await editAndSave(t, app, "My first draft");
+  await editAndSave(t, app, "My latest draft");
+  assert.equal(saves, 1);
+  resolveConflict(
+    Response.json({ detail: "Changed elsewhere", code: "revision_conflict" }, { status: 412 }),
+  );
+  await settle();
+  assert.equal(saves, 1, "the queued save is dropped after the conflict");
+  assert.equal(app.element("transcript").value, "My latest draft");
+  assert.equal(app.element("text-conflict").hidden, false);
+  assert.equal(app.element("save-state").textContent, "This chat changed elsewhere");
+  const confirmations = [];
+  t.mock.method(globalThis.window, "confirm", (message) => {
+    confirmations.push(message);
+    return false;
+  });
+  await app.element("chat-list").children[1].children[0].emit("click");
+  await settle();
+  assert.equal(app.element("transcript").value, "My latest draft");
+  assert.deepEqual(confirmations, ["Discard your unsaved changes?"]);
+  t.mock.method(globalThis.window, "confirm", () => true);
+  await app.element("chat-list").children[1].children[0].emit("click");
+  await waitForIdle(app);
+  assert.equal(app.element("transcript").value, "Second");
+  assert.equal(app.element("text-conflict").hidden, true);
+  assert.equal(saves, 1);
+});
+
+for (const destination of ["switch", "new"]) {
+  test(`a network save failure requires confirmation before ${destination}`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const app = await appEnvironment(t, (server) => {
+      server.add("First");
+      server.add("Second");
+    });
+    const fetch = globalThis.fetch;
+    t.mock.method(globalThis, "fetch", async (url, options) => {
+      if (String(url).endsWith("/text")) throw new TypeError("Network unavailable");
+      return fetch(url, options);
+    });
+    await editAndSave(t, app, "Keep this draft");
+    assert.equal(app.element("save-state").textContent, "Not saved");
+    t.mock.method(globalThis.window, "confirm", () => false);
+    const navigate = async () => {
+      if (destination === "switch")
+        await app.element("chat-list").children[1].children[0].emit("click");
+      if (destination === "new") await app.element("new-chat").emit("click");
+      await settle();
+    };
+    await navigate();
+    assert.equal(app.element("transcript").value, "Keep this draft");
+    assert.equal(app.server.chats.size, 2);
+    t.mock.method(globalThis.window, "confirm", () => true);
+    await navigate();
+    assert.equal(app.element("transcript").value, destination === "switch" ? "Second" : "");
+    assert.equal(app.server.chats.size, 2);
+  });
+}
+
+for (const destination of ["new"]) {
+  test(`a conflicted draft confirms before ${destination}`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const app = await appEnvironment(t, (server) => {
+      server.add("First");
+      server.add("Second");
+    });
+    [...app.server.chats.values()][0].text_revision++;
+    await editAndSave(t, app, "Conflicted draft");
+    t.mock.method(globalThis.window, "confirm", () => false);
+    const navigate = async () => {
+      await app.element("new-chat").emit("click");
+      await settle();
+    };
+    await navigate();
+    assert.equal(app.element("transcript").value, "Conflicted draft");
+    assert.equal(app.server.chats.size, 2);
+    t.mock.method(globalThis.window, "confirm", () => true);
+    await navigate();
+    assert.equal(app.element("transcript").value, "");
+    assert.equal(app.server.chats.size, 2);
+  });
+}
+
+test("Load latest confirms draft discard and Copy my version keeps it", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  const stored = [...app.server.chats.values()][0];
+  stored.text = "Remote version";
+  stored.text_revision++;
+  await editAndSave(t, app, "Local version");
+  await app.element("copy-version").emit("click");
+  await settle();
+  assert.deepEqual(app.copied, ["Local version"]);
+  t.mock.method(globalThis.window, "confirm", () => false);
+  await app.element("load-latest").emit("click");
+  assert.equal(app.element("transcript").value, "Local version");
+  t.mock.method(globalThis.window, "confirm", () => true);
+  await app.element("load-latest").emit("click");
+  assert.equal(app.element("transcript").value, "Remote version");
+  assert.equal(app.element("text-conflict").hidden, true);
+  await editAndSave(t, app, "An acknowledged edit");
+  assert.equal(stored.text, "An acknowledged edit");
+});
+
+test("pagehide keeps the quoted text validator and skips conflicted text", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  const fetch = globalThis.fetch;
+  const saves = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url).endsWith("/text")) saves.push(options);
+    return fetch(url, options);
+  });
+  app.element("transcript").value = "Leaving draft";
+  await app.element("transcript").emit("input");
+  app.windowListeners.get("pagehide")();
+  await settle();
+  assert.equal(saves.length, 1);
+  assert.equal(saves[0].keepalive, true);
+  assert.equal(saves[0].headers["If-Match"], `"text-${id(1)}-1"`);
+  // The closing request has no acknowledgement; a later save conflicts safely.
+  await editAndSave(t, app, "Conflicted draft");
+  assert.equal(app.element("text-conflict").hidden, false);
+  const beforeClose = saves.length;
+  app.windowListeners.get("pagehide")();
+  await settle();
+  assert.equal(saves.length, beforeClose);
+});
+
+test("creation and recording retries reuse their chosen IDs after lost responses", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t);
+  const fetch = globalThis.fetch;
+  const creates = [],
+    uploads = [];
+  let loseCreate = true,
+    loseUpload = true;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (options?.method === "PUT" && /^\/api\/chats\/[a-f0-9]{32}$/u.test(String(url))) {
+      creates.push(url);
+      if (loseCreate) {
+        loseCreate = false;
+        throw new TypeError("Response lost");
+      }
+    }
+    if (options?.method === "PUT" && String(url).includes("/recordings/")) {
+      uploads.push(url);
+      if (loseUpload) {
+        loseUpload = false;
+        throw new TypeError("Response lost");
+      }
+    }
+    return response;
+  });
+  await editAndSave(t, app, "Draft");
+  await editAndSave(t, app, "Draft retry");
+  assert.equal(creates.length, 2);
+  assert.equal(creates[0], creates[1]);
+  assert.equal(app.server.chats.size, 1);
+  app.element("live-mode").checked = false;
+  await app.element("record").emit("click");
+  await app.element("stop").emit("click");
+  await waitForIdle(app);
+  await app.element("clips").children.at(-1).children[1].emit("click");
+  await waitForIdle(app);
+  assert.equal(uploads.length, 2);
+  assert.equal(uploads[0], uploads[1]);
+  assert.equal([...app.server.chats.values()][0].recordings.length, 1);
+});
+
+test("edits made during a save remain dirty until their own snapshot is acknowledged", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  const fetch = globalThis.fetch;
+  let release;
+  let pending = true;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (String(url).endsWith("/text") && pending) {
+      pending = false;
+      await new Promise((resolve) => {
+        release = resolve;
+      });
+    }
+    return response;
+  });
+  await editAndSave(t, app, "First edit");
+  app.element("transcript").value = "Later edit";
+  await app.element("transcript").emit("input");
+  release();
+  await settle();
+  assert.equal(app.element("transcript").value, "Later edit");
+  assert.equal(app.element("save-state").textContent, "Editing…");
+  t.mock.timers.tick(700);
+  await settle();
+  assert.equal([...app.server.chats.values()][0].text, "Later edit");
+  assert.equal(app.element("save-state").textContent, "Saved");
+});
+
+test("a late list response is ignored after navigating away and back to the same chat", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    server.add("First");
+    server.add("Second");
+  });
+  const fetch = globalThis.fetch;
+  let release;
+  let deferList = true;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (url === "/api/chats" && deferList) {
+      deferList = false;
+      const stale = await response.json();
+      stale[1].title = "Obsolete title from another navigation";
+      return await new Promise((resolve) => {
+        release = () => resolve(Response.json(stale));
+      });
+    }
+    return response;
+  });
+  app.element("live-mode").checked = false;
+  await app.element("record").emit("click");
+  await app.element("stop").emit("click");
+  await waitForIdle(app);
+  assert.equal(typeof release, "function");
+  const firstDraft = app.element("transcript").value;
+  await app.element("chat-list").children[1].children[0].emit("click");
+  await waitForIdle(app);
+  await app.element("chat-list").children[0].children[0].emit("click");
+  await waitForIdle(app);
+  assert.equal(app.element("transcript").value, firstDraft);
+  const beforeResponse = chatRows(app);
+  release();
+  await settle();
+  assert.deepEqual(chatRows(app), beforeResponse);
+  assert.equal(app.element("transcript").value, firstDraft);
+});
+
+async function deleteRow(app, index) {
+  const remove = app.element("chat-list").children[index].children[1];
+  await remove.emit("click");
+  await remove.emit("click");
+  await settle();
+}
+
+for (const failure of ["network", "conflict"]) {
+  test(`sidebar deletion preserves a ${failure} draft and retained audio without prompts or saves`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const app = await appEnvironment(t, (server) => {
+      server.add("First");
+      server.add("Second");
+      server.failRecordings = true;
+    });
+    app.element("live-mode").checked = false;
+    await app.element("record").emit("click");
+    await app.element("stop").emit("click");
+    await waitForIdle(app);
+    const fetch = globalThis.fetch;
+    const calls = [];
+    t.mock.method(globalThis, "fetch", async (url, options) => {
+      calls.push([url, options]);
+      if (String(url).endsWith("/text")) {
+        if (failure === "network") throw new TypeError("Network unavailable");
+        return Response.json(
+          { detail: "Changed elsewhere", code: "revision_conflict" },
+          { status: 412 },
+        );
+      }
+      return fetch(url, options);
+    });
+    await editAndSave(t, app, "My retained draft");
+    const clipsBefore = app.element("clips").children.length;
+    calls.length = 0;
+    t.mock.method(globalThis.window, "confirm", () =>
+      assert.fail("Deleting another chat cannot discard this chat"),
+    );
+    await deleteRow(app, 1);
+    assert.equal(app.server.chats.size, 1);
+    assert.equal(app.element("transcript").value, "My retained draft");
+    assert.equal(app.element("clips").children.length, clipsBefore);
+    assert.deepEqual(
+      calls.map(([url]) => url),
+      [`/api/chats/${id(2)}`, "/api/chats"],
+    );
+    assert.equal(calls[0][1].headers["If-Match"], `"chat-${id(2)}-1"`);
+  });
+}
+
+test("sidebar deletion rejects an entry changed since its list was read, then retries its current version", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    server.add("First");
+    server.add("Second");
+  });
+  app.server.chats.get(id(2)).revision++;
+  await deleteRow(app, 1);
+  assert.equal(app.server.chats.size, 2);
+  assert.match(app.element("error").textContent, /changed elsewhere/);
+  assert.equal(app.element("transcript").value, "First");
+  await deleteRow(app, 1);
+  assert.equal(app.server.chats.size, 1, "the refreshed entry can be deleted on retry");
+});
+
+for (const changed of [false, true]) {
+  test(`current deletion ${changed ? "preserves failed draft and audio" : "discards on success"} without saving text`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const app = await appEnvironment(t, (server) => {
+      server.add("Original");
+      server.failRecordings = true;
+    });
+    app.element("live-mode").checked = false;
+    await app.element("record").emit("click");
+    await app.element("stop").emit("click");
+    await waitForIdle(app);
+    app.element("transcript").value = "Unsaved draft";
+    await app.element("transcript").emit("input");
+    const clipsBefore = app.element("clips").children.length;
+    if (changed) app.server.chats.get(id(1)).revision++;
+    const fetch = globalThis.fetch;
+    let saves = 0;
+    t.mock.method(globalThis, "fetch", async (url, options) => {
+      if (String(url).endsWith("/text")) saves++;
+      return fetch(url, options);
+    });
+    t.mock.method(globalThis.window, "confirm", () =>
+      assert.fail("Deletion already has its own confirmation"),
+    );
+    await deleteRow(app, 0);
+    t.mock.timers.tick(700);
+    await settle();
+    assert.equal(saves, 0);
+    assert.equal(app.server.chats.size, changed ? 1 : 0);
+    assert.equal(app.element("transcript").value, changed ? "Unsaved draft" : "");
+    assert.equal(app.element("clips").children.length, changed ? clipsBefore : 0);
+    if (changed) assert.match(app.element("error").textContent, /changed elsewhere/);
+  });
+}
+
+test("current deletion waits for the submitted save and drops queued and closing-page saves", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  const fetch = globalThis.fetch;
+  let release;
+  let saves = 0;
+  let deletes = 0;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (String(url).endsWith("/text")) {
+      saves++;
+      await new Promise((resolve) => {
+        release = resolve;
+      });
+    }
+    if (options?.method === "DELETE") {
+      deletes++;
+      assert.equal(options.headers["If-Match"], `"chat-${id(1)}-2"`);
+    }
+    return response;
+  });
+  await editAndSave(t, app, "Submitted draft");
+  await editAndSave(t, app, "Queued draft");
+  await deleteRow(app, 0);
+  app.windowListeners.get("pagehide")();
+  await settle();
+  assert.equal(deletes, 0);
+  assert.equal(saves, 1);
+  assert.equal(app.element("transcript").value, "Queued draft");
+  release();
+  await waitForIdle(app);
+  assert.equal(deletes, 1);
+  assert.equal(saves, 1);
+  assert.equal(app.server.chats.size, 0);
+});
+
+test("successful upload requires no chat GET and cannot freshen a stale text validator", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  const stored = app.server.chats.get(id(1));
+  stored.text = "Remote edit";
+  stored.text_revision++;
+  stored.revision++;
+  const fetch = globalThis.fetch;
+  let gets = 0;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (url === `/api/chats/${id(1)}` && (!options?.method || options.method === "GET")) {
+      gets++;
+      throw new TypeError("Reading the chat failed");
+    }
+    return fetch(url, options);
+  });
+  app.element("live-mode").checked = false;
+  await app.element("record").emit("click");
+  await app.element("stop").emit("click");
+  await waitForIdle(app);
+  assert.equal(gets, 0);
+  assert.equal(stored.recordings.length, 1);
+  assert.equal(
+    app.element("clips").children.length,
+    1,
+    "no duplicate unsaved clip after successful upload",
+  );
+  assert.equal(stored.text, "Remote edit");
+  assert.equal(app.element("transcript").value, "Original Stored recording.");
+  assert.equal(app.element("text-conflict").hidden, false);
+});
+
+/** A recording another tab stored, unseen by this one. */
+function addRemoteRecording(stored) {
+  stored.recordings.push({ id: "f".repeat(32), created: stored.updated, duration_seconds: 3 });
+  stored.revision++;
+}
+
+test("an upload after a change elsewhere keeps the old chat validator for deletion", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  const stored = app.server.chats.get(id(1));
+  addRemoteRecording(stored);
+  // A failed text save keeps the upload as this tab's only acknowledgement.
+  const fetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url).endsWith("/text")) throw new TypeError("Saving the text failed");
+    return fetch(url, options);
+  });
+  app.element("live-mode").checked = false;
+  await app.element("record").emit("click");
+  await app.element("stop").emit("click");
+  await waitForIdle(app);
+  assert.equal(stored.recordings.length, 2);
+  assert.equal(app.element("clips").children.length, 1);
+  await deleteRow(app, 0);
+  assert.equal(app.server.chats.size, 1, "the unseen recording is not deleted");
+  assert.match(app.element("error").textContent, /changed elsewhere/);
+});
+
+test("a text save shows recordings added elsewhere before taking up their validator", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  addRemoteRecording(app.server.chats.get(id(1)));
+  await editAndSave(t, app, "Edited here");
+  assert.equal(app.element("clips").children.length, 1);
+  await deleteRow(app, 0);
+  assert.equal(app.server.chats.size, 0);
+});
+
+test("a late refresh cannot replace the sidebar while navigation GET is pending", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    server.add("First");
+    server.add("Second");
+  });
+  const fetch = globalThis.fetch;
+  let releaseList;
+  let releaseChat;
+  let deferList = true;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (url === "/api/chats" && deferList) {
+      deferList = false;
+      const stale = await response.json();
+      stale[1].title = "Stale title arriving during navigation";
+      return await new Promise((resolve) => {
+        releaseList = () => resolve(Response.json(stale));
+      });
+    }
+    if (url === `/api/chats/${id(2)}` && (!options?.method || options.method === "GET")) {
+      return await new Promise((resolve) => {
+        releaseChat = () => resolve(response);
+      });
+    }
+    return response;
+  });
+  app.element("live-mode").checked = false;
+  await app.element("record").emit("click");
+  await app.element("stop").emit("click");
+  await waitForIdle(app);
+  const before = chatRows(app);
+  await app.element("chat-list").children[1].children[0].emit("click");
+  await settle();
+  assert.equal(typeof releaseChat, "function");
+  releaseList();
+  await settle();
+  assert.deepEqual(chatRows(app), before);
+  releaseChat();
+  await waitForIdle(app);
+  assert.equal(app.element("transcript").value, "Second");
+});

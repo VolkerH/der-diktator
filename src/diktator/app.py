@@ -6,15 +6,25 @@ from contextlib import asynccontextmanager, suppress
 from typing import Annotated
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Path, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    Body,
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Path,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocketState
 from websockets.exceptions import WebSocketException
 
 from diktator.audio import RecordingInfo, validate_recording
-from diktator.chats import Chat, ChatService, ChatSummary, Recording
+from diktator.chats import Chat, ChatService, ChatSummary, ChatText, Recording
 from diktator.config import Settings
 from diktator.db.rows import LOCAL_USER_ID
 from diktator.engine import EngineClient, Transcription
@@ -67,6 +77,11 @@ def create_app(
 
     class TextUpdate(BaseModel):
         text: str = Field(max_length=settings.max_text_characters)
+
+    class ChatCreate(BaseModel):
+        """Creation has no options; reject ignored inputs on retryable requests."""
+
+        model_config = ConfigDict(extra="forbid")
 
     # The bundled interface is small: load once rather than reading files per request.
     html = (STATIC_DIRECTORY / "index.html").read_bytes()
@@ -163,37 +178,186 @@ def create_app(
         recording, _info = await read_recording(request)
         return await engine.transcribe(recording, model)
 
-    @app.get("/api/chats")
+    @app.get(
+        "/api/chats",
+        description="List accessible chats with a server-issued opaque `etag` per entry. "
+        "Use that value in `If-Match` for conditional deletion without reading the full chat.",
+    )
     def list_chats(actor_id: Actor) -> list[ChatSummary]:
         return store().list(actor_id)
 
-    @app.post("/api/chats", status_code=201)
-    def create_chat(actor_id: Actor) -> Chat:
-        return store().create(actor_id)
+    validator_headers = {
+        "ETag": {
+            "description": "Opaque quoted strong validator for the complete Chat.",
+            "schema": {"type": "string"},
+        },
+        "Text-ETag": {
+            "description": "Opaque quoted strong validator for the text subresource.",
+            "schema": {"type": "string"},
+        },
+    }
 
-    @app.get("/api/chats/{chat_id}", responses=error_responses(404, 422))
-    def get_chat(chat_id: ChatId, actor_id: Actor) -> Chat:
-        return store().get(actor_id, chat_id)
+    def chat_headers(response: Response, chat: Chat) -> Chat:
+        response.headers["ETag"] = chat.etag
+        response.headers["Text-ETag"] = chat.text_etag
+        return chat
 
-    @app.put("/api/chats/{chat_id}/text", responses=error_responses(404, 422))
-    def update_text(chat_id: ChatId, update: TextUpdate, actor_id: Actor) -> Chat:
-        return store().update_text(actor_id, chat_id, update.text)
+    @app.post(
+        "/api/chats",
+        status_code=201,
+        responses={201: {"headers": validator_headers}},
+        description="Create an empty chat with a server-chosen ID. Returns the complete Chat "
+        "with its `ETag` and independent `Text-ETag` for subsequent text saves.",
+    )
+    def create_chat(actor_id: Actor, response: Response) -> Chat:
+        return chat_headers(response, store().create(actor_id))
 
-    @app.delete("/api/chats/{chat_id}", status_code=204, responses=error_responses(404, 422))
-    def delete_chat(chat_id: ChatId, actor_id: Actor) -> None:
-        store().delete(actor_id, chat_id)
+    @app.put(
+        "/api/chats/{chat_id}",
+        description="Create an empty chat using a lowercase 32-hex client ID. Accepts no body, "
+        "null or an empty object; unknown options return 422. Returns 201 for creation, "
+        "200 for an accessible existing chat without resetting its edits, or 409 "
+        "`idempotency_conflict` for an inaccessible ID. Reuse the ID after a lost response. "
+        "No tombstones: deletion permits a new incarnation with fresh validators.",
+        responses={
+            **error_responses(409, 422),
+            200: {"headers": validator_headers},
+            201: {"model": Chat, "headers": validator_headers},
+        },
+    )
+    def create_chat_with_id(
+        chat_id: ChatId,
+        actor_id: Actor,
+        response: Response,
+        _input: Annotated[ChatCreate | None, Body()] = None,
+    ) -> Chat:
+        result, created = store().create_with_id(actor_id, chat_id)
+        response.status_code = 201 if created else 200
+        return chat_headers(response, result)
+
+    @app.get(
+        "/api/chats/{chat_id}",
+        description="Read a complete Chat. `ETag` validates the entire returned representation; "
+        "`Text-ETag` independently validates its text. Retain quoted header values verbatim. "
+        "Validators change across deletion and recreation, even if revisions repeat.",
+        responses={**error_responses(404, 422), 200: {"headers": validator_headers}},
+    )
+    def get_chat(chat_id: ChatId, actor_id: Actor, response: Response) -> Chat:
+        return chat_headers(response, store().get(actor_id, chat_id))
+
+    @app.get(
+        "/api/chats/{chat_id}/text",
+        description="Read the canonical text subresource. Its `ETag` validates only "
+        "`{text, text_revision}` and can be sent to text PUT as `If-Match`.",
+        responses={
+            **error_responses(404, 422),
+            200: {"headers": {"ETag": validator_headers["Text-ETag"]}},
+        },
+    )
+    def get_text(chat_id: ChatId, actor_id: Actor, response: Response) -> ChatText:
+        chat = store().get(actor_id, chat_id)
+        response.headers["ETag"] = chat.text_etag
+        return ChatText(text=chat.text, text_revision=chat.text_revision)
+
+    @app.put(
+        "/api/chats/{chat_id}/text",
+        description="Replace text, checking optional `If-Match` against the text validator "
+        "atomically with the write. A stale or weak validator returns 412 `revision_conflict` "
+        "and writes nothing; `*` matches an existing accessible chat. No header retains legacy "
+        "last-writer-wins behavior. Identical text changes no revisions or recency. Returns a "
+        "complete Chat: `ETag` validates that body and `Text-ETag` acknowledges the saved text. "
+        "Clients keep drafts after conflict and must not fetch a new validator to overwrite "
+        "unseen edits with the same stale draft.",
+        responses={**error_responses(404, 412, 422), 200: {"headers": validator_headers}},
+    )
+    def update_text(
+        chat_id: ChatId,
+        update: TextUpdate,
+        actor_id: Actor,
+        response: Response,
+        if_match: Annotated[str | None, Header()] = None,
+    ) -> Chat:
+        return chat_headers(response, store().update_text(actor_id, chat_id, update.text, if_match))
+
+    @app.delete(
+        "/api/chats/{chat_id}",
+        status_code=204,
+        responses=error_responses(404, 412, 422),
+        description="Delete a chat and its recordings. Optional `If-Match` checks the whole-chat "
+        "validator from a Chat response or list entry, atomically with deletion. A stale "
+        "validator returns 412 `revision_conflict` without deleting anything. Missing or "
+        "inaccessible chats return 404. Without `If-Match`, deletion is unconditional for "
+        "legacy clients. No tombstones are retained.",
+    )
+    def delete_chat(
+        chat_id: ChatId, actor_id: Actor, if_match: Annotated[str | None, Header()] = None
+    ) -> None:
+        store().delete(actor_id, chat_id, if_match)
+
+    upload_headers = {
+        "Chat-ETag": {
+            "description": "Opaque whole-chat validator captured atomically with the upload. "
+            "This header validates the parent Chat, not the Recording response body.",
+            "schema": {"type": "string"},
+        },
+        "Chat-Revision": {
+            "description": "The parent Chat `revision` that `Chat-ETag` validates. A client "
+            "adopts `Chat-ETag` only when this upload is the sole change since the version it "
+            "last acknowledged.",
+            "schema": {"type": "integer"},
+        },
+    }
 
     @app.post(
         "/api/chats/{chat_id}/recordings",
         status_code=201,
-        responses=error_responses(400, 404, 413, 415, 422),
+        responses={**error_responses(400, 404, 413, 415, 422), 201: {"headers": upload_headers}},
+        description="Store validated PCM WAV as a new recording with a server-chosen ID. "
+        "Returns 201 with the Recording and a parent `Chat-ETag`. The upload changes the "
+        "chat validator while preserving the text validator; clients retain their "
+        "acknowledged text validator. Retain capture buffers until storage is acknowledged.",
     )
-    async def add_recording(chat_id: ChatId, request: Request, actor_id: Actor) -> Recording:
+    async def add_recording(
+        chat_id: ChatId, request: Request, actor_id: Actor, response: Response
+    ) -> Recording:
         await run_in_threadpool(store().get, actor_id, chat_id)
         audio, info = await read_recording(request)
-        return await run_in_threadpool(
-            store().add_recording, actor_id, chat_id, audio, info.duration_seconds
+        result = await run_in_threadpool(
+            store().upload_recording, actor_id, chat_id, audio, info.duration_seconds
         )
+        response.headers["Chat-ETag"] = result.chat_etag
+        response.headers["Chat-Revision"] = str(result.chat_revision)
+        return result.recording
+
+    @app.put(
+        "/api/chats/{chat_id}/recordings/{recording_id}",
+        responses={
+            **error_responses(400, 404, 409, 413, 415, 422),
+            200: {"headers": upload_headers},
+            201: {"model": Recording, "headers": upload_headers},
+        },
+        description="Store validated PCM WAV once with a client-chosen lowercase 32-hex ID. "
+        "Returns 201 with the Recording on creation and 200 for an exact-byte SHA-256 matching "
+        "retry. Different bytes or an ID owned by another chat return 409 `idempotency_conflict` "
+        "without overwriting winner audio. `Chat-ETag` is the parent validator captured with "
+        "the mutation; it does not validate the Recording body or acknowledge the client's "
+        "text. A retry changes no revision or recency. Legacy rows recover identity from "
+        "their original audio; missing/unreadable audio returns 404 `recording_not_found` "
+        "until restored. Reuse the chosen ID after a lost response and retain capture buffers "
+        "until storage is acknowledged. No tombstones are retained.",
+    )
+    async def put_recording(
+        chat_id: ChatId, recording_id: ChatId, request: Request, actor_id: Actor, response: Response
+    ) -> Recording:
+        await run_in_threadpool(store().get, actor_id, chat_id)
+        audio, info = await read_recording(request)
+        result = await run_in_threadpool(
+            store().upload_recording, actor_id, chat_id, audio, info.duration_seconds, recording_id
+        )
+        response.status_code = 201 if result.created else 200
+        response.headers["Chat-ETag"] = result.chat_etag
+        response.headers["Chat-Revision"] = str(result.chat_revision)
+        return result.recording
 
     @app.get("/api/chats/{chat_id}/recordings/{recording_id}", responses=error_responses(404, 422))
     def recording_audio(chat_id: ChatId, recording_id: ChatId, actor_id: Actor) -> Response:
