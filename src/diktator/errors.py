@@ -44,7 +44,7 @@ class StreamErrorEvent(BaseModel):
 # Shared engine messages are authored here, never copied from upstream diagnostics.
 # Both model admission and the public mapper use these canonical definitions.
 ENGINE_ERRORS: dict[str, tuple[int, str]] = {
-    "model_busy": (409, "The engine is busy. Finish the recording or model operation first."),
+    "model_busy": (409, "The engine is busy with another operation. Wait for it to finish."),
     "model_loading": (409, "The model is loading. Wait for it to become ready."),
     "model_deleting": (409, "A model is being deleted. Wait for it to finish."),
     "model_not_active": (409, "The selected model is not active. Choose Use model and retry."),
@@ -63,7 +63,7 @@ ENGINE_ERRORS: dict[str, tuple[int, str]] = {
     "validation_error": (422, "The engine rejected the request fields."),
     "engine_unavailable": (503, "The transcription engine is not ready. Try again shortly."),
     "engine_timeout": (504, "Transcription timed out. Stop recording and retry transcription."),
-    "engine_error": (502, "The transcription engine could not process the audio."),
+    "engine_error": (502, "The transcription engine returned an unexpected response. Try again."),
 }
 
 
