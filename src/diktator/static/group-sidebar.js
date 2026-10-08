@@ -93,8 +93,8 @@ export class GroupSidebar {
     return button;
   }
 
-  /** @param {Group[]} groups @param {ChatSummary[]} chats @param {string | null} draftGroup @param {boolean} draft @param {boolean} searching @param {(summary: ChatSummary | null) => HTMLElement} item */
-  render(groups, chats, draftGroup, draft, searching, item) {
+  /** @param {Group[]} groups @param {ChatSummary[]} chats @param {string | null} draftGroup @param {boolean} draft @param {boolean} searching @param {(summary: ChatSummary | null) => HTMLElement} item @param {string | null | undefined} [pinnedGroupId] */
+  render(groups, chats, draftGroup, draft, searching, item, pinnedGroupId = undefined) {
     this.groups = groups;
     this.buttons = [];
     const visibleGroups = [...groups];
@@ -119,7 +119,7 @@ export class GroupSidebar {
         const content = node("ul", "group-chats");
         content.id = `group-chats-${key}`;
         content.setAttribute("aria-label", `${name} chats`);
-        const expanded = searching || !this.folds.has(key);
+        const expanded = searching || !this.folds.has(key) || pinnedGroupId === groupId;
         content.hidden = !expanded;
         const fold = /** @type {HTMLButtonElement} */ (node("button", "group-fold", name));
         fold.type = "button";
