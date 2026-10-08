@@ -16,4 +16,6 @@ services:
     restart: unless-stopped
 volumes:
   data:
+    name: ${DIKTATOR_DATA_VOLUME:-${COMPOSE_PROJECT_NAME}_data}
   models:
+    name: ${DIKTATOR_MODELS_VOLUME:-${COMPOSE_PROJECT_NAME}_models}

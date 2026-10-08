@@ -5,14 +5,12 @@
 !uv.lock
 !README.md
 !LICENSE.md
-!engine/
 !engine/pyproject.toml
 !engine/uv.lock
 !src/
 !src/**
 src/**/__pycache__/
 src/**/*.pyc
-!packaging/
 !packaging/inventory.py
 !docs/
 !docs/**

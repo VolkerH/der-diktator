@@ -4,10 +4,17 @@ FROM ghcr.io/astral-sh/uv:0.10.8@sha256:88234bc9e09c2b2f6d176a3daf411419eb0370d4
 FROM python:3.12.12-slim-bookworm@sha256:593bd06efe90efa80dc4eee3948be7c0fde4134606dd40d8dd8dbcade98e669c AS runtime
 ARG TARGETARCH
 RUN test "$TARGETARCH" = amd64
-# A fixed Debian snapshot keeps native dependency resolution reproducible.
+# Keep all three suites on the same snapshot, newer than the pinned base image.
+# Refresh the base digest and this date together, then rebuild and run smoke tests.
+ARG DEBIAN_SNAPSHOT=20260301T000000Z
 RUN rm /etc/apt/sources.list.d/debian.sources \
-    && printf '%s\n' 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20260301T000000Z bookworm main' > /etc/apt/sources.list \
+    && printf '%s\n' \
+      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT} bookworm main" \
+      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT} bookworm-updates main" \
+      "deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT} bookworm-security main" \
+      > /etc/apt/sources.list \
     && apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends libgomp1 libstdc++6 tini \
     && rm -rf /var/lib/apt/lists/*
 
@@ -15,8 +22,14 @@ FROM runtime AS build
 COPY --from=uv /uv /usr/local/bin/uv
 ENV UV_PYTHON_DOWNLOADS=never UV_LINK_MODE=copy
 WORKDIR /opt/diktator
-COPY pyproject.toml uv.lock README.md LICENSE.md ./
+COPY pyproject.toml uv.lock ./
 COPY engine/pyproject.toml engine/uv.lock ./engine/
+# Exclude the local application from both environments while caching third-party wheels.
+# The engine is virtual, so --no-install-project alone would still install diktator.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-dev --no-install-project \
+    && uv sync --project engine --locked --no-dev --no-install-project --no-install-package diktator
+COPY README.md LICENSE.md ./
 COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-editable \

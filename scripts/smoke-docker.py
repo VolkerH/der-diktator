@@ -83,6 +83,49 @@ assert torch.version.cuda is None
 print("All native backend imports and SQLAlchemy compiled extensions passed; Torch is CPU-only")
 """
 
+# Wait for the real engine before launching the real web CLI against the bad
+# data path. This isolates the storage failure from unrelated engine startup
+# failures and lets the harness verify peer shutdown before the container exits.
+UNWRITABLE = r"""
+import os, pathlib, sys
+from diktator.container import supervise
+engine = ["/opt/diktator/engine/.venv/bin/python", "-m", "diktator.inference", "serve"]
+engine_start = (
+    "import os, pathlib; pathlib.Path('/tmp/engine.pid').write_text(str(os.getpid())); "
+    f"os.execv({engine[0]!r}, {engine!r})"
+)
+web_start = '''
+import os, time, urllib.request
+from urllib.error import URLError
+deadline = time.monotonic() + 20
+while True:
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8010/models", timeout=1) as response:
+            assert response.status == 200
+        break
+    except URLError:
+        if time.monotonic() >= deadline:
+            raise
+        time.sleep(.1)
+print("Engine ready before unwritable-data check", flush=True)
+os.execv("/opt/diktator/.venv/bin/diktator",
+         ["diktator", "--host", "0.0.0.0", "--port", "8080"])
+'''
+result = supervise(
+    [[engine[0], "-c", engine_start], [sys.executable, "-c", web_start]], grace_seconds=5
+)
+assert result != 0
+engine_pid = int(pathlib.Path("/tmp/engine.pid").read_text())
+try:
+    os.killpg(engine_pid, 0)
+except ProcessLookupError:
+    pass
+else:
+    raise AssertionError("Engine process group survived web startup failure")
+print("Engine process group stopped after data failure", flush=True)
+raise SystemExit(result)
+"""
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -172,13 +215,29 @@ def main() -> None:
             "/tmp",
             "--env",
             "DIKTATOR_DATA_DIR=/unwritable",
+            "--mount",
+            f"source={volumes[1]},target=/models",
+            "--entrypoint",
+            "/usr/bin/tini",
             image,
+            "--",
+            "/opt/diktator/.venv/bin/python",
+            "-c",
+            UNWRITABLE,
         )
         result = subprocess.run(
             ["docker", "wait", name], text=True, capture_output=True, timeout=30
         )
         assert result.returncode == 0 and int(result.stdout) != 0
-        print("Unwritable data directory fails startup; supervisor stops both services")
+        logs = subprocess.check_output(
+            ["docker", "logs", name], text=True, stderr=subprocess.STDOUT
+        )
+        assert "Engine ready before unwritable-data check" in logs
+        assert "/unwritable" in logs and (
+            "Read-only file system" in logs or "Permission denied" in logs
+        )
+        assert "Engine process group stopped after data failure" in logs
+        print("Unwritable data fails web startup after engine readiness; engine group stopped")
     finally:
         with suppress(subprocess.CalledProcessError):
             docker("rm", "--force", name)

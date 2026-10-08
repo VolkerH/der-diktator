@@ -22,8 +22,10 @@ then select **Use model**. The image contains all runtime dependencies and no
 weights. Starting it performs no package installation or model download. An
 already selected, installed model loads again on restart.
 
-Compose publishes only `127.0.0.1:8080`. Choose a free host port with
-`DIKTATOR_PORT=8081 docker compose up -d --no-build`. The inference services stay
+Compose publishes only `127.0.0.1:8080`. For a different host port, set
+`DIKTATOR_PORT=8081` in the project's `.env` file, then run
+`docker compose up -d --no-build`. Keep persistent deployment choices in that
+file so later Compose commands use the same values. The inference services stay
 on container loopback ports 8010 and 8011; do not publish them.
 For phone microphone access use HTTPS through a private reverse proxy or VPN,
 as described in [Using it from your phone](../README.md#using-it-from-your-phone).
@@ -51,16 +53,19 @@ requires internet access; installed models support offline startup.
 The process runs as UID/GID **10001:10001**. Docker initializes new named volumes
 with the image directories' ownership. Keep the Compose project name `diktator`
 stable to reuse `diktator_data` and `diktator_models`; a different project name
-selects different volumes. `docker compose down` preserves them. **Do not use
+selects different volumes unless explicit volume names are saved in `.env`.
+`docker compose down` preserves them. **Do not use
 `down --volumes` for an upgrade**: it deletes the stored application data.
 
-| Setting                | Container value      | Purpose                                                        |
-| ---------------------- | -------------------- | -------------------------------------------------------------- |
-| `DIKTATOR_DATA_DIR`    | `/data`              | SQLite, preferences, chats, recordings and migration snapshots |
-| `DIKTATOR_MODELS_DIR`  | `/models`            | Installed weights, download staging and saved model selection  |
-| `DIKTATOR_CPU_THREADS` | `4` in Compose       | Existing Parakeet/Whisper CPU setting                          |
-| `DIKTATOR_PORT`        | `8080`               | Compose host port only; container web port stays 8080          |
-| `DIKTATOR_IMAGE`       | `der-diktator:local` | Compose image tag; use a versioned tag for upgrades            |
+| Setting                  | Container value      | Purpose                                                        |
+| ------------------------ | -------------------- | -------------------------------------------------------------- |
+| `DIKTATOR_DATA_DIR`      | `/data`              | SQLite, preferences, chats, recordings and migration snapshots |
+| `DIKTATOR_MODELS_DIR`    | `/models`            | Installed weights, download staging and saved model selection  |
+| `DIKTATOR_CPU_THREADS`   | `4` in Compose       | Existing Parakeet/Whisper CPU setting                          |
+| `DIKTATOR_PORT`          | `8080`               | Compose host port only; container web port stays 8080          |
+| `DIKTATOR_IMAGE`         | `der-diktator:local` | Compose image tag; use a versioned tag for upgrades            |
+| `DIKTATOR_DATA_VOLUME`   | `<project>_data`     | Compose data volume name; persist a restored volume here       |
+| `DIKTATOR_MODELS_VOLUME` | `<project>_models`   | Compose model volume name; persist a restored volume here      |
 
 Changing a directory environment variable requires a corresponding writable
 mount at that path. The launcher owns the inference endpoint and fixes
@@ -117,26 +122,41 @@ migration snapshots under `/data/backups` contain SQLite only and cannot replace
 that backup. Also save the model volume to avoid downloading weights again and
 to retain model selection. Stop both services before copying either volume.
 
-These commands use Compose's default volume names and the already built image:
+These commands discover the active image and named volumes from the existing
+Compose container, including deployments that have already been restored:
 
 ```sh
 mkdir -p backups
 docker compose stop
-# Keep the old image locally for a possible rollback.
-docker image tag der-diktator:local der-diktator:before-upgrade
+container_id=$(docker compose ps --all --quiet diktator)
+data_volume=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "$container_id")
+models_volume=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/models"}}{{.Name}}{{end}}{{end}}' "$container_id")
+# Keep the actual old image locally for a possible rollback.
+docker image tag "$(docker inspect --format '{{.Image}}' "$container_id")" der-diktator:before-upgrade
 # Each archive is streamed to the host; no host-directory permission adjustment is needed.
-docker run --rm --entrypoint tar --mount source=diktator_data,target=/data,readonly \
+docker run --rm --entrypoint tar --mount "source=$data_volume,target=/data,readonly" \
   der-diktator:before-upgrade -C /data -czf - . > backups/data.tar.gz
-docker run --rm --entrypoint tar --mount source=diktator_models,target=/models,readonly \
+docker run --rm --entrypoint tar --mount "source=$models_volume,target=/models,readonly" \
   der-diktator:before-upgrade -C /models -czf - . > backups/models.tar.gz
 ```
 
 Check that the archives list and extract successfully before upgrading. Store
 them separately from the Docker host. Build a selected source revision with
-`./scripts/build-docker.sh der-diktator:next`, then run:
+`./scripts/build-docker.sh der-diktator:next`. Create or edit the project's `.env`
+file and set this key, preserving its other settings:
+
+```dotenv
+DIKTATOR_IMAGE=der-diktator:next
+```
+
+Then verify the resolved image and start it. Shell environment variables take
+precedence over `.env`; remove an old exported override if the resolved image
+does not match. Do not select an upgrade image only for a single command:
+ordinary subsequent Compose commands must keep selecting the new image.
 
 ```sh
-DIKTATOR_IMAGE=der-diktator:next docker compose up -d --no-build
+docker compose config --images
+docker compose up -d --no-build
 docker compose logs --tail=100
 docker compose ps
 ```
@@ -152,32 +172,57 @@ schema; changing only the image is not a database downgrade.
 
 ```sh
 docker compose down
-docker volume create diktator_restored_data
-docker volume create diktator_restored_models
+restore_id=$(date -u +%Y%m%dT%H%M%SZ)
+restored_data="diktator_restored_data_$restore_id"
+restored_models="diktator_restored_models_$restore_id"
+docker volume create "$restored_data"
+docker volume create "$restored_models"
 # Root is used only by these one-shot restore commands to preserve archived ownership.
 docker run --rm -i --user 0:0 --entrypoint tar \
-  --mount source=diktator_restored_data,target=/data \
+  --mount "source=$restored_data,target=/data" \
   der-diktator:before-upgrade -C /data -xzf - < backups/data.tar.gz
 docker run --rm -i --user 0:0 --entrypoint tar \
-  --mount source=diktator_restored_models,target=/models \
+  --mount "source=$restored_models,target=/models" \
   der-diktator:before-upgrade -C /models -xzf - < backups/models.tar.gz
-docker run -d --name diktator-restored --publish 127.0.0.1:8080:8080 \
-  --mount source=diktator_restored_data,target=/data \
-  --mount source=diktator_restored_models,target=/models \
-  --stop-timeout 30 der-diktator:before-upgrade
+# These are the three entries to set in .env for the restored deployment.
+printf 'DIKTATOR_IMAGE=der-diktator:before-upgrade\nDIKTATOR_DATA_VOLUME=%s\nDIKTATOR_MODELS_VOLUME=%s\n' \
+  "$restored_data" "$restored_models"
 ```
 
-Retain the failed upgrade volumes for diagnosis. If your original image tag or
-Compose project differs, substitute its names throughout this procedure.
+Update those three keys in `.env`, preserving the other entries such as
+`DIKTATOR_CPU_THREADS` and `DIKTATOR_PORT`. Run `docker compose config` and check
+the image and both resolved volume names before starting:
+
+```sh
+docker compose up -d --no-build
+docker compose logs --tail=100
+docker compose ps
+```
+
+The restored deployment remains under Compose, with its restart policy, CPU
+setting, and selected volumes. Later ordinary Compose commands keep using the
+restored volumes. Retain the failed upgrade volumes for diagnosis; do not point
+the older image at them. These examples cover named volumes; host bind mounts
+need their own stopped-directory backup and restore procedure.
+Compose may report that the restored volumes were created outside Compose;
+it still mounts the explicit names selected above.
 
 ## Build inputs, licenses and validation
 
 The Dockerfile pins the Python and uv images by digest, the Debian package
-snapshot by date, and uses both committed uv lockfiles with `--locked`. Both
+snapshots by date for `bookworm`, `bookworm-updates`, and `bookworm-security`
+(the latter from the separate Debian security archive), and uses both committed
+uv lockfiles with `--locked`. Both
 application installs are non-editable and include static assets and migrations.
 Node and source checkout metadata are excluded. This fixes dependency inputs;
 it does not promise byte-identical image archives. Refresh the base digests and
-snapshot together for security updates, and repeat validation before release.
+snapshot date together for security updates, and repeat validation before release.
+The date must cover the base image's package versions. Frozen security sources
+provide updates available at that snapshot, not automatic current updates.
+Native packages are upgraded from these coherent sources before installation.
+Third-party Python dependencies are installed before copying application source,
+so source edits reuse that build layer. Local virtual environments are excluded
+from the build context.
 The layout follows [uv's Docker guide](https://docs.astral.sh/uv/guides/integration/docker/)
 and [Docker's process-management guidance](https://docs.docker.com/engine/containers/multi-service_container/).
 

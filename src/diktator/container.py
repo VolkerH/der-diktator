@@ -18,9 +18,17 @@ from types import FrameType
 
 
 def signal_group(process: subprocess.Popen[bytes], signum: int) -> None:
-    """Include downloads and Fermion even after their immediate parent exits."""
+    """Signal an owned group while its unreaped leader still reserves the PID."""
     with suppress(ProcessLookupError):
         os.killpg(process.pid, signum)
+
+
+def exit_status(process: subprocess.Popen[bytes]) -> int | None:
+    """Observe a Linux child without releasing its PID for another process group."""
+    result = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+    if result is None:
+        return None
+    return result.si_status if result.si_code == os.CLD_EXITED else -result.si_status
 
 
 def supervise(commands: Sequence[Sequence[str]], *, grace_seconds: float = 15) -> int:
@@ -35,10 +43,12 @@ def supervise(commands: Sequence[Sequence[str]], *, grace_seconds: float = 15) -
     previous = {signum: signal.signal(signum, stop) for signum in (signal.SIGTERM, signal.SIGINT)}
     try:
         for command in commands:
+            if stopped:
+                break
             processes.append(subprocess.Popen(command, start_new_session=True))
         while not stopped:
             for process in processes:
-                result = process.poll()
+                result = exit_status(process)
                 if result is not None:
                     print(
                         f"Service PID {process.pid} exited with status {result}",
@@ -53,10 +63,14 @@ def supervise(commands: Sequence[Sequence[str]], *, grace_seconds: float = 15) -
         for process in processes:
             signal_group(process, signal.SIGTERM)
         deadline = time.monotonic() + grace_seconds
-        for process in processes:
-            with suppress(subprocess.TimeoutExpired):
-                process.wait(timeout=max(0, deadline - time.monotonic()))
-        # Always remove remaining descendants, including children of exited parents.
+        pending = list(processes)
+        while pending and time.monotonic() < deadline:
+            pending = [process for process in pending if exit_status(process) is None]
+            if pending:
+                time.sleep(min(0.05, max(0, deadline - time.monotonic())))
+        # Keep leaders unreaped until the last group signal, including for exited
+        # leaders whose downloads/Fermion children may still be alive. poll()/wait()
+        # before this point would let the kernel reuse their process-group IDs.
         for process in processes:
             signal_group(process, signal.SIGKILL)
             process.wait()

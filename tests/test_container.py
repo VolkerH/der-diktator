@@ -5,6 +5,7 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Sequence
 from contextlib import suppress
 from pathlib import Path
 from unittest.mock import patch
@@ -49,6 +50,53 @@ def test_start_failure_stops_already_started_service(tmp_path: Path) -> None:
         if peer.poll() is None:
             peer.kill()
             peer.wait()
+
+
+def test_group_signals_never_target_a_reaped_leader() -> None:
+    # An exited child must still be waitable during every group signal. Otherwise
+    # its PID could already identify an unrelated exec/healthcheck process group.
+    killpg = os.killpg
+    observed: list[tuple[int, int]] = []
+
+    def check_owned_group(pid: int, signum: int) -> None:
+        os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        observed.append((pid, signum))
+        killpg(pid, signum)
+
+    with patch("diktator.container.os.killpg", side_effect=check_owned_group):
+        assert supervise([python("raise SystemExit(7)")], grace_seconds=0.1) == 7
+    assert [signum for _, signum in observed] == [signal.SIGTERM, signal.SIGKILL]
+    with pytest.raises(ChildProcessError):
+        os.waitid(os.P_PID, observed[0][0], os.WEXITED | os.WNOHANG | os.WNOWAIT)
+
+
+def test_stop_during_startup_does_not_launch_the_next_service(tmp_path: Path) -> None:
+    started = tmp_path / "second-service-started"
+    popen = subprocess.Popen
+    children: list[subprocess.Popen[bytes]] = []
+
+    def stop_after_launch(
+        command: Sequence[str], *, start_new_session: bool
+    ) -> subprocess.Popen[bytes]:
+        process = popen(command, start_new_session=start_new_session)
+        children.append(process)
+        os.kill(os.getpid(), signal.SIGTERM)
+        return process
+
+    with patch("diktator.container.subprocess.Popen", side_effect=stop_after_launch):
+        assert (
+            supervise(
+                [
+                    python("import time; time.sleep(60)"),
+                    python(f"from pathlib import Path; Path({str(started)!r}).touch()"),
+                ],
+                grace_seconds=0.1,
+            )
+            == 143
+        )
+    assert len(children) == 1
+    assert children[0].returncode is not None
+    assert not started.exists()
 
 
 def test_termination_escalates_and_reaps_owned_children(tmp_path: Path) -> None:
