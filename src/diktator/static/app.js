@@ -1267,8 +1267,18 @@ function performTitleSave(editing, customTitle, restoreFocus) {
       updateSummaryTitle(targetId, saved);
       editing.saving = false;
       closeTitleEdit(editing, false);
+      const focusGeneration = titleLoadGeneration;
+      const savedNavigationGeneration = navigationGeneration;
+      const focusAfterClose = document.activeElement;
       await refreshChats();
-      if (restoreFocus) restoreTitleFocus(editing);
+      if (
+        restoreFocus &&
+        titleEdit === null &&
+        titleLoadGeneration === focusGeneration &&
+        navigationGeneration === savedNavigationGeneration &&
+        document.activeElement === focusAfterClose
+      )
+        restoreTitleFocus(editing);
       return true;
     } catch (error) {
       if (titleEdit !== editing || editing.generation !== navigationGeneration) return false;
@@ -1290,7 +1300,7 @@ function performTitleSave(editing, customTitle, restoreFocus) {
           updateSummaryTitle(editing.chatId, latest);
           editing.error =
             customTitle === null
-              ? `The current name is “${latest.title}”. Choose Auto again to use the automatic name.`
+              ? `The current name is “${latest.title}”. Choose “Use automatic name” again to restore it.`
               : `The current name is “${latest.title}”. Save again to use your name.`;
           await refreshChats();
         } catch {

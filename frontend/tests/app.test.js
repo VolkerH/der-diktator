@@ -1637,7 +1637,7 @@ test("automatic-name conflict asks for Auto again and keeps that explicit reset 
   await app.element("title-reset").emit("click");
   await settle();
   assert.equal(target.title, "Remote name");
-  assert.match(app.element("title-error").textContent, /Choose Auto again/);
+  assert.match(app.element("title-error").textContent, /Use automatic name.*again/);
   await app.element("title-reset").emit("click");
   await settle();
   assert.equal(target.custom_title, null);
@@ -2647,6 +2647,112 @@ test("successful title save closes its inline editor before a delayed sidebar re
   await settle();
   assert.equal(app.element("chat-title").disabled, false);
   assert.equal(app.element("chat-title").textContent, "Renamed");
+});
+
+test("an older title refresh cannot blur a newly opened sidebar editor", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    server.add("First");
+    server.add("Second");
+  });
+  const fetch = globalThis.fetch;
+  let finishRefresh;
+  let titleWrites = 0;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url).endsWith("/title") && options?.method === "PUT") titleWrites++;
+    if (url === "/api/chats")
+      await new Promise((resolve) => {
+        finishRefresh = resolve;
+      });
+    return fetch(url, options);
+  });
+  await openSidebarRename(app, 1);
+  await submitTitle(app, "Saved name");
+  for (let attempt = 0; attempt < 20 && !finishRefresh; attempt++) await setImmediate();
+  assert.equal(typeof finishRefresh, "function");
+  assert.equal(inlineTitleEditor(app), null);
+  assert.equal(titleWrites, 1);
+
+  const targetRow = () => chatItems(app).find((row) => row.getAttribute("data-chat-id") === id(2));
+  await chatAction(targetRow(), "Rename").emit("click", { stopPropagation() {} });
+  await settle();
+  const input = app.element("title-input");
+  assert.ok(inlineTitleEditor(app));
+  input.value = "A newer proposal";
+  await input.emit("input");
+  input.setSelectionRange(3, 9);
+  assert.equal(globalThis.document.activeElement, input);
+
+  finishRefresh();
+  await settle();
+  assert.ok(inlineTitleEditor(app));
+  assert.equal(app.element("title-input").value, "A newer proposal");
+  assert.deepEqual(
+    [app.element("title-input").selectionStart, app.element("title-input").selectionEnd],
+    [3, 9],
+  );
+  assert.equal(titleWrites, 1, "the refresh does not implicitly submit the newer proposal");
+  assert.equal(globalThis.document.activeElement, app.element("title-input"));
+});
+
+test("a delayed title refresh does not steal focus after a transcript click", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  const fetch = globalThis.fetch;
+  let finishRefresh;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (url === "/api/chats")
+      await new Promise((resolve) => {
+        finishRefresh = resolve;
+      });
+    return fetch(url, options);
+  });
+  await openHeadingRename(app);
+  await submitTitle(app, "Renamed");
+  for (let attempt = 0; attempt < 20 && !finishRefresh; attempt++) await setImmediate();
+  assert.equal(typeof finishRefresh, "function");
+  const transcript = app.element("transcript");
+  transcript.focus();
+  finishRefresh();
+  await settle();
+  assert.equal(globalThis.document.activeElement, transcript);
+});
+
+test("a title refresh started before navigation cannot restore its old row focus", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    server.add("First");
+    server.add("Second");
+  });
+  const secondLabel = findByClass(
+    chatItems(app).find((row) => row.getAttribute("data-chat-id") === id(2)),
+    "chat-open",
+  );
+  await secondLabel.emit("click", { detail: 0 });
+  await waitForIdle(app);
+  assert.equal(app.element("chat-title").textContent, "Second");
+  const fetch = globalThis.fetch;
+  let finishRefresh;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (url === "/api/chats")
+      await new Promise((resolve) => {
+        finishRefresh = resolve;
+      });
+    return fetch(url, options);
+  });
+  await openSidebarRename(app, 1);
+  await submitTitle(app, "Renamed second");
+  for (let attempt = 0; attempt < 20 && !finishRefresh; attempt++) await setImmediate();
+  assert.equal(typeof finishRefresh, "function");
+  const firstLabel = findByClass(
+    chatItems(app).find((row) => row.getAttribute("data-chat-id") === id(1)),
+    "chat-open",
+  );
+  await firstLabel.emit("click", { detail: 0 });
+  await waitForIdle(app);
+  assert.equal(app.element("chat-title").textContent, "First");
+  finishRefresh();
+  await settle();
+  assert.equal(app.element("chat-title").textContent, "First");
+  const secondRow = chatItems(app).find((row) => row.getAttribute("data-chat-id") === id(2));
+  assert.notEqual(globalThis.document.activeElement, chatAction(secondRow, "Rename"));
 });
 
 test("the phone drawer stays open when an inline title save has failed", async (t) => {
