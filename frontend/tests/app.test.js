@@ -660,3 +660,27 @@ test("recording and server work disable deletion, including an already open conf
   await app.element("model-delete-confirm").emit("click");
   assert.deepEqual(app.server.modelRequests, []);
 });
+
+for (const [name, body, message] of [
+  ["coded", { detail: "Wait for the model.", code: "model_busy" }, "Wait for the model."],
+  ["legacy", { detail: "Try again later." }, "Try again later."],
+  ["non-string detail", { detail: ["bad input"] }, "The model operation failed. Retry."],
+  ["non-JSON", null, "The model operation failed. Retry."],
+]) {
+  test(`model actions tolerate ${name} errors and keep their message visible`, async (t) => {
+    const app = await appEnvironment(t);
+    const fetch = globalThis.fetch;
+    t.mock.method(globalThis, "fetch", async (url, options) => {
+      if (String(url).includes("/download")) {
+        return body === null
+          ? new Response("gateway", { status: 502 })
+          : Response.json(body, { status: 409 });
+      }
+      return fetch(url, options);
+    });
+    await downloadButton(app, "parakeet-v3").emit("click");
+    assert.equal(app.element("model-error").hidden, false);
+    assert.equal(app.element("model-error").textContent, message);
+    assert.equal(downloadButton(app, "parakeet-v3").disabled, false);
+  });
+}

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { spliceText, titleFor } from "../../src/diktator/static/chats.js";
+import { ApiRequestError } from "../../src/diktator/static/errors.js";
+import { chatApi, spliceText, titleFor } from "../../src/diktator/static/chats.js";
 
 test("transcripts are inserted at the cursor with spaces only where words would touch", () => {
   assert.deepEqual(spliceText("", 0, 0, " Hello. "), { text: "Hello.", caret: 6 });
@@ -25,3 +26,30 @@ test("chat titles match the server's", () => {
   assert.equal(titleFor("Hello  there\nfriend"), "Hello there friend");
   assert.equal(titleFor("word ".repeat(20)), Array(9).fill("word").join(" ") + "…");
 });
+
+for (const [name, payload, message, code] of [
+  [
+    "coded",
+    { detail: "Wait for the model.", code: "model_loading" },
+    "Wait for the model.",
+    "model_loading",
+  ],
+  ["legacy", { detail: "Try again." }, "Try again.", undefined],
+  ["validation array", { detail: [{ msg: "bad" }] }, "The request failed. Try again.", undefined],
+  ["invalid code", { detail: "Try again.", code: 42 }, "Try again.", undefined],
+  ["non-JSON", null, "The request failed. Try again.", undefined],
+]) {
+  test(`chat API keeps a useful message and optional code for ${name} errors`, async (t) => {
+    t.mock.method(globalThis, "fetch", async () =>
+      payload === null
+        ? new Response("gateway", { status: 502 })
+        : Response.json(payload, { status: 409 }),
+    );
+    await assert.rejects(chatApi.list(), (error) => {
+      assert.ok(error instanceof ApiRequestError);
+      assert.equal(error.message, message);
+      assert.equal(error.code, code);
+      return true;
+    });
+  });
+}

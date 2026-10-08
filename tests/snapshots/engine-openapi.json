@@ -1,0 +1,442 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Diktator model service",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/models": {
+      "get": {
+        "summary": "Models",
+        "operationId": "models_models_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelsStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "type": "object",
+                  "title": "Response Health Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/models/{model_id}/download": {
+      "post": {
+        "summary": "Download",
+        "operationId": "download_models__model_id__download_post",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": ["phonon-2", "parakeet-v3", "whisper-large-v3-turbo"],
+              "type": "string",
+              "title": "Model Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelsStatus"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        }
+      }
+    },
+    "/models/{model_id}/activate": {
+      "post": {
+        "summary": "Activate",
+        "operationId": "activate_models__model_id__activate_post",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": ["phonon-2", "parakeet-v3", "whisper-large-v3-turbo"],
+              "type": "string",
+              "title": "Model Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelsStatus"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        }
+      }
+    },
+    "/models/{model_id}/delete": {
+      "post": {
+        "summary": "Delete",
+        "operationId": "delete_models__model_id__delete_post",
+        "parameters": [
+          {
+            "name": "model_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "enum": ["phonon-2", "parakeet-v3", "whisper-large-v3-turbo"],
+              "type": "string",
+              "title": "Model Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelsStatus"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        }
+      }
+    },
+    "/transcribe": {
+      "post": {
+        "summary": "Transcribe",
+        "operationId": "transcribe_transcribe_post",
+        "parameters": [
+          {
+            "name": "model",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": ["phonon-2", "parakeet-v3", "whisper-large-v3-turbo"],
+              "type": "string",
+              "title": "Model"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Transcription"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApiError": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": ["detail", "code"],
+        "title": "ApiError",
+        "description": "An actionable public failure; context never contains internal diagnostics."
+      },
+      "ModelStatus": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": ["phonon-2", "parakeet-v3", "whisper-large-v3-turbo"],
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "languages": {
+            "type": "string",
+            "title": "Languages"
+          },
+          "language_labels": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Language Labels"
+          },
+          "download_mb": {
+            "type": "integer",
+            "title": "Download Mb"
+          },
+          "live": {
+            "type": "boolean",
+            "title": "Live"
+          },
+          "license": {
+            "type": "string",
+            "title": "License",
+            "default": "CC-BY-4.0"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "installed": {
+            "type": "boolean",
+            "title": "Installed"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "missing",
+              "installed",
+              "downloading",
+              "loading",
+              "deleting",
+              "ready",
+              "error"
+            ],
+            "title": "State"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "languages",
+          "language_labels",
+          "download_mb",
+          "live",
+          "source",
+          "installed",
+          "state"
+        ],
+        "title": "ModelStatus"
+      },
+      "ModelsStatus": {
+        "properties": {
+          "active": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": ["phonon-2", "parakeet-v3", "whisper-large-v3-turbo"]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active"
+          },
+          "preferred": {
+            "type": "string",
+            "enum": ["phonon-2", "parakeet-v3", "whisper-large-v3-turbo"],
+            "title": "Preferred",
+            "default": "phonon-2"
+          },
+          "busy": {
+            "type": "boolean",
+            "title": "Busy"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/ModelStatus"
+            },
+            "type": "array",
+            "title": "Models"
+          }
+        },
+        "type": "object",
+        "required": ["active", "busy", "models"],
+        "title": "ModelsStatus"
+      },
+      "Transcription": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": ["text"],
+        "title": "Transcription",
+        "description": "The transcript returned to the browser."
+      }
+    }
+  }
+}

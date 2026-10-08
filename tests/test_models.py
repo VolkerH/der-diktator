@@ -97,8 +97,9 @@ async def test_cancelled_request_keeps_native_inference_owned_until_completion(
     manager = ModelManager(store, lambda _: backend)
     manager.activate("phonon-2")
     assert manager.job is not None
-    with pytest.raises(ModelConflict, match="loading"):
+    with pytest.raises(ModelConflict, match="loading") as conflict:
         await manager.transcribe("phonon-2", make_wav())
+    assert conflict.value.code == "model_loading"
     await manager.job
     request = asyncio.create_task(manager.transcribe("phonon-2", make_wav()))
     await backend.started.wait()
@@ -350,7 +351,8 @@ async def test_web_proxy_model_routes_and_conflicts(model: str) -> None:
                 path, content=make_wav(), headers={"Content-Type": "audio/wav"}
             )
             assert response.status_code == 409
-            assert response.json()["detail"] == "Finish the current recording first."
+            assert response.json()["code"] == "model_conflict"
+            assert "Finish the current recording first." not in response.text
         assert (await client.post("/api/models/unknown/download")).status_code == 422
     assert len(requests) == 4
     assert requests[-1].url.params["model"] == model
@@ -562,9 +564,10 @@ async def test_whisper_download_install_activate_and_restart(
     await manager.job
     assert manager.active == model and store.preference() == model
     assert await manager.transcribe(model, make_wav()) == "Hallo, this is mixed dictation."
-    with pytest.raises(ModelConflict, match=r"Whisper.*Turn off Live text"):
+    with pytest.raises(ModelConflict, match=r"Whisper.*Turn off Live text") as conflict:
         async with manager.stream(model):
             pytest.fail("Whisper has no live protocol")
+    assert conflict.value.code == "live_transcription_unsupported"
     await manager.close()
     restarted = ModelManager(store, lambda _: FakeBackend())
     await restarted.start()
@@ -703,3 +706,84 @@ async def test_shutdown_waits_for_deletion_worker(
         finish.set()
         await closing
     assert not store.path("parakeet-v3").exists()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "code",
+    ["model_loading", "model_deleting", "model_busy", "model_not_active", "model_not_installed"],
+)
+async def test_engine_http_classifies_model_admission(tmp_path: Path, code: str) -> None:
+    store = ModelStore(tmp_path)
+    install_fixture(store, "phonon-2")
+    backend = FakeBackend()
+    manager = ModelManager(store, lambda _: backend)
+    async with engine_client(manager) as client:
+        assert manager.job is not None
+        await manager.job
+        reserved: asyncio.Task[None] | None = None
+        if code in {"model_loading", "model_deleting"}:
+
+            async def hold_reservation() -> None:
+                await asyncio.Event().wait()
+
+            reserved = asyncio.create_task(hold_reservation())
+            manager.job = reserved
+            manager.job_kind = "load" if code == "model_loading" else "delete"
+        manager.streaming = code == "model_busy"
+        try:
+            path = (
+                "/models/parakeet-v3/activate"
+                if code == "model_not_installed"
+                else "/transcribe?model=parakeet-v3"
+                if code == "model_not_active"
+                else "/transcribe?model=phonon-2"
+            )
+            response = await client.post(path, content=make_wav())
+            assert response.status_code == 409
+            assert response.json()["code"] == code
+            assert isinstance(response.json()["detail"], str)
+        finally:
+            manager.streaming = False
+            if reserved is not None:
+                reserved.cancel()
+                await asyncio.gather(reserved, return_exceptions=True)
+                manager.job = None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/models",
+        "/api/models/phonon-2/download",
+        "/api/models/phonon-2/activate",
+        "/api/models/phonon-2/delete",
+    ],
+)
+@pytest.mark.parametrize("failure", ["timeout", "transport", "invalid", "unknown", "busy"])
+async def test_model_proxy_uses_the_same_failure_mapping(path: str, failure: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if failure == "timeout":
+            raise httpx.ReadTimeout("private", request=request)
+        if failure == "transport":
+            raise httpx.ConnectError("private", request=request)
+        if failure == "invalid":
+            return httpx.Response(200, json=[])
+        return httpx.Response(
+            409,
+            json={"detail": "private", "code": "model_busy" if failure == "busy" else "unknown"},
+        )
+
+    async with client_for(handler) as client:
+        response = await client.request("GET" if path == "/api/models" else "POST", path)
+    status, code = {
+        "timeout": (504, "engine_timeout"),
+        "transport": (503, "engine_unavailable"),
+        "invalid": (502, "engine_error"),
+        "unknown": (502, "engine_error"),
+        "busy": (409, "model_busy"),
+    }[failure]
+    assert response.status_code == status
+    assert response.json()["code"] == code
+    assert "private" not in response.text
