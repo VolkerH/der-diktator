@@ -9,7 +9,7 @@ Acceptance:
   atomic conflicts and a stable error envelope. Reads expose defaults and limits.
 - Export the exact supplied unsaved draft without touching chats or history. Plain output
   preserves bytes represented by the input string; Markdown uses a safe backtick fence.
-- Offer Copy with preamble and an accessible preference dialog. Retain prepared output for
+- Offer prepared copying through Share… and an accessible preference dialog. Retain prepared output for
   clipboard retry/manual copy, ignore stale draft/navigation results, and retain preference
   drafts on failure/conflict. Cancel and Escape restore focus.
 - Document HTTP schemas, bounds, errors, retry semantics and client obligations. Verify API

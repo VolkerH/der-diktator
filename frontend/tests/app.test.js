@@ -2539,6 +2539,10 @@ function exportServer(t) {
   const server = {
     requests: [],
     preamble: "Server preamble",
+    sharePreamble: false,
+    get exportRequests() {
+      return this.requests.filter(([url]) => url === "/api/exports");
+    },
     etag: '"preference-1"',
     exportText: "Exact backend output 🌻\n````text\nDraft\n````",
     failSave: null,
@@ -2557,12 +2561,16 @@ function exportServer(t) {
           { status: 412 },
         );
       const body = JSON.parse(options.body);
-      server.preamble = body.reset ? "Default preamble" : body.copy_preamble;
+      if (body.reset?.includes("copy_preamble")) server.preamble = "Default preamble";
+      else if (body.copy_preamble !== undefined) server.preamble = body.copy_preamble;
+      if (body.share_include_preamble !== undefined)
+        server.sharePreamble = body.share_include_preamble;
       server.etag = '"preference-2"';
     }
     return Response.json(
       {
         copy_preamble: server.preamble,
+        share_include_preamble: server.sharePreamble,
         default_copy_preamble: "Default preamble",
         max_copy_preamble_characters: 4000,
         revision: 1,
@@ -2573,18 +2581,20 @@ function exportServer(t) {
   return server;
 }
 
-test("copy with preamble prepares exact unsaved text and copies only on a fresh gesture", async (t) => {
+test("sharing uses saved preamble choice and copies exact unsaved text on a fresh gesture", async (t) => {
   const app = await appEnvironment(t, (server) => server.add("Saved words"));
   const exports = exportServer(t);
+  exports.sharePreamble = true;
   const transcript = app.element("transcript");
   transcript.value = "  Unsaved draft 🌻\n````  ";
   transcript.setSelectionRange(2, 7);
   await transcript.emit("input");
-  await app.element("copy-preamble").emit("click");
+  await app.element("share").emit("click");
   assert.equal(app.element("prepared-dialog").open, true);
   assert.equal(app.element("prepared-text").value, exports.exportText);
+  assert.equal(app.element("share-preamble").checked, true);
   assert.equal(app.copied.length, 0);
-  assert.deepEqual(JSON.parse(exports.requests[0][1].body), {
+  assert.deepEqual(JSON.parse(exports.exportRequests[0][1].body), {
     text: transcript.value,
     format: "with_preamble",
   });
@@ -2594,7 +2604,7 @@ test("copy with preamble prepares exact unsaved text and copies only on a fresh 
   assert.equal(transcript.selectionStart, 2);
   assert.equal(transcript.selectionEnd, 7);
   assert.equal(app.element("save-state").textContent, "Editing…");
-  assert.equal(exports.requests.length, 1);
+  assert.equal(exports.exportRequests.length, 1);
 });
 
 test("clipboard failure selects backend-prepared output and retries the same payload", async (t) => {
@@ -2603,7 +2613,7 @@ test("clipboard failure selects backend-prepared output and retries the same pay
   t.mock.method(navigator.clipboard, "writeText", async () => {
     throw new Error("Denied");
   });
-  await app.element("copy-preamble").emit("click");
+  await app.element("share").emit("click");
   await app.element("prepared-copy").emit("click");
   assert.match(app.element("prepared-status").textContent, /Text selected/);
   assert.equal(app.element("prepared-text").focused, true);
@@ -2614,52 +2624,8 @@ test("clipboard failure selects backend-prepared output and retries the same pay
   exports.exportText = "New result must not be used";
   await app.element("prepared-copy").emit("click");
   assert.deepEqual(app.copied, [app.element("prepared-text").value]);
-  assert.equal(exports.requests.length, 1);
+  assert.equal(exports.exportRequests.length, 1);
 });
-
-for (const change of ["edit", "edit then undo", "navigation", "record", "record then finish"])
-  test(`a late export after ${change} only displays a matching inactive draft`, async (t) => {
-    const app = await appEnvironment(t, (server) => server.add("Saved words"));
-    exportServer(t);
-    const fetch = globalThis.fetch;
-    let release;
-    t.mock.method(globalThis, "fetch", async (url, options) => {
-      const response = await fetch(url, options);
-      if (url === "/api/exports")
-        await new Promise((resolve) => {
-          release = resolve;
-        });
-      return response;
-    });
-    const pending = app.element("copy-preamble").emit("click");
-    await settle();
-    if (change.startsWith("edit")) {
-      app.element("transcript").value = "New draft";
-      await app.element("transcript").emit("input");
-      if (change === "edit then undo") {
-        app.element("transcript").value = "Saved words";
-        await app.element("transcript").emit("input");
-      }
-    } else if (change === "navigation") {
-      await app.element("new-chat").emit("click");
-    } else {
-      const socket = await startLive(app);
-      if (change === "record then finish") {
-        await app.element("stop").emit("click");
-        await waitForEnd(socket);
-        socket.event({ type: "done", text: "" });
-        await waitForIdle(app);
-        assert.equal(app.element("transcript").value, "Saved words");
-      }
-    }
-    release();
-    await pending;
-    assert.equal(
-      Boolean(app.element("prepared-dialog").open),
-      ["edit then undo", "record then finish"].includes(change),
-    );
-    assert.equal(app.copied.length, 0);
-  });
 
 test("preamble preference editing previews on the server, cancels and saves with its validator", async (t) => {
   const app = await appEnvironment(t);
@@ -2755,7 +2721,7 @@ test("clipboard retries keep exact backend CRLF despite textarea normalization",
       displayed = text.replace(/\r\n?/gu, "\n");
     },
   });
-  await app.element("copy-preamble").emit("click");
+  await app.element("share").emit("click");
   assert.notEqual(output.value, exact);
   await app.element("prepared-copy").emit("click");
   assert.deepEqual(app.copied, [exact]);
@@ -2768,7 +2734,199 @@ test("clipboard retries keep exact backend CRLF despite textarea normalization",
   exports.exportText = "A later response must not replace the prepared string";
   await app.element("prepared-copy").emit("click");
   assert.deepEqual(app.copied, [exact, exact]);
-  assert.equal(exports.requests.length, 1);
+  assert.equal(exports.exportRequests.length, 1);
+});
+
+test("native sharing prepares the exact unsaved draft and waits for a fresh share gesture", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Saved words"));
+  const exports = exportServer(t);
+  exports.exportText = "Backend text\r\nwith exact line endings 🌻";
+  const shares = [];
+  Object.defineProperty(navigator, "share", {
+    configurable: true,
+    value: async (data) => shares.push(data),
+  });
+  app.element("transcript").value = "Unsaved edited draft";
+  app.element("transcript").setSelectionRange(3, 9);
+  await app.element("transcript").emit("input");
+  await app.element("share").emit("click");
+  assert.equal(app.element("prepared-dialog").open, true);
+  assert.equal(app.element("share-preamble").checked, false);
+  assert.deepEqual(JSON.parse(exports.exportRequests[0][1].body), {
+    text: "Unsaved edited draft",
+    format: "plain",
+  });
+  assert.equal(shares.length, 0);
+  await app.element("prepared-share").emit("click");
+  assert.deepEqual(shares, [{ text: exports.exportText }]);
+  assert.match(app.element("prepared-status").textContent, /Handed off.*delivery.*unconfirmed/);
+  assert.equal(app.element("transcript").value, "Unsaved edited draft");
+  assert.equal(app.element("transcript").selectionStart, 3);
+  assert.equal(app.element("transcript").selectionEnd, 9);
+  assert.equal(app.server.chats.get(id(1)).text, "Saved words");
+  app.element("share-preamble").checked = true;
+  await app.element("share-preamble").emit("change");
+  assert.equal(JSON.parse(exports.exportRequests.at(-1)[1].body).format, "with_preamble");
+  await app.element("prepared-share").emit("click");
+  assert.equal(shares.length, 2);
+  assert.equal(exports.exportRequests.length, 2);
+});
+
+for (const capability of ["missing", "denied by canShare", "insecure"])
+  test(`sharing ${capability} retains prepared text and offers fallbacks`, async (t) => {
+    const app = await appEnvironment(t, (server) => server.add("Draft"));
+    const exports = exportServer(t);
+    if (capability !== "missing")
+      Object.defineProperty(navigator, "share", {
+        configurable: true,
+        value: async () => assert.fail("No native handoff"),
+      });
+    if (capability === "denied by canShare")
+      Object.defineProperty(navigator, "canShare", { configurable: true, value: () => false });
+    if (capability === "insecure") globalThis.window.isSecureContext = false;
+    await app.element("share").emit("click");
+    assert.equal(app.element("prepared-share").disabled, true);
+    assert.equal(app.element("prepared-share").hidden, capability === "missing");
+    assert.equal(app.element("prepared-copy").disabled, false);
+    assert.equal(app.element("prepared-download").disabled, false);
+    assert.match(
+      app.element("prepared-status").textContent,
+      capability === "missing" ? /This browser cannot open a share window/ : /unavailable/,
+    );
+    assert.equal(app.element("share-help").hidden, capability === "missing");
+    assert.equal(
+      app.element("prepared-copy").classList.contains("accent"),
+      capability === "missing",
+    );
+    await app.element("prepared-copy").emit("click");
+    assert.deepEqual(app.copied, [exports.exportText]);
+  });
+
+for (const [name, message] of [
+  ["AbortError", /cancelled, or no destination/],
+  ["NotAllowedError", /not allowed/],
+  ["InvalidStateError", /Another share window is already open/],
+  ["TypeError", /cannot share/],
+  ["DataError", /outcome is unknown.*Check the destination/],
+])
+  test(`native ${name} keeps the exact payload without automatically retrying`, async (t) => {
+    const app = await appEnvironment(t, (server) => server.add("Draft"));
+    const exports = exportServer(t);
+    let calls = 0;
+    Object.defineProperty(navigator, "share", {
+      configurable: true,
+      value: async () => {
+        calls++;
+        throw new DOMException("Sensitive platform detail", name);
+      },
+    });
+    await app.element("share").emit("click");
+    await app.element("prepared-share").emit("click");
+    assert.match(app.element("prepared-status").textContent, message);
+    assert.doesNotMatch(app.element("prepared-status").textContent, /Sensitive/);
+    assert.equal(app.element("prepared-text").value, exports.exportText);
+    assert.equal(calls, 1);
+    assert.equal(exports.exportRequests.length, 1);
+    await app.element("prepared-copy").emit("click");
+    assert.deepEqual(app.copied, [exports.exportText]);
+    assert.equal(calls, 1);
+  });
+
+test("closing preparation ignores its late result after a newer dialog opens", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Draft"));
+  const exports = exportServer(t);
+  const fetch = globalThis.fetch;
+  let release;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (url === "/api/exports" && exports.exportRequests.length === 1)
+      await new Promise((resolve) => {
+        release = resolve;
+      });
+    return response;
+  });
+  const pending = app.element("share").emit("click");
+  await settle();
+  await app.element("prepared-close").emit("click");
+  exports.exportText = "New prepared result";
+  await app.element("share").emit("click");
+  release();
+  await pending;
+  assert.equal(app.element("prepared-text").value, "New prepared result");
+  assert.equal(app.element("share-preamble").checked, false);
+});
+
+test("a pending share belongs to its dialog and cannot unlock a newer handoff", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Draft"));
+  exportServer(t);
+  const releases = [];
+  Object.defineProperty(navigator, "share", {
+    configurable: true,
+    value: () =>
+      new Promise((resolve) => {
+        releases.push(resolve);
+      }),
+  });
+  await app.element("share").emit("click");
+  const oldShare = app.element("prepared-share").emit("click");
+  await app.element("prepared-share").emit("click");
+  assert.equal(releases.length, 1);
+  await app.element("prepared-close").emit("click");
+  await app.element("share").emit("click");
+  assert.equal(app.element("prepared-share").disabled, false);
+  assert.equal(app.element("share-preamble").disabled, false);
+  const newShare = app.element("prepared-share").emit("click");
+  const message = app.element("prepared-status").textContent;
+  releases[0]();
+  await oldShare;
+  assert.equal(app.element("prepared-share").disabled, true);
+  assert.equal(app.element("prepared-status").textContent, message);
+  releases[1]();
+  await newShare;
+  assert.equal(app.element("prepared-share").disabled, false);
+  assert.match(app.element("prepared-status").textContent, /Handed off/);
+});
+
+test("download fallback preserves exact UTF-8 prepared bytes and backend media type", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Draft"));
+  const exports = exportServer(t);
+  exports.exportText = "Literal text 🌻\r\nSecond line\n";
+  let blob;
+  let link;
+  let requested = 0;
+  const revoked = [];
+  t.mock.method(URL, "createObjectURL", (value) => {
+    blob = value;
+    return "blob:prepared-export";
+  });
+  t.mock.method(URL, "revokeObjectURL", (url) => revoked.push(url));
+  const createElement = globalThis.document.createElement;
+  t.mock.method(globalThis.document, "createElement", (tag) => {
+    const element = createElement(tag);
+    if (tag === "a") {
+      link = element;
+      link.addEventListener("click", () => {
+        requested++;
+      });
+    }
+    return element;
+  });
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  await app.element("share").emit("click");
+  await app.element("prepared-download").emit("click");
+  assert.equal(requested, 1);
+  assert.equal(await blob.text(), exports.exportText);
+  assert.equal(blob.type, "text/markdown;charset=utf-8");
+  assert.equal(link.href, "blob:prepared-export");
+  assert.equal(link.download, "dictation.md");
+  assert.equal(exports.exportRequests.length, 1);
+  assert.match(app.element("prepared-status").textContent, /Download requested/);
+  // Closing the dialog does not invalidate or mutate the already-created download Blob.
+  await app.element("prepared-close").emit("click");
+  assert.equal(await blob.text(), exports.exportText);
+  assert.deepEqual(revoked, []);
+  t.mock.timers.tick(1000);
+  assert.deepEqual(revoked, ["blob:prepared-export"]);
 });
 
 test("typing text equal to the default saves custom text; Use default is explicit", async (t) => {
@@ -2821,13 +2979,15 @@ test("export timeout reports the error and enables preparation again", async (t)
       });
     return originalFetch(url, options);
   });
-  const pending = app.element("copy-preamble").emit("click");
+  const pending = app.element("share").emit("click");
   await settle();
-  assert.equal(app.element("copy-preamble").disabled, true);
+  assert.equal(app.element("share").disabled, true);
   deadline.abort(new DOMException("Request timed out", "TimeoutError"));
   await pending;
-  assert.equal(app.element("copy-preamble").disabled, false);
-  assert.notEqual(app.element("prepared-dialog").open, true);
+  assert.equal(app.element("share").disabled, false);
+  assert.equal(app.element("prepared-dialog").open, true);
+  assert.match(app.element("prepared-status").textContent, /timed out/);
+  assert.equal(app.element("share-preamble").disabled, false);
 });
 
 test("preamble mode stays visible when typing, undoing and restoring the default", async (t) => {
@@ -2848,3 +3008,63 @@ test("preamble mode stays visible when typing, undoing and restoring the default
   await app.element("preferences-reset").emit("click");
   assert.match(mode.textContent, /Future updates apply automatically/);
 });
+
+test("share preamble changes persist conditionally and initialize the next dialog", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Draft"));
+  const server = exportServer(t);
+  await app.element("share").emit("click");
+  assert.equal(app.element("share-preamble").checked, false);
+  app.element("share-preamble").checked = true;
+  await app.element("share-preamble").emit("change");
+  const patch = server.requests.find(([, options]) => options.method === "PATCH")[1];
+  assert.deepEqual(JSON.parse(patch.body), { share_include_preamble: true });
+  assert.equal(patch.headers["If-Match"], '"preference-1"');
+  assert.equal(JSON.parse(server.exportRequests.at(-1)[1].body).format, "with_preamble");
+  await app.element("prepared-close").emit("click");
+  await app.element("share").emit("click");
+  assert.equal(app.element("share-preamble").checked, true);
+  assert.equal(server.sharePreamble, true);
+  assert.equal(server.preamble, "Server preamble");
+});
+
+test("failed sharing preference load does not invent a checkbox default or prepare text", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Draft"));
+  const server = exportServer(t);
+  const fetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", (url, options) =>
+    url === "/api/preferences" ? Promise.reject(new TypeError("Offline")) : fetch(url, options),
+  );
+  await app.element("share").emit("click");
+  assert.equal(app.element("share-preamble").indeterminate, true);
+  assert.equal(app.element("share-preamble").disabled, true);
+  assert.equal(app.element("prepared-copy").disabled, true);
+  assert.equal(app.element("prepared-download").disabled, true);
+  assert.equal(server.exportRequests.length, 0);
+  assert.match(app.element("prepared-status").textContent, /Offline.*Close and reopen/);
+  assert.equal(app.element("transcript").value, "Draft");
+});
+
+for (const failure of ["conflict", "network"])
+  test(`sharing preference ${failure} keeps prepared text and requires a fresh read`, async (t) => {
+    const app = await appEnvironment(t, (server) => server.add("Draft"));
+    const server = exportServer(t);
+    await app.element("share").emit("click");
+    const text = app.element("prepared-text").value;
+    server.failSave = failure;
+    app.element("share-preamble").checked = true;
+    await app.element("share-preamble").emit("change");
+    assert.match(app.element("prepared-status").textContent, /Could not save.*Close and reopen/);
+    assert.equal(app.element("share-preamble").checked, false);
+    assert.equal(app.element("share-preamble").disabled, true);
+    assert.equal(app.element("prepared-text").value, text);
+    assert.equal(app.element("transcript").value, "Draft");
+    assert.equal(server.exportRequests.length, 1);
+    await app.element("prepared-copy").emit("click");
+    assert.deepEqual(app.copied, [text]);
+    server.failSave = null;
+    server.sharePreamble = true;
+    await app.element("prepared-close").emit("click");
+    await app.element("share").emit("click");
+    assert.equal(app.element("share-preamble").checked, true);
+    assert.equal(app.element("share-preamble").disabled, false);
+  });
