@@ -27,7 +27,9 @@ the transcript.
   actor, unique operation IDs, and versioned payloads.
 - **Document revision**, **chat event sequence**, and **metadata revisions** are separate
   counters. A title change or a recording is not a text operation.
-- Imported chats start with a **baseline snapshot**; earlier edits cannot be reconstructed.
+- Imported chats start with a **baseline snapshot** of the transcript as it was at import time
+  (recorded during import, see [0001](0001-sqlite-persistence.md)); earlier edits cannot be
+  reconstructed.
 - **Generating** a transcription or correction is separate from **applying** it. Applying is an
   idempotent document edit with a base revision and an anchor, rechecking membership and target
   when it happens. #7's preview/accept flow stays. Provenance stores the source revision and
