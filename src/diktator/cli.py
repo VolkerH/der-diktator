@@ -6,12 +6,8 @@ from pathlib import Path
 import uvicorn
 
 from diktator.app import create_app
-from diktator.config import (
-    Settings,
-    default_data_directory,
-    legacy_data_directories,
-    migrate_chats,
-)
+from diktator.config import Settings, default_data_directory
+from diktator.db import DATABASE_NAME
 
 
 def main() -> None:
@@ -38,12 +34,8 @@ def main() -> None:
     settings = Settings.from_environment(
         arguments.data_dir.expanduser() if arguments.data_dir else None
     )
-    if settings.data_directory == default_data_directory():
-        for legacy in legacy_data_directories():
-            if migrate_chats(legacy, settings.data_directory):
-                print(f"Moved existing chats from {legacy}", flush=True)
-                break
     print(f"Storing chats in {settings.data_directory}", flush=True)
+    print(f"Database: {settings.data_directory / DATABASE_NAME}", flush=True)
     uvicorn.run(
         create_app(settings),
         host=arguments.host,

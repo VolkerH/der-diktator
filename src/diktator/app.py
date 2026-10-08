@@ -6,15 +6,19 @@ from contextlib import asynccontextmanager, suppress
 from typing import Annotated
 
 import httpx
-from fastapi import FastAPI, HTTPException, Path, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Path, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocketState
 from websockets.exceptions import WebSocketException
 
 from diktator.audio import RecordingInfo, validate_recording
-from diktator.chats import Chat, ChatStore, ChatSummary, Recording
-from diktator.config import Settings
+from diktator.chats import Chat, ChatService, ChatSummary, Recording
+from diktator.config import Settings, default_data_directory, legacy_data_directories, migrate_chats
+from diktator.db import DATABASE_NAME, DataDirectoryLock, open_engine, upgrade_schema
+from diktator.db.legacy import import_legacy, sweep_orphans
+from diktator.db.rows import LOCAL_USER_ID
 from diktator.engine import EngineClient, Transcription
 from diktator.errors import (
     ApiFailure,
@@ -52,7 +56,38 @@ def create_app(
         trust_env=False,
     )
     engine = EngineClient(client)
-    store = ChatStore(settings.data_directory)
+    ownership = DataDirectoryLock(settings.data_directory)
+    store: ChatService
+
+    def start_storage() -> ChatService:
+        ownership.acquire()
+        database = None
+        try:
+            if settings.data_directory == default_data_directory():
+                for legacy in legacy_data_directories():
+                    if migrate_chats(legacy, settings.data_directory):
+                        break
+            database = open_engine(settings.data_directory / DATABASE_NAME)
+            upgrade_schema(database, settings.data_directory)
+            import_legacy(database, settings.data_directory)
+            sweep_orphans(database, settings.data_directory)
+            return ChatService(settings.data_directory, database)
+        except BaseException:
+            if database is not None:
+                database.dispose()
+            ownership.release()
+            raise
+
+    def stop_storage() -> None:
+        try:
+            store.engine.dispose()
+        finally:
+            ownership.release()
+
+    def local_actor() -> str:
+        return LOCAL_USER_ID
+
+    Actor = Annotated[str, Depends(local_actor)]
 
     class TextUpdate(BaseModel):
         text: str = Field(max_length=settings.max_text_characters)
@@ -67,8 +102,13 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        async with client:
-            yield
+        nonlocal store
+        store = await run_in_threadpool(start_storage)
+        try:
+            async with client:
+                yield
+        finally:
+            await run_in_threadpool(stop_storage)
 
     app = FastAPI(title="Der Diktator", lifespan=lifespan)
     install_error_handlers(app)
@@ -134,7 +174,9 @@ def create_app(
             audio.extend(chunk)
         recording = bytes(audio)
         try:
-            info = validate_recording(recording, max_duration_seconds=settings.max_duration_seconds)
+            info = await run_in_threadpool(
+                validate_recording, recording, max_duration_seconds=settings.max_duration_seconds
+            )
         except ValueError as error:
             raise ApiFailure(str(error), "invalid_audio", 400) from error
         return recording, info
@@ -145,47 +187,52 @@ def create_app(
         return await engine.transcribe(recording, model)
 
     @app.get("/api/chats")
-    async def list_chats() -> list[ChatSummary]:
-        return store.list()
+    def list_chats(actor_id: Actor) -> list[ChatSummary]:
+        return store.list(actor_id)
 
     @app.post("/api/chats", status_code=201)
-    async def create_chat() -> Chat:
-        return store.create()
+    def create_chat(actor_id: Actor) -> Chat:
+        return store.create(actor_id)
 
     @app.get("/api/chats/{chat_id}", responses=error_responses(404, 422))
-    async def get_chat(chat_id: ChatId) -> Chat:
-        return store.get(chat_id)
+    def get_chat(chat_id: ChatId, actor_id: Actor) -> Chat:
+        return store.get(actor_id, chat_id)
 
     @app.put("/api/chats/{chat_id}/text", responses=error_responses(404, 422))
-    async def update_text(chat_id: ChatId, update: TextUpdate) -> Chat:
-        return store.update_text(chat_id, update.text)
+    def update_text(chat_id: ChatId, update: TextUpdate, actor_id: Actor) -> Chat:
+        return store.update_text(actor_id, chat_id, update.text)
 
     @app.delete("/api/chats/{chat_id}", status_code=204, responses=error_responses(404, 422))
-    async def delete_chat(chat_id: ChatId) -> None:
-        store.delete(chat_id)
+    def delete_chat(chat_id: ChatId, actor_id: Actor) -> None:
+        store.delete(actor_id, chat_id)
 
     @app.post(
         "/api/chats/{chat_id}/recordings",
         status_code=201,
         responses=error_responses(400, 404, 413, 415, 422),
     )
-    async def add_recording(chat_id: ChatId, request: Request) -> Recording:
-        store.get(chat_id)
+    async def add_recording(chat_id: ChatId, request: Request, actor_id: Actor) -> Recording:
+        await run_in_threadpool(store.get, actor_id, chat_id)
         audio, info = await read_recording(request)
-        return store.add_recording(chat_id, audio, info.duration_seconds)
+        return await run_in_threadpool(
+            store.add_recording, actor_id, chat_id, audio, info.duration_seconds
+        )
 
     @app.get("/api/chats/{chat_id}/recordings/{recording_id}", responses=error_responses(404, 422))
-    async def recording_audio(chat_id: ChatId, recording_id: ChatId) -> Response:
-        return Response(store.recording_audio(chat_id, recording_id), media_type="audio/wav")
+    def recording_audio(chat_id: ChatId, recording_id: ChatId, actor_id: Actor) -> Response:
+        return Response(
+            store.recording_audio(actor_id, chat_id, recording_id), media_type="audio/wav"
+        )
 
     @app.post(
         "/api/chats/{chat_id}/recordings/{recording_id}/transcribe",
         responses=error_responses(400, 404, 409, 413, 415, 422, 502, 503, 504),
     )
     async def transcribe_recording(
-        chat_id: ChatId, recording_id: ChatId, model: ModelId = "phonon-2"
+        chat_id: ChatId, recording_id: ChatId, actor_id: Actor, model: ModelId = "phonon-2"
     ) -> Transcription:
-        return await engine.transcribe(store.recording_audio(chat_id, recording_id), model)
+        audio = await run_in_threadpool(store.recording_audio, actor_id, chat_id, recording_id)
+        return await engine.transcribe(audio, model)
 
     @app.websocket("/api/stream")
     async def live_transcription(browser: WebSocket, model: ModelId = "phonon-2") -> None:

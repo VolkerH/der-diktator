@@ -2,13 +2,15 @@
 
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import httpx
 import pytest
 
 from diktator.app import create_app
-from diktator.config import Settings
+from diktator.config import Settings, default_data_directory
 from tests.test_audio import make_wav
 
 pytestmark = pytest.mark.anyio
@@ -25,14 +27,18 @@ async def client_for(
     handler: Callable[[httpx.Request], httpx.Response],
     settings: Settings | None = None,
 ) -> AsyncIterator[httpx.AsyncClient]:
-    app = create_app(settings, transport=httpx.MockTransport(handler))
-    async with (
-        app.router.lifespan_context(app),
-        httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
-        ) as client,
-    ):
-        yield client
+    with TemporaryDirectory(prefix="diktator-test-") as directory:
+        settings = settings or Settings()
+        if settings.data_directory == default_data_directory():
+            settings = replace(settings, data_directory=Path(directory))
+        app = create_app(settings, transport=httpx.MockTransport(handler))
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+            ) as client,
+        ):
+            yield client
 
 
 def healthy_engine(_request: httpx.Request) -> httpx.Response:
