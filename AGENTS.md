@@ -12,6 +12,14 @@
   with a short signature such as `— Codex (GPT-6)`. Use the actual agent and
   model so readers can distinguish the agent from the account holder.
 
+## Pull and merge requests
+
+- Open with an accessible walkthrough of the specific change and how a reader
+  can experience it. Follow with technical details and how tests were run.
+- Include screenshots whenever the change affects the graphical interface.
+  For interface actions, also try to include a short recording in a format
+  that displays in the target pull or merge request.
+
 ## Backend and frontend contract
 
 - Design features so the browser, a TUI, or another client can use the same
