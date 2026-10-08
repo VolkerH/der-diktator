@@ -101,6 +101,13 @@ stops automatically after ten minutes.
   over HTTPS (see [Using it from your phone](#using-it-from-your-phone)).
 - Node.js 24 or newer and npm, only for development checks.
 
+## Docker
+
+A Linux amd64 CPU image and Compose setup are available. Build with
+`./scripts/build-docker.sh`, then run `docker compose up -d --no-build`.
+Open <http://localhost:8080>; download a speech model in the picker.
+See [Docker setup, persistent storage and upgrades](docs/docker.md).
+
 ## Quick start
 
 ```bash

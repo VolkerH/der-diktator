@@ -1,0 +1,203 @@
+# Run Der Diktator in Docker
+
+This package runs the browser server and CPU inference service on **Linux amd64**.
+It needs Docker Engine with Compose v2; Python, Node and uv are only needed when
+working on the source outside Docker. Windows through Docker Desktop's Linux
+backend is a candidate deployment; native Windows/macOS installers, ARM images
+and GPU acceleration are separate work in #8 and #13.
+
+## Build and start
+
+From this repository:
+
+```sh
+./scripts/build-docker.sh
+# Equivalent: docker compose build
+docker compose up -d --no-build
+docker compose logs -f
+```
+
+Open <http://localhost:8080>. In **Speech models**, explicitly download a model,
+then select **Use model**. The image contains all runtime dependencies and no
+weights. Starting it performs no package installation or model download. An
+already selected, installed model loads again on restart.
+
+Compose publishes only `127.0.0.1:8080`. Choose a free host port with
+`DIKTATOR_PORT=8081 docker compose up -d --no-build`. The inference services stay
+on container loopback ports 8010 and 8011; do not publish them.
+For phone microphone access use HTTPS through a private reverse proxy or VPN,
+as described in [Using it from your phone](../README.md#using-it-from-your-phone).
+The same absence of authentication described in the README applies to Docker.
+
+Without Compose:
+
+```sh
+docker run -d --name diktator \
+  --publish 127.0.0.1:8080:8080 \
+  --mount source=diktator_data,target=/data \
+  --mount source=diktator_models,target=/models \
+  --stop-timeout 30 \
+  der-diktator:local
+```
+
+The Docker image can be moved to a host without a source checkout:
+`docker save der-diktator:local -o diktator.tar`, transfer it, then
+`docker load -i diktator.tar`. Use the `docker run` command above there. No image
+is automatically published to a registry. Downloading a missing model still
+requires internet access; installed models support offline startup.
+
+## Storage and configuration
+
+The process runs as UID/GID **10001:10001**. Docker initializes new named volumes
+with the image directories' ownership. Keep the Compose project name `diktator`
+stable to reuse `diktator_data` and `diktator_models`; a different project name
+selects different volumes. `docker compose down` preserves them. **Do not use
+`down --volumes` for an upgrade**: it deletes the stored application data.
+
+| Setting                | Container value      | Purpose                                                        |
+| ---------------------- | -------------------- | -------------------------------------------------------------- |
+| `DIKTATOR_DATA_DIR`    | `/data`              | SQLite, preferences, chats, recordings and migration snapshots |
+| `DIKTATOR_MODELS_DIR`  | `/models`            | Installed weights, download staging and saved model selection  |
+| `DIKTATOR_CPU_THREADS` | `4` in Compose       | Existing Parakeet/Whisper CPU setting                          |
+| `DIKTATOR_PORT`        | `8080`               | Compose host port only; container web port stays 8080          |
+| `DIKTATOR_IMAGE`       | `der-diktator:local` | Compose image tag; use a versioned tag for upgrades            |
+
+Changing a directory environment variable requires a corresponding writable
+mount at that path. The launcher owns the inference endpoint and fixes
+`DIKTATOR_ENGINE_URL` to `http://127.0.0.1:8010`. There is no container-specific
+preferences store: the existing preferences API writes SQLite on `/data`.
+Other limits retain the application's current defaults. Configure environment
+changes by recreating the container; do not edit files in its writable layer.
+
+Local named volumes are the supported storage route. Bind mounts need existing
+directories writable by UID 10001, and filesystem locking and durability must
+work. Do not use a network filesystem for SQLite. Validate WSL/Windows host
+mounts in the actual setup; Docker Desktop volumes and host bind mounts have
+different behavior. An unwritable directory makes startup fail.
+
+The image also supports a read-only root filesystem with writable `/data`,
+`/models`, and `/tmp` (for example `--read-only --tmpfs /tmp`). No GPU, privileged
+mode or host Docker socket is needed. Ensure enough memory and disk space for
+the chosen model and temporary downloads; model sizes are in the picker and
+[README](../README.md#quick-start).
+
+## Health and the client API
+
+Docker health means the web service can query the inference model catalog.
+A new installation with no weights is healthy. `GET /api/health` reports
+`ready: false` until a usable model is loaded; `GET /api/models` reports
+capabilities, installation/loading state and errors. A failed service causes
+the launcher to terminate its peer and exit nonzero. SIGTERM stops both process
+groups, including downloads and the Phonon subprocess; Tini reaps descendants.
+Allow at least 25 seconds before Docker forcibly kills the container.
+
+The browser and other clients use the same routes. HTTP schemas are available at
+`/openapi.json` and `/docs`. See [chat API](chat-api.md),
+[preferences/export API](preferences-export-api.md),
+[error and event conventions](api-conventions.md), and
+[error schema reference](api-errors.md). These documents are also installed in
+`/opt/diktator/docs` inside the image. This packaging does not change the API;
+use clients tested with the same release and tolerate additive response fields.
+
+Batch audio uses `POST /api/transcribe?model=...` with PCM WAV; persist the WAV
+through the chat recording endpoint as needed. Phonon live text uses
+`/api/stream?model=phonon-2`: wait for the `ready` event, then send binary mono
+16 kHz, signed 16-bit little-endian PCM frames, then `{"type":"end"}`. Events
+are `ready`, `partial`, `final`, `done`, or terminal `error`. The web service supplies
+the internal engine configuration; clients do not send it. Only `done` confirms success.
+Retain a complete WAV until storage acknowledgement so streaming errors can be
+retried as batch audio. The browser implements this already. See the
+[streaming description](../README.md#how-it-works) and source contract in
+`src/diktator/streaming.py` for limits and cancellation behavior.
+
+## Backup, upgrade and rollback
+
+A complete backup includes **the entire data volume**, including audio. Startup
+migration snapshots under `/data/backups` contain SQLite only and cannot replace
+that backup. Also save the model volume to avoid downloading weights again and
+to retain model selection. Stop both services before copying either volume.
+
+These commands use Compose's default volume names and the already built image:
+
+```sh
+mkdir -p backups
+docker compose stop
+# Keep the old image locally for a possible rollback.
+docker image tag der-diktator:local der-diktator:before-upgrade
+# Each archive is streamed to the host; no host-directory permission adjustment is needed.
+docker run --rm --entrypoint tar --mount source=diktator_data,target=/data,readonly \
+  der-diktator:before-upgrade -C /data -czf - . > backups/data.tar.gz
+docker run --rm --entrypoint tar --mount source=diktator_models,target=/models,readonly \
+  der-diktator:before-upgrade -C /models -czf - . > backups/models.tar.gz
+```
+
+Check that the archives list and extract successfully before upgrading. Store
+them separately from the Docker host. Build a selected source revision with
+`./scripts/build-docker.sh der-diktator:next`, then run:
+
+```sh
+DIKTATOR_IMAGE=der-diktator:next docker compose up -d --no-build
+docker compose logs --tail=100
+docker compose ps
+```
+
+The web app includes all Alembic migrations and backs up an existing database
+before upgrading its schema. Verify chats, preferences, audio playback and model
+readiness before discarding the old image or backup. Avoid running two instances
+against the same data or model volume; the application refuses concurrent owners.
+
+For rollback, stop the new container and restore the pre-upgrade archives to
+**new, empty volumes**. An older image intentionally refuses an unknown newer
+schema; changing only the image is not a database downgrade.
+
+```sh
+docker compose down
+docker volume create diktator_restored_data
+docker volume create diktator_restored_models
+# Root is used only by these one-shot restore commands to preserve archived ownership.
+docker run --rm -i --user 0:0 --entrypoint tar \
+  --mount source=diktator_restored_data,target=/data \
+  der-diktator:before-upgrade -C /data -xzf - < backups/data.tar.gz
+docker run --rm -i --user 0:0 --entrypoint tar \
+  --mount source=diktator_restored_models,target=/models \
+  der-diktator:before-upgrade -C /models -xzf - < backups/models.tar.gz
+docker run -d --name diktator-restored --publish 127.0.0.1:8080:8080 \
+  --mount source=diktator_restored_data,target=/data \
+  --mount source=diktator_restored_models,target=/models \
+  --stop-timeout 30 der-diktator:before-upgrade
+```
+
+Retain the failed upgrade volumes for diagnosis. If your original image tag or
+Compose project differs, substitute its names throughout this procedure.
+
+## Build inputs, licenses and validation
+
+The Dockerfile pins the Python and uv images by digest, the Debian package
+snapshot by date, and uses both committed uv lockfiles with `--locked`. Both
+application installs are non-editable and include static assets and migrations.
+Node and source checkout metadata are excluded. This fixes dependency inputs;
+it does not promise byte-identical image archives. Refresh the base digests and
+snapshot together for security updates, and repeat validation before release.
+The layout follows [uv's Docker guide](https://docs.astral.sh/uv/guides/integration/docker/)
+and [Docker's process-management guidance](https://docs.docker.com/engine/containers/multi-service_container/).
+
+`/opt/diktator/licenses/` contains the project license and actual web, inference
+and system dependency inventories. Python distributions retain their own license
+files in `*.dist-info`; system license notices are in `/usr/share/doc`. The
+image license label refers to this project's code, not all dependencies.
+Model weights are excluded; their sources and license names are shown by
+`GET /api/models` and discussed in the [README license section](../README.md#license-and-credits).
+
+Run the model-free artifact acceptance test after building:
+
+```sh
+uv run --locked python scripts/smoke-docker.py der-diktator:local
+```
+
+It uses disposable named volumes and containers, disables container networking,
+checks packaged native imports, exercises HTTP APIs, replaces the container,
+checks persistence, tests unwritable storage, and verifies bounded shutdown.
+CI builds and runs this check without publishing an image. It establishes
+packaging behavior, not microphone access or transcription quality. Real model
+load/transcription and Phonon streaming need separate checks on the deployment
+hardware; ARM emulation, GPU execution and native installers are not covered.
