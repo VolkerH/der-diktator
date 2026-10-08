@@ -76,6 +76,35 @@ function chatServer() {
     failTranscription: false,
     batchPosts: [],
     storedTranscriptions: 0,
+    modelRequests: [],
+    requestedModels: [],
+    models: {
+      active: "phonon-2",
+      busy: false,
+      models: [
+        {
+          id: "phonon-2",
+          name: "Phonon-2",
+          languages: "English",
+          live: true,
+          download_mb: 164,
+          installed: true,
+          state: "ready",
+          message: "",
+        },
+        {
+          id: "parakeet-v3",
+          name: "Parakeet v3",
+          languages: "German, English",
+          live: false,
+          download_mb: 671,
+          installed: false,
+          state: "missing",
+          message: "",
+        },
+      ],
+    },
+    failModelAction: false,
   };
   server.add = (text, recordings = []) => {
     const chat = {
@@ -89,8 +118,29 @@ function chatServer() {
     return chat;
   };
   server.fetch = async (url, options = {}) => {
+    const parsed = new URL(url, "http://localhost");
+    url = parsed.pathname;
+    if (parsed.searchParams.has("model"))
+      server.requestedModels.push(parsed.searchParams.get("model"));
     const method = options.method ?? "GET";
     const json = (body, status = 200) => Response.json(body, { status });
+    if (url === "/api/models") return json(server.models);
+    if (url.startsWith("/api/models/")) {
+      server.modelRequests.push(url);
+      if (server.failModelAction) return json({ detail: "Download failed. Retry." }, 503);
+      const [, modelId, action] = url.match(/^\/api\/models\/([^/]+)\/(.*)$/);
+      const model = server.models.models.find((item) => item.id === modelId);
+      if (action === "download") {
+        model.installed = true;
+        model.state = "installed";
+      } else {
+        for (const item of server.models.models)
+          if (item.state === "ready") item.state = "installed";
+        server.models.active = modelId;
+        model.state = "ready";
+      }
+      return json(server.models, 202);
+    }
     if (url === "/api/health") return json({ ready: true });
     if (url === "/api/transcribe") {
       server.batchPosts.push(options.body);
@@ -139,7 +189,7 @@ function chatServer() {
 }
 
 /** Run the real app module against browser boundaries, with no DOM package or server. */
-async function appEnvironment(t, setup = () => {}) {
+async function appEnvironment(t, setup = () => {}, waitReady = true) {
   const elements = new Map();
   const element = (name) => {
     if (!elements.has(name)) elements.set(name, new Element());
@@ -151,6 +201,7 @@ async function appEnvironment(t, setup = () => {}) {
   const copied = [];
   const windowListeners = new Map();
   const state = { starts: 0, stops: 0, onSamples: null };
+  const intervals = [];
   const samples = new Float32Array([0.5, -0.5]);
   const wav = new Blob([encodeWav(samples)], { type: "audio/wav" });
   t.mock.method(MicrophoneRecorder.prototype, "start", async (onSamples = null) => {
@@ -168,7 +219,10 @@ async function appEnvironment(t, setup = () => {}) {
     window: {
       isSecureContext: true,
       location: { href: "http://localhost:8080/" },
-      setInterval: () => 1,
+      setInterval: (callback, milliseconds) => {
+        if (milliseconds === 2000) intervals.push(callback);
+        return 1;
+      },
       clearInterval() {},
       confirm: () => true,
       addEventListener: (type, callback) => windowListeners.set(type, callback),
@@ -180,7 +234,7 @@ async function appEnvironment(t, setup = () => {}) {
     WebSocket: class extends FakeSocket {
       constructor(url) {
         super();
-        assert.equal(url, "ws://localhost:8080/api/stream");
+        assert.equal(url, "ws://localhost:8080/api/stream?model=phonon-2");
         sockets.push(this);
       }
     },
@@ -201,8 +255,9 @@ async function appEnvironment(t, setup = () => {}) {
   });
   // Each test gets fresh application state; the audio, stream, and chat modules stay real.
   await import(`../../src/diktator/static/app.js?case=${encodeURIComponent(t.name)}`);
-  const app = { element, server, sockets, copied, state, wav };
-  await waitForIdle(app);
+  const app = { element, server, sockets, copied, state, wav, intervals };
+  if (waitReady) await waitForIdle(app);
+  else for (let i = 0; i < 5; i++) await setImmediate();
   return app;
 }
 
@@ -390,4 +445,83 @@ test("connection failure preserves existing text", async (t) => {
   assert.equal(app.state.starts, 0);
   assert.equal(app.element("transcript").value, "My existing edits.");
   assert.equal(app.element("record").disabled, false);
+});
+
+test("Parakeet download is explicit, activation disables live text, and requests retain its identity", async (t) => {
+  const app = await appEnvironment(t);
+  const picker = app.element("model-picker");
+  picker.value = "parakeet-v3";
+  await picker.emit("change");
+  assert.equal(app.element("record").disabled, true);
+  assert.match(app.element("model-action").textContent, /Download.*671/);
+  assert.deepEqual(app.server.modelRequests, []);
+  await app.element("model-action").emit("click");
+  assert.equal(app.element("model-action").textContent, "Use model");
+  assert.equal(app.server.models.active, "phonon-2");
+  await app.element("model-action").emit("click");
+  await waitForIdle(app);
+  assert.equal(app.element("live-mode").checked, false);
+  assert.equal(app.element("live-mode").disabled, true);
+  await app.element("record").emit("click");
+  assert.equal(picker.disabled, true);
+  assert.equal(app.sockets.length, 0);
+  await app.element("stop").emit("click");
+  await waitForIdle(app);
+  assert.deepEqual(app.server.requestedModels, ["parakeet-v3"]);
+  picker.value = "phonon-2";
+  await picker.emit("change");
+  await app.element("model-action").emit("click");
+  await waitForIdle(app);
+  assert.equal(app.element("live-mode").checked, true);
+  assert.equal(app.element("live-mode").disabled, false);
+});
+
+test("model action failures are visible and can be retried without losing text", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Keep these words."));
+  app.element("model-picker").value = "parakeet-v3";
+  await app.element("model-picker").emit("change");
+  app.server.failModelAction = true;
+  await app.element("model-action").emit("click");
+  assert.match(app.element("error").textContent, /Download failed/);
+  assert.equal(app.element("transcript").value, "Keep these words.");
+  assert.equal(app.element("model-action").disabled, false);
+  app.server.failModelAction = false;
+  await app.element("model-action").emit("click");
+  assert.equal(app.element("model-action").textContent, "Use model");
+});
+
+test("startup selects persisted Parakeet while loading and becomes ready without another click", async (t) => {
+  const app = await appEnvironment(
+    t,
+    (server) => {
+      server.models.active = null;
+      server.models.preferred = "parakeet-v3";
+      server.models.models[0].state = "installed";
+      Object.assign(server.models.models[1], { installed: true, state: "loading" });
+    },
+    false,
+  );
+  assert.equal(app.element("model-picker").value, "parakeet-v3");
+  assert.equal(app.element("record").disabled, true);
+  app.server.models.active = "parakeet-v3";
+  app.server.models.models[1].state = "ready";
+  app.intervals[0]();
+  await waitForIdle(app);
+  assert.equal(app.element("model-picker").value, "parakeet-v3");
+  assert.equal(app.element("live-mode").checked, false);
+});
+
+test("a different tab switching models cannot change the model of a recorded fallback", async (t) => {
+  const app = await appEnvironment(t);
+  const stream = await startLive(app);
+  app.server.models.active = "parakeet-v3";
+  app.server.models.models[0].state = "installed";
+  app.server.models.models[1].state = "ready";
+  app.intervals[0]();
+  for (let i = 0; i < 3; i++) await setImmediate();
+  stream.close();
+  await app.element("stop").emit("click");
+  for (let i = 0; i < 10; i++) await setImmediate();
+  assert.deepEqual(app.server.requestedModels, ["phonon-2"]);
+  assert.equal(app.element("record").disabled, true);
 });

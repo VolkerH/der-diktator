@@ -52,6 +52,17 @@
           <span id="engine-status" class="engine-pill">Connecting…</span>
         </header>
 
+        <section class="model-settings" aria-label="Speech model">
+          <div class="model-controls">
+            <label for="model-picker">Speech model</label>
+            <select id="model-picker" aria-describedby="model-help" disabled>
+              <option>Connecting…</option>
+            </select>
+            <button id="model-action" class="chip" type="button" disabled>Download model</button>
+          </div>
+          <p id="model-help" role="status" aria-live="polite">Loading model information…</p>
+        </section>
+
         <section id="stage" class="stage" aria-label="Recorder">
           <canvas id="meter" class="meter" aria-hidden="true"></canvas>
           <div class="controls">

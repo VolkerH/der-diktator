@@ -103,4 +103,47 @@ Base: `7a518f9`. Primary checkout stays unchanged, including its untracked engin
 
 ## Review record
 
-Pending fresh-context review.
+Reviewed before implementation; findings and resolutions follow.
+
+### Fresh-context review completed
+
+Reviewer `review_plan` approved the overall scope and identified these changes:
+
+- Keep inference ownership until native work actually ends even after an HTTP
+  timeout/disconnect. Shield worker tasks and release admission in task completion,
+  not in the cancelled request's finally block. Competing inference receives 409.
+- Start local-path Fermion with `--served-model-name phonon-2`.
+- Bound download connect/read/overall time, subprocess terminate/kill/wait, and
+  release installation locks on all exits. Test retry after failure.
+- Test chunk coverage, silence, exact boundaries and tails; any failed chunk fails
+  the whole transcription. Never return a partial batch result as complete.
+- Failed activation leaves no active model, preserves the last successful saved
+  preference, and exposes the failed target. Proxy 409 explanations intact.
+
+Environment note: shell DNS for external downloads is unavailable. Runtime
+installation and actual Parakeet accuracy are conditional validation; model-free
+checks and the existing local Phonon runtime remain available.
+
+## Implementation and validation record
+
+- Added shared model catalog, app-owned inference service, explicit atomic
+  installation, persisted activation, Parakeet CPU adapter, and Fermion child
+  ownership. The GUI uses capability-aware selection with Download and Use model.
+- Fresh-context implementation review found startup selection during Parakeet
+  loading and Phonon's internal decode timeout could break ownership. Both are
+  corrected, with regression tests. No further concrete blockers were reported.
+- Python checks pass: Ruff formatting/lint, ty, and 84 tests. Frontend checks pass:
+  Prettier, ESLint, TypeScript, and 37 tests. Tests exercise download failure/retry,
+  checksum rejection, cancellation/locking, persisted selection, busy/stale model
+  rejection, model-specific fallback, and forced child cleanup.
+- The checks use the existing installed web dependencies with this worktree's
+  `src` on PYTHONPATH. Fresh dependency installation could not run: external DNS
+  is unavailable. The new engine dependency set and its lock need resolution on
+  a networked host; no stale engine lock is committed.
+- Existing local Phonon weights successfully loaded through Fermion's Python
+  API and returned an empty transcript for one second of silence.
+- Actual HTTP/WebSocket server smoke testing and Chromium layout checks were
+  attempted but socket operations are forbidden in this environment. Child
+  failure cleanup completed. Parakeet package/model download, actual multilingual
+  transcription, browser layout, microphone use and end-to-end latency remain
+  unverified. These limits do not change the automated test results above.

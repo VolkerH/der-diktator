@@ -1,5 +1,6 @@
 import { MAX_DURATION_SECONDS, wordCount } from "./audio.js";
 import { chatApi, spliceText, titleFor } from "./chats.js";
+import { modelPicker } from "./models.js";
 import { LiveTranscriber } from "./live.js";
 import { MicrophoneRecorder } from "./recorder.js";
 
@@ -21,7 +22,6 @@ const meter = /** @type {HTMLCanvasElement} */ (document.getElementById("meter")
 const timer = /** @type {HTMLElement} */ (document.getElementById("timer"));
 const count = /** @type {HTMLElement} */ (document.getElementById("word-count"));
 const saveState = /** @type {HTMLElement} */ (document.getElementById("save-state"));
-const engineStatus = /** @type {HTMLElement} */ (document.getElementById("engine-status"));
 const liveMode = /** @type {HTMLInputElement} */ (document.getElementById("live-mode"));
 const chatList = /** @type {HTMLElement} */ (document.getElementById("chat-list"));
 const chatTitle = /** @type {HTMLElement} */ (document.getElementById("chat-title"));
@@ -35,6 +35,16 @@ const recorder = new MicrophoneRecorder();
 let activeStream = null;
 let recording = false;
 let busy = false;
+let modelReady = false;
+let modelLive = false;
+let livePreference = liveMode.checked;
+let recordingModel = "phonon-2";
+const models = modelPicker((ready, live) => {
+  modelReady = ready;
+  modelLive = live;
+  if (!recording && !busy) liveMode.checked = live && livePreference;
+  updateControls();
+}, showError);
 let startedAt = 0;
 /** @type {number | undefined} */
 let timerId;
@@ -107,12 +117,13 @@ function pushLevel() {
 
 function updateControls() {
   const active = recording || busy;
-  liveMode.disabled = active;
+  models.lock(active);
+  liveMode.disabled = active || !modelLive;
   stopButton.textContent = liveMode.checked ? "Stop" : "Stop & transcribe";
   transcript.placeholder = liveMode.checked
     ? "Your words will appear here as you speak."
     : "Your words will appear here after you stop recording.";
-  recordButton.disabled = active;
+  recordButton.disabled = active || !modelReady;
   recordButton.hidden = recording;
   stopButton.hidden = !recording;
   stopButton.disabled = !recording || busy;
@@ -504,8 +515,8 @@ async function storeAndInsert(audio, text) {
     status.textContent = "Transcribing your recording…";
     text =
       stored instanceof Error
-        ? await chatApi.transcribe(audio)
-        : await chatApi.transcribeRecording(stored.chatId, stored.recording.id);
+        ? await chatApi.transcribe(audio, recordingModel)
+        : await chatApi.transcribeRecording(stored.chatId, stored.recording.id, recordingModel);
   }
   // The transcript is recovered, so an earlier live-connection error no longer applies.
   hideError();
@@ -541,18 +552,20 @@ async function runBusy(task, failure) {
 /** @param {string} recordingId */
 async function transcribeClip(recordingId) {
   const target = chat;
-  if (!target) return;
+  if (!target || !modelReady || recording || busy) return;
+  const model = models.selected();
   await runBusy(async () => {
     insertion = captureInsertion();
     status.textContent = "Transcribing your recording…";
-    insertTranscript(await chatApi.transcribeRecording(target.id, recordingId));
+    insertTranscript(await chatApi.transcribeRecording(target.id, recordingId, model));
     await saveText();
   }, "Transcription failed. Try the clip again.");
 }
 
 async function retryUnsaved() {
   const audio = unsaved;
-  if (!audio) return;
+  if (!audio || !modelReady || recording || busy) return;
+  recordingModel = models.selected();
   await runBusy(async () => {
     insertion = captureInsertion();
     await storeAndInsert(audio, null);
@@ -560,6 +573,8 @@ async function retryUnsaved() {
 }
 
 recordButton.addEventListener("click", async () => {
+  if (recording || busy || !modelReady) return;
+  recordingModel = models.selected();
   hideError();
   if (!window.isSecureContext || !navigator.mediaDevices) {
     showError(
@@ -592,6 +607,7 @@ recordButton.addEventListener("click", async () => {
       );
       activeStream = stream;
       const url = new URL("/api/stream", window.location.href);
+      url.searchParams.set("model", recordingModel);
       url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
       await stream.start(url.href);
       status.textContent = "Waiting for microphone permission…";
@@ -676,7 +692,10 @@ function closeDrawer() {
 }
 
 stopButton.addEventListener("click", () => void stopRecording());
-liveMode.addEventListener("change", updateControls);
+liveMode.addEventListener("change", () => {
+  livePreference = liveMode.checked;
+  updateControls();
+});
 newChatButton.addEventListener("click", () => void newChat());
 menuButton.addEventListener("click", () => {
   const open = !sidebar.classList.contains("open");
@@ -712,22 +731,6 @@ copyButton.addEventListener("click", async () => {
     status.textContent = "Text selected. Press Ctrl+C to copy.";
   }
 });
-
-async function checkEngine() {
-  try {
-    const response = await fetch("/api/health", { signal: AbortSignal.timeout(3000) });
-    const health = await response.json();
-    const ready = response.ok && health.ready;
-    engineStatus.textContent = ready ? "Phonon-2 ready" : "Engine starting…";
-    engineStatus.classList.toggle("ready", ready);
-    engineStatus.classList.toggle("offline", false);
-  } catch {
-    engineStatus.textContent = "App offline";
-    engineStatus.title = "Check that the app is running.";
-    engineStatus.classList.toggle("ready", false);
-    engineStatus.classList.toggle("offline", true);
-  }
-}
 
 window.addEventListener("pagehide", () => {
   window.clearInterval(timerId);
@@ -770,5 +773,5 @@ async function loadChats() {
 drawMeter();
 setChat(null);
 void loadChats();
-void checkEngine();
-window.setInterval(() => void checkEngine(), 5000);
+void models.refresh();
+window.setInterval(() => void models.refresh(), 2000);

@@ -12,15 +12,15 @@ and keep everything on your own machine.</p>
 
 Der Diktator is a small web app for capturing spoken notes, drafts, and ideas as
 text. Run it on a home server, open it in the browser on your phone or laptop,
-tap the microphone, and speak. Speech is transcribed on the server by the
-[Phonon-2](https://huggingface.co/FermionResearch/Phonon-2) model running on the
-CPU; your transcripts and recordings are stored there as plain files. No audio or
-text is sent to a cloud service.
+tap the microphone, and speak. Speech is transcribed on your server’s CPU using **Phonon-2** for English or
+**Parakeet v3** for German, English, and 23 other European languages. Choose and
+download a model in the browser. Your transcripts and recordings are stored on
+the server as plain files. No audio or text is sent to a cloud service.
 
 The intended setup is a machine at home, behind your firewall, that you reach from
 anywhere through a private VPN such as [Tailscale](https://tailscale.com/) or
 [WireGuard](https://www.wireguard.com/). It also runs on a single computer,
-including Windows through WSL2. Phonon-2 recognises English. The name is a play on
+including Windows through WSL2. The name is a play on
 words: in German, a _Diktat_ is a dictation.
 
 <p align="center">
@@ -46,8 +46,11 @@ words: in German, a _Diktat_ is a dictation.
 
 - **Dictate from any device.** A responsive web app for phone, tablet, and
   desktop browsers. Nothing to install on the device.
-- **Live transcription.** Text appears while you speak and is finalised when you
-  stop. Turn off **Live text** to transcribe once after recording instead.
+- **Two speech models.** Choose Phonon-2 for English or Parakeet v3 for German
+  and multilingual dictation. Download missing weights with one button.
+- **Live transcription with Phonon-2.** Text appears while you speak and is
+  finalised when you stop. Parakeet transcribes the recording after you stop;
+  **Live text** is disabled for that model.
 - **Chats.** Each dictation is a chat: one editable transcript plus every
   recording made for it. Start new chats, reopen old ones, or delete them.
 - **Dictate at the cursor.** Recording again never replaces your text. The new
@@ -64,8 +67,10 @@ words: in German, a _Diktat_ is a dictation.
 
 ## How to use it
 
-1. **Open the app** in your browser. When the badge at the top shows
-   **Phonon-2 ready**, the engine has loaded.
+1. **Choose a speech model.** Open the app, select **Phonon-2** or **Parakeet v3**,
+   and click **Download** if needed. Then click **Use model** and wait for the
+   ready badge. Downloads and loading run in the background; failures show a retry
+   message. The server remembers the last successfully activated model.
 2. **Tap the microphone** and speak. With **Live text** on, words appear as you
    talk; provisional words can still change. On a computer, Space starts and
    stops recording too.
@@ -95,14 +100,20 @@ stops automatically after ten minutes.
 
 ```bash
 uv sync --locked
-make download-model
 make run
 ```
 
-`make run` starts the transcription engine on `127.0.0.1:8010` and the web app on
+`make run` starts the model service on `127.0.0.1:8010` and the web app on
 `127.0.0.1:8080`; Ctrl-C stops both. Open <http://localhost:8080> in a browser on
-the same machine. With WSL, use your Windows browser: WSL forwards `localhost`
-to Windows. The engine needs some time to load on first start.
+the same machine. Choose a model, download it, then click **Use model**. Starting
+the services does not download model weights. With WSL, use your Windows browser:
+WSL forwards `localhost` to Windows. Model loading can take some time.
+
+Phonon-2 downloads about 164 MB; Parakeet v3 INT8 downloads about 671 MB. Allow
+additional disk space for temporary downloads, unpacking, and Python dependencies.
+A failed download can be retried. A retry starts the incomplete download again.
+To download from the command line instead, use `make download-model` for Phonon-2
+or `make download-model MODEL=parakeet-v3`. Both use the same model store as the GUI.
 
 To run the services separately, use `make engine` in one terminal and `make web`
 in another. After updating the app, restart it and refresh the browser: the web
@@ -220,15 +231,51 @@ shows the default. Chats from earlier versions in `~/.diktator/chats` or
 `~/.phonon/chats` are moved to the default location on first start, unless that
 location already exists.
 
+## Speech models
+
+| Model                     | Languages                                        | Recording mode                            |
+| ------------------------- | ------------------------------------------------ | ----------------------------------------- |
+| Phonon-2                  | English                                          | Live text or transcription after stopping |
+| Parakeet TDT 0.6B v3 INT8 | German, English, and 23 other European languages | Transcription after stopping              |
+
+Parakeet uses automatic language recognition. Mixed German/English dictation is a
+useful application, but accuracy for language switches and technical vocabulary
+should be checked with your own recordings. No translation is requested.
+For long Parakeet recordings, the app looks for quiet cuts between 25 and 30
+seconds; continuous speech forces a cut at 30 seconds and may lose word accuracy
+at that boundary. Pausing between sentences helps.
+
+The model choice is shared by all tabs using the same server. Switching is
+refused during inference or a live stream. Recording requests carry the model
+chosen when recording started; if another tab switches the server meanwhile,
+the saved clip can be transcribed again after choosing the intended model.
+Only one model is loaded at a time. If loading fails, choose **Use model** again;
+the previous successful choice remains the startup preference.
+
+Weights live in the server's app data directory: on Linux/WSL,
+`~/.local/share/diktator/models` (respecting `$XDG_DATA_HOME`). Set
+`DIKTATOR_MODELS_DIR` for another location, including when running `make download-model`. This is independent of `DIKTATOR_DATA_DIR`, which continues to
+control chats. The directory also contains installation markers and the saved
+model selection. Incomplete downloads are kept out of installed model directories.
+
+Earlier versions used the repository's `.cache/fermion` directory. Those files
+are left in place; use the GUI to download into the new app directory. Once you
+have verified the new installation, you can remove the old cache yourself.
+Model files are obtained from fixed sources: Parakeet weights and tokens from a
+pinned revision of the [sherpa-onnx model conversion](https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8),
+with SHA-256 verification of the three weight files; Phonon uses Fermion's pinned
+archive verification. Loading uses local files and works offline after setup.
+
 ## How it works
 
-The browser captures the microphone and streams 16 kHz mono 16-bit PCM over a
-WebSocket (`/api/stream`), which the web app relays to the engine's
-`/v1/audio/stream`. Completed phrases stay in the transcript while the current
+With Phonon-2 live text enabled, the browser captures the microphone and streams
+16 kHz mono 16-bit PCM over a
+WebSocket (`/api/stream`), which the web app relays through the model service
+to Fermion’s `/v1/audio/stream`. Completed phrases stay in the transcript while the current
 phrase's partial text is replaced. Stopping flushes the final audio, sends an end
 message, and waits for the complete transcript. Each finished recording is
 uploaded as a WAV and stored with its chat; when live text is off or unavailable,
-the stored WAV is transcribed through the engine's HTTP API.
+the stored WAV is transcribed through the selected model’s HTTP API.
 
 The engine supports one live stream at a time; a second tab receives an
 engine-busy error. Live mode needs a browser audio context running at 16 kHz. If
@@ -237,10 +284,18 @@ the audio after capture. The first live session can take longer while the engine
 warms up. Update speed depends on CPU speed and phrase length; pauses help the
 engine finalise phrases.
 
-The inference environment lives in `engine/`. Its uv configuration selects the
+The model service runs in `engine/`, with Fermion for Phonon and sherpa-onnx for
+Parakeet. It listens on loopback port 8010. When Phonon is active, its managed
+child server uses loopback port 8011 (`DIKTATOR_PHONON_PORT` overrides it).
+`DIKTATOR_CPU_THREADS` sets Parakeet’s thread count (default 4). Heavy model work
+runs outside the web event loop; status remains available while it loads or decodes.
+
+The inference environment’s uv configuration selects the
 CPU Torch index explicitly. It is separate from the lightweight web environment,
 so the app's tests and checks do not download Torch or the model. The first
-successful engine sync creates `engine/uv.lock`; commit it after setup.
+successful engine sync creates `engine/uv.lock`; commit it after setup. The web
+client now expects the app-owned model service, so an older standalone Fermion
+server is not a replacement for `make engine`.
 
 ## Development
 
@@ -295,6 +350,12 @@ disk space. The weights are licensed under CC-BY-4.0 and the Fermion runtime und
 Apache-2.0. Model attribution: Fermion Research, based on NVIDIA
 parakeet-tdt-0.6b-v3. See the [model card](https://huggingface.co/FermionResearch/Phonon-2)
 and the [installation guide](https://github.com/fermionresearch/phonon/blob/main/docs/install.md).
+
+Parakeet TDT 0.6B v3 is by NVIDIA and licensed under CC-BY-4.0. This app uses
+the INT8 ONNX conversion distributed by the sherpa-onnx maintainers.
+[sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) is Apache-2.0. See the
+[Parakeet model card](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) and
+[conversion/runtime documentation](https://k2-fsa.github.io/sherpa/onnx/pretrained_models/offline-transducer/nemo-transducer-models.html).
 
 References: [WSL localhost networking](https://learn.microsoft.com/en-us/windows/wsl/networking),
 [Fermion speech API](https://www.fermionresearch.com/docs/speech/),
