@@ -274,8 +274,9 @@ _Choose a model by its language, recording mode, and download-size pills. Screen
 
 <!-- screenshot:model-picker:end -->
 
-**3. Click Download if the model is missing.** The button shows the download
-size before you start. Downloads run on the server and report which file is
+**3. Click Download if the model is missing.** Every model has a **Download**
+button when its files are absent, or **Delete download** when they are already
+available locally. The size pill shows the approximate download size. Downloads run on the server and report which file is
 being fetched. **Downloading model…** means the download is running; it does not
 mean your speech is being transcribed. Starting the app never downloads model
 weights automatically.
@@ -302,6 +303,25 @@ _The sidebar shows Whisper ready, with its languages and recording mode. Screens
 
 <!-- screenshot:model-ready:end -->
 
+### Deleting downloaded models
+
+Open **Speech models** and click **Delete download** on the model you want to
+remove. A confirmation dialog names the model; click **Cancel** to keep it or
+**Delete download** to remove its files from the server and free disk space.
+An active model is unloaded first. Chats and recordings are kept, and you can
+download the model again later. Deletion is disabled while recording,
+transcribing, downloading, or loading a model. Other tabs also see the updated
+availability. After deleting the active model, choose another downloaded model
+and click **Use model** before recording again.
+
+<!-- screenshot:model-delete:start -->
+
+<img src="docs/screenshot-model-delete.png" alt="Confirm model deletion while keeping chats and recordings." width="520" />
+
+_Confirm model deletion while keeping chats and recordings. Screenshot of the app with demonstration state._
+
+<!-- screenshot:model-delete:end -->
+
 ### Understanding the status
 
 | Status                | What it means / what to do                                                                                                                   |
@@ -309,6 +329,7 @@ _The sidebar shows Whisper ready, with its languages and recording mode. Screens
 | Download a model      | The selected model is missing. Open Speech models and click Download.                                                                        |
 | Downloading model…    | Model files are being downloaded. Wait for completion.                                                                                       |
 | Choose Use model      | The files are installed. Click Use model to load them.                                                                                       |
+| Deleting model…       | The server is unloading and removing the downloaded model files.                                                                             |
 | Loading model…        | The server is preparing the model. Wait for Ready.                                                                                           |
 | Ready                 | You can record with the selected model.                                                                                                      |
 | Transcribing…         | The server is processing audio with the selected model.                                                                                      |
@@ -417,7 +438,8 @@ accuracy, and live latency need checks in a browser on the target machine.
 ### Updating the model screenshots
 
 The capture script opens the actual frontend with demonstration API responses.
-It captures the picker, a download in progress, and the ready state, then inserts
+It captures the picker, a download in progress, the ready state, and deletion
+confirmation, then inserts
 the images into the walkthrough above. It needs no running server and does not
 download model weights or access saved chats.
 

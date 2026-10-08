@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
+from typing import override
 
 import httpx
 import pytest
@@ -112,6 +113,8 @@ async def test_cancelled_request_keeps_native_inference_owned_until_completion(
     with pytest.raises(ModelConflict, match="busy"):
         async with manager.stream("phonon-2"):
             pytest.fail("stream was admitted during decoding")
+    with pytest.raises(ModelConflict, match="busy"):
+        manager.delete("phonon-2")
     backend.finish.set()
     assert manager.inference is not None
     await manager.inference
@@ -130,6 +133,8 @@ async def test_stream_owns_model_until_disconnect_and_refuses_stale_model(tmp_pa
     assert manager.job is not None
     await manager.job
     async with manager.stream("phonon-2"):
+        with pytest.raises(ModelConflict, match="busy"):
+            manager.delete("phonon-2")
         with pytest.raises(ModelConflict, match="busy"):
             manager.activate("phonon-2")
     assert not manager.busy
@@ -237,6 +242,8 @@ async def test_failed_download_never_becomes_installed_and_retry_releases_lock(
     await entered.wait()
     assert not store.installed("parakeet-v3")
     assert manager.status().models[1].state == "downloading"
+    with pytest.raises(ModelConflict, match="busy"):
+        manager.delete("parakeet-v3")
     with (
         pytest.raises(RuntimeError, match="Another model"),
         exclusive_lock(tmp_path / ".install.lock"),
@@ -336,6 +343,7 @@ async def test_web_proxy_model_routes_and_conflicts(model: str) -> None:
         for path in (
             f"/api/models/{model}/activate",
             f"/api/models/{model}/download",
+            f"/api/models/{model}/delete",
             f"/api/transcribe?model={model}",
         ):
             response = await client.post(
@@ -344,7 +352,7 @@ async def test_web_proxy_model_routes_and_conflicts(model: str) -> None:
             assert response.status_code == 409
             assert response.json()["detail"] == "Finish the current recording first."
         assert (await client.post("/api/models/unknown/download")).status_code == 422
-    assert len(requests) == 3
+    assert len(requests) == 4
     assert requests[-1].url.params["model"] == model
 
 
@@ -578,3 +586,120 @@ async def test_download_rejects_invalid_or_empty_json(tmp_path: Path, payload: b
         await write_verified_file(
             chunks(), tmp_path / "config.json", ModelFile("config.json", None, None)
         )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("model", ["phonon-2", "parakeet-v3", "whisper-large-v3-turbo"])
+async def test_delete_active_model_unloads_before_removal_and_keeps_other_data(
+    tmp_path: Path,
+    model: ModelId,
+) -> None:
+    store = ModelStore(tmp_path / "models")
+    for item in ("phonon-2", "parakeet-v3", "whisper-large-v3-turbo"):
+        install_fixture(store, item)
+    chats = tmp_path / "chats"
+    chats.mkdir()
+    (chats / "recording.wav").write_bytes(b"keep")
+
+    class CheckingBackend(FakeBackend):
+        @override
+        async def close(self) -> None:
+            assert store.installed(model)
+            await super().close()
+
+    backend = CheckingBackend()
+    manager = ModelManager(store, lambda _: backend)
+    manager.activate(model)
+    assert manager.job is not None
+    await manager.job
+    manager.delete(model)
+    assert next(item for item in manager.status().models if item.id == model).state == "deleting"
+    with pytest.raises(ModelConflict):
+        manager.activate(model)
+    with pytest.raises(ModelConflict):
+        manager.download(model)
+    with pytest.raises(ModelConflict):
+        await manager.transcribe(model, make_wav())
+    await manager.job
+    assert backend.closed and manager.active is None and manager.backend is None
+    assert not store.path(model).exists()
+    assert all(item.installed for item in manager.status().models if item.id != model)
+    assert (chats / "recording.wav").read_bytes() == b"keep"
+    # Deleting a missing model is harmless, and restart does not auto-switch models.
+    manager.delete(model)
+    await manager.job
+    await manager.close()
+    restarted = ModelManager(store)
+    await restarted.start()
+    assert restarted.job is None
+    await restarted.close()
+
+
+@pytest.mark.anyio
+async def test_delete_inactive_model_route_and_unknown_identity(tmp_path: Path) -> None:
+    store = ModelStore(tmp_path)
+    install_fixture(store, "phonon-2")
+    install_fixture(store, "parakeet-v3")
+    backend = FakeBackend()
+    manager = ModelManager(store, lambda _: backend)
+    async with engine_client(manager) as client:
+        assert manager.job is not None
+        await manager.job
+        assert (await client.post("/models/unknown/delete")).status_code == 422
+        response = await client.post("/models/parakeet-v3/delete")
+        assert response.status_code == 202
+        assert response.json()["models"][1]["state"] == "deleting"
+        await manager.job
+        assert not store.path("parakeet-v3").exists()
+        assert manager.active == "phonon-2" and backend.alive()
+
+
+@pytest.mark.anyio
+async def test_failed_delete_preserves_files_and_releases_reservation(tmp_path: Path) -> None:
+    store = ModelStore(tmp_path)
+    install_fixture(store, "parakeet-v3")
+    manager = ModelManager(store)
+    with exclusive_lock(tmp_path / ".install.lock"):
+        manager.delete("parakeet-v3")
+        assert manager.job is not None
+        await manager.job
+    assert store.installed("parakeet-v3")
+    assert manager.status().models[1].state == "error"
+    assert not manager.working
+    manager.delete("parakeet-v3")
+    await manager.job
+    assert manager.status().models[1].state == "missing"
+    await manager.close()
+
+
+@pytest.mark.anyio
+async def test_shutdown_waits_for_deletion_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = ModelStore(tmp_path)
+    install_fixture(store, "parakeet-v3")
+    started = asyncio.Event()
+    finish = threading.Event()
+    loop = asyncio.get_running_loop()
+    delete = store.delete
+
+    def slow_delete(model: ModelId) -> None:
+        loop.call_soon_threadsafe(started.set)
+        if not finish.wait(timeout=5):
+            raise TimeoutError("test did not release deletion worker")
+        delete(model)
+
+    monkeypatch.setattr(store, "delete", slow_delete)
+    manager = ModelManager(store)
+    manager.delete("parakeet-v3")
+    await started.wait()
+    closing = asyncio.create_task(manager.close())
+    try:
+        await asyncio.sleep(0)
+        assert not closing.done()
+        with pytest.raises(ModelConflict, match="already running"):
+            manager.download("parakeet-v3")
+    finally:
+        finish.set()
+        await closing
+    assert not store.path("parakeet-v3").exists()

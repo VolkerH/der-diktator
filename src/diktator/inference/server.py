@@ -61,6 +61,11 @@ def create_engine(manager: ModelManager | None = None) -> FastAPI:
         manager.activate(model_id)
         return manager.status()
 
+    @app.post("/models/{model_id}/delete", status_code=202)
+    async def delete(model_id: ModelId) -> ModelsStatus:
+        manager.delete(model_id)
+        return manager.status()
+
     @app.post("/transcribe")
     async def transcribe(request: Request, model: ModelId) -> Transcription:
         audio = bytearray()

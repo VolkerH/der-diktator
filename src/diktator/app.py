@@ -99,6 +99,10 @@ def create_app(
     async def activate_model(model: ModelId) -> ModelsStatus:
         return await engine.models(model, "activate")
 
+    @app.post("/api/models/{model}/delete", status_code=202)
+    async def delete_model(model: ModelId) -> ModelsStatus:
+        return await engine.models(model, "delete")
+
     async def read_recording(request: Request) -> tuple[bytes, RecordingInfo]:
         content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
         if content_type not in {"audio/wav", "audio/x-wav"}:

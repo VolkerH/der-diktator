@@ -59,7 +59,12 @@ class ModelManager:
                 status.state = "error"
                 status.message = self.errors[info.id]
             if self.working and info.id == self.job_model:
-                status.state = "downloading" if self.job_kind == "download" else "loading"
+                if self.job_kind == "download":
+                    status.state = "downloading"
+                elif self.job_kind == "delete":
+                    status.state = "deleting"
+                else:
+                    status.state = "loading"
                 status.message = self.message
             models.append(status)
         return ModelsStatus(
@@ -130,10 +135,36 @@ class ModelManager:
                 "Model could not load. Check the server log, then choose Use model to retry."
             )
 
+    def delete(self, model_id: ModelId) -> None:
+        """Reserve deletion before yielding; HTTP disconnects cannot interrupt it."""
+        model_info(model_id)
+        if self.busy or self.working:
+            raise ModelConflict(
+                "The engine is busy. Finish the recording or model operation first."
+            )
+        self.errors.pop(model_id, None)
+        self.job_model, self.job_kind = model_id, "delete"
+        self.message = "Deleting downloaded model…"
+        self.job = asyncio.create_task(self._delete(model_id))
+
+    async def _delete(self, model_id: ModelId) -> None:
+        try:
+            if self.active == model_id:
+                if self.backend is not None:
+                    await self.backend.close()
+                self.backend = None
+                self.active = None
+            await asyncio.to_thread(self.store.delete, model_id)
+        except Exception:
+            logger.exception("Model deletion failed: %s", model_id)
+            self.errors[model_id] = "Could not delete the download. Check the server log and retry."
+
     def require(self, model_id: ModelId) -> Backend:
         model_info(model_id)
         if self.working and self.job_kind == "load":
             raise ModelConflict("The model is loading. Wait for it to become ready.")
+        if self.working and self.job_kind == "delete":
+            raise ModelConflict("A model is being deleted. Wait for it to finish.")
         if self.active != model_id or self.backend is None or not self.backend.alive():
             raise ModelConflict("The selected model is not active. Choose Use model and retry.")
         if self.busy:

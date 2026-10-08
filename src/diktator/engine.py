@@ -87,7 +87,7 @@ class EngineClient:
     async def models(
         self,
         model: ModelId | None = None,
-        action: Literal["download", "activate"] | None = None,
+        action: Literal["download", "activate", "delete"] | None = None,
     ) -> ModelsStatus:
         """Fetch state or start one explicit model action."""
         try:

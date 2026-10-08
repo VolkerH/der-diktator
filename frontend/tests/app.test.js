@@ -59,6 +59,13 @@ class Element {
   pause() {
     this.paused = true;
   }
+  showModal() {
+    this.open = true;
+  }
+  close() {
+    this.open = false;
+    void this.emit("close");
+  }
   load() {}
   removeAttribute() {}
   focus() {}
@@ -146,6 +153,10 @@ function chatServer() {
       if (action === "download") {
         model.installed = true;
         model.state = "installed";
+      } else if (action === "delete") {
+        model.installed = false;
+        model.state = "missing";
+        if (server.models.active === modelId) server.models.active = null;
       } else {
         for (const item of server.models.models)
           if (item.state === "ready") item.state = "installed";
@@ -465,9 +476,9 @@ test("Parakeet download is explicit, activation disables live text, and requests
   const picker = app.element("model-picker");
   await selectModel(app, "parakeet-v3");
   assert.equal(app.element("record").disabled, true);
-  assert.match(app.element("model-action").textContent, /Download.*671/);
+  assert.equal(downloadButton(app, "parakeet-v3").textContent, "Download");
   assert.deepEqual(app.server.modelRequests, []);
-  await app.element("model-action").emit("click");
+  await downloadButton(app, "parakeet-v3").emit("click");
   assert.equal(app.element("model-action").textContent, "Use model");
   assert.equal(app.server.models.active, "phonon-2");
   await app.element("model-action").emit("click");
@@ -491,12 +502,12 @@ test("model action failures are visible and can be retried without losing text",
   const app = await appEnvironment(t, (server) => server.add("Keep these words."));
   await selectModel(app, "parakeet-v3");
   app.server.failModelAction = true;
-  await app.element("model-action").emit("click");
+  await downloadButton(app, "parakeet-v3").emit("click");
   assert.match(app.element("model-error").textContent, /Download failed/);
   assert.equal(app.element("transcript").value, "Keep these words.");
-  assert.equal(app.element("model-action").disabled, false);
+  assert.equal(downloadButton(app, "parakeet-v3").disabled, false);
   app.server.failModelAction = false;
-  await app.element("model-action").emit("click");
+  await downloadButton(app, "parakeet-v3").emit("click");
   assert.equal(app.element("model-action").textContent, "Use model");
 });
 
@@ -537,7 +548,7 @@ test("a different tab switching models cannot change the model of a recorded fal
 });
 
 function modelRadios(app) {
-  return app.element("model-options").children.map((option) => option.children[0]);
+  return app.element("model-options").children.map((option) => option.children[0].children[0]);
 }
 
 async function selectModel(app, id) {
@@ -554,7 +565,9 @@ function selectedModel(app) {
 test("Whisper pills explain capabilities in the picker and sidebar; activation uses batch transcription", async (t) => {
   const app = await appEnvironment(t);
   const option = app.element("model-options").children[2];
-  const labels = option.children[1].children[1].children.map((pill) => pill.textContent);
+  const labels = option.children[0].children[1].children[1].children.map(
+    (pill) => pill.textContent,
+  );
   assert.deepEqual(labels, [
     "German",
     "English",
@@ -568,10 +581,10 @@ test("Whisper pills explain capabilities in the picker and sidebar; activation u
     labels,
   );
   assert.equal(app.element("model-summary-name").textContent, "Whisper large-v3-turbo");
-  assert.equal(app.element("model-action").textContent, "Download (1.62 GB)");
+  assert.equal(downloadButton(app, "whisper-large-v3-turbo").textContent, "Download");
   assert.equal(app.element("record").disabled, true);
   assert.deepEqual(app.server.modelRequests, []);
-  await app.element("model-action").emit("click");
+  await downloadButton(app, "whisper-large-v3-turbo").emit("click");
   await app.element("model-action").emit("click");
   await waitForIdle(app);
   assert.equal(app.element("live-mode").disabled, true);
@@ -584,4 +597,66 @@ test("Whisper pills explain capabilities in the picker and sidebar; activation u
   await app.element("stop").emit("click");
   await waitForIdle(app);
   assert.deepEqual(app.server.requestedModels, ["whisper-large-v3-turbo"]);
+});
+
+function downloadButton(app, modelId) {
+  return app
+    .element("model-options")
+    .children.find((option) => option.children[0].children[0].value === modelId).children[1];
+}
+
+test("download buttons reflect availability; deletion requires confirmation and preserves chat", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Keep my transcript."));
+  const remove = downloadButton(app, "phonon-2");
+  assert.equal(remove.textContent, "Delete download");
+  assert.equal(downloadButton(app, "parakeet-v3").textContent, "Download");
+  await remove.emit("click");
+  assert.equal(app.element("model-delete-dialog").open, true);
+  assert.match(app.element("model-delete-description").textContent, /Phonon-2/);
+  assert.deepEqual(app.server.modelRequests, []);
+  await app.element("model-delete-cancel").emit("click");
+  assert.equal(app.element("model-delete-dialog").open, false);
+  assert.deepEqual(app.server.modelRequests, []);
+  await remove.emit("click");
+  await app.element("model-delete-confirm").emit("click");
+  assert.equal(app.element("model-delete-dialog").open, false);
+  assert.deepEqual(app.server.modelRequests, ["/api/models/phonon-2/delete"]);
+  assert.equal(remove.textContent, "Download");
+  assert.equal(app.server.models.active, null);
+  assert.equal(app.element("record").disabled, true);
+  assert.equal(app.element("transcript").value, "Keep my transcript.");
+  await remove.emit("click");
+  assert.equal(remove.textContent, "Delete download");
+  assert.equal(app.element("model-action").hidden, false);
+});
+
+test("delete confirmation pins its target and handles failure without losing installation", async (t) => {
+  const app = await appEnvironment(t);
+  await downloadButton(app, "phonon-2").emit("click");
+  await selectModel(app, "parakeet-v3");
+  app.server.failModelAction = true;
+  await app.element("model-delete-confirm").emit("click");
+  assert.deepEqual(app.server.modelRequests, ["/api/models/phonon-2/delete"]);
+  assert.equal(app.element("model-error").hidden, false);
+  assert.equal(downloadButton(app, "phonon-2").textContent, "Delete download");
+});
+
+test("recording and server work disable deletion, including an already open confirmation", async (t) => {
+  const app = await appEnvironment(t);
+  const stream = await startLive(app);
+  assert.equal(downloadButton(app, "phonon-2").disabled, true);
+  await downloadButton(app, "phonon-2").emit("click");
+  assert.notEqual(app.element("model-delete-dialog").open, true);
+  const stopping = app.element("stop").emit("click");
+  await waitForEnd(stream);
+  stream.event({ type: "done" });
+  await stopping;
+  await waitForIdle(app);
+  await downloadButton(app, "phonon-2").emit("click");
+  app.server.models.busy = true;
+  app.intervals[0]();
+  for (let i = 0; i < 5; i++) await setImmediate();
+  assert.equal(app.element("model-delete-confirm").disabled, true);
+  await app.element("model-delete-confirm").emit("click");
+  assert.deepEqual(app.server.modelRequests, []);
 });

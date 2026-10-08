@@ -131,10 +131,27 @@
           <legend>Speech model</legend>
           <div id="model-options" class="model-options"></div>
         </fieldset>
-        <button id="model-action" class="chip accent" type="button" disabled>Download model</button>
+        <button id="model-action" class="chip accent" type="button" disabled hidden>
+          Use model
+        </button>
       </div>
       <p id="model-help" role="status" aria-live="polite">Loading model information…</p>
       <p id="model-error" class="error" role="alert" hidden></p>
+    </dialog>
+    <dialog
+      id="model-delete-dialog"
+      class="model-settings"
+      aria-labelledby="model-delete-title"
+      aria-describedby="model-delete-description"
+    >
+      <header class="settings-heading">
+        <h2 id="model-delete-title">Delete downloaded model?</h2>
+      </header>
+      <p id="model-delete-description" class="settings-intro"></p>
+      <div class="dialog-actions">
+        <button id="model-delete-cancel" class="chip" type="button" autofocus>Cancel</button>
+        <button id="model-delete-confirm" class="chip danger" type="button">Delete download</button>
+      </div>
     </dialog>
   </body>
 </html>

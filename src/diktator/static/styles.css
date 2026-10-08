@@ -964,14 +964,37 @@ textarea:read-only {
   gap: 10px;
 }
 .model-option {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
+  display: grid;
+  gap: 12px;
   min-width: 0;
   padding: 12px;
   border: 1px solid var(--sheet-line);
   border-radius: 12px;
+}
+.model-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   cursor: pointer;
+}
+.model-download {
+  justify-self: start;
+  margin-left: 24px;
+  border: 1px solid var(--sheet-line);
+}
+.chip.danger {
+  color: #b3263a;
+  border: 1px solid currentColor;
+}
+.model-operation-message {
+  font-size: 13px;
+  line-height: 1.4;
+}
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
 }
 .model-option:has(input:checked) {
   border-color: var(--violet);

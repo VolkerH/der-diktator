@@ -65,7 +65,7 @@ class ModelStatus(ModelInfo):
     model_config = ConfigDict(frozen=False, strict=True)
 
     installed: bool
-    state: Literal["missing", "installed", "downloading", "loading", "ready", "error"]
+    state: Literal["missing", "installed", "downloading", "loading", "deleting", "ready", "error"]
     message: str = ""
 
 

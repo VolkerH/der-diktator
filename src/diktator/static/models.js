@@ -33,11 +33,28 @@ export function modelPicker(onChange) {
   const summaryPills = /** @type {HTMLElement} */ (document.getElementById("model-summary-pills"));
   /** @type {Map<string, HTMLInputElement>} */
   const radios = new Map();
+  /** @type {Map<string, HTMLButtonElement>} */
+  const downloads = new Map();
+  /** @type {Map<string, HTMLElement>} */
+  const operationMessages = new Map();
   let choicesSignature = "";
   const button = /** @type {HTMLButtonElement} */ (document.getElementById("model-action"));
   const help = /** @type {HTMLElement} */ (document.getElementById("model-help"));
   const errorMessage = /** @type {HTMLElement} */ (document.getElementById("model-error"));
   const badge = /** @type {HTMLElement} */ (document.getElementById("engine-status"));
+  const deleteDialog = /** @type {HTMLDialogElement} */ (
+    document.getElementById("model-delete-dialog")
+  );
+  const deleteDescription = /** @type {HTMLElement} */ (
+    document.getElementById("model-delete-description")
+  );
+  const deleteConfirm = /** @type {HTMLButtonElement} */ (
+    document.getElementById("model-delete-confirm")
+  );
+  const deleteCancel = /** @type {HTMLButtonElement} */ (
+    document.getElementById("model-delete-cancel")
+  );
+  let deleteTarget = "";
   /** @type {ModelsStatus | null} */
   let state = null;
   let selected = "";
@@ -46,23 +63,54 @@ export function modelPicker(onChange) {
   let polling = false;
   let generation = 0;
 
+  function operationBlocked() {
+    return (
+      locked ||
+      pending ||
+      !state ||
+      state.busy ||
+      state.models.some((item) => ["loading", "downloading", "deleting"].includes(item.state))
+    );
+  }
+
+  function updateActions() {
+    picker.disabled = locked || pending || !state;
+    const blocked = operationBlocked();
+    const model = state?.models.find((item) => item.id === selected);
+    button.disabled = blocked || !model?.installed || model.state === "ready";
+    for (const download of downloads.values()) download.disabled = blocked;
+    deleteConfirm.disabled =
+      blocked || !state?.models.find((item) => item.id === deleteTarget)?.installed;
+  }
+
   function render() {
     const model = state?.models.find((item) => item.id === selected);
-    const working = Boolean(
-      state?.models.some((item) => ["loading", "downloading"].includes(item.state)),
-    );
     const ready = model?.state === "ready" && state?.active === selected;
-    picker.disabled = locked || pending || !state;
+    updateActions();
     for (const [id, radio] of radios) radio.checked = id === selected;
+    for (const [id, download] of downloads) {
+      const item = state?.models.find((item) => item.id === id);
+      download.textContent = !item
+        ? "Unavailable"
+        : item.state === "downloading"
+          ? "Downloading…"
+          : item?.state === "deleting"
+            ? "Deleting…"
+            : item?.installed
+              ? "Delete download"
+              : "Download";
+      download.setAttribute("aria-label", `${download.textContent} ${item?.name ?? id}`);
+      download.classList.toggle("danger", Boolean(item?.installed));
+      const message = operationMessages.get(id);
+      if (message) {
+        message.hidden = item?.state !== "error";
+        message.textContent = item?.state === "error" ? item.message : "";
+      }
+    }
     summaryName.textContent = model?.name ?? "";
     renderPills(summaryPills, model);
-    button.disabled = locked || pending || working || Boolean(state?.busy) || ready || !model;
-    button.hidden = ready;
-    button.textContent = model?.installed
-      ? "Use model"
-      : model
-        ? `Download (${downloadSize(model.download_mb)})`
-        : "Download model";
+    button.hidden = ready || !model?.installed;
+    button.textContent = "Use model";
     help.textContent = model
       ? `${model.languages}. ${model.live ? "Live text available." : "Transcribes after you stop recording."} ${model.message || (model.installed ? "" : "Download once to use offline.")}`
       : "The transcription service is unavailable. Check the server and retry.";
@@ -75,15 +123,25 @@ export function modelPicker(onChange) {
           ? "Loading model…"
           : model.state === "downloading"
             ? "Downloading model…"
-            : model.state === "error"
-              ? "Model needs attention"
-              : model.installed
-                ? "Choose Use model"
-                : "Download a model"
+            : model.state === "deleting"
+              ? "Deleting model…"
+              : model.state === "error"
+                ? "Model needs attention"
+                : model.installed
+                  ? "Choose Use model"
+                  : "Download a model"
       : "Engine unavailable";
     badge.classList.toggle("ready", ready);
     badge.classList.toggle("offline", !state);
-    onChange(Boolean(ready && !state?.busy), Boolean(model?.live));
+    onChange(
+      Boolean(
+        ready &&
+        !state?.busy &&
+        !pending &&
+        !state?.models.some((item) => item.state === "deleting"),
+      ),
+      Boolean(model?.live),
+    );
   }
 
   /** @param {ModelsStatus} result */
@@ -110,9 +168,13 @@ export function modelPicker(onChange) {
       choicesSignature = signature;
       options.replaceChildren();
       radios.clear();
+      downloads.clear();
+      operationMessages.clear();
       for (const model of result.models) {
-        const option = document.createElement("label");
+        const option = document.createElement("div");
         option.className = "model-option";
+        const label = document.createElement("label");
+        label.className = "model-choice";
         const radio = document.createElement("input");
         radio.type = "radio";
         radio.name = "speech-model";
@@ -133,9 +195,31 @@ export function modelPicker(onChange) {
         pills.className = "model-pills";
         renderPills(pills, model);
         description.append(name, pills);
-        option.append(radio, description);
+        label.append(radio, description);
+        const download = document.createElement("button");
+        download.type = "button";
+        download.className = "chip model-download";
+        download.setAttribute("data-model", model.id);
+        download.addEventListener("click", async () => {
+          const current = state?.models.find((item) => item.id === model.id);
+          if (!current || operationBlocked()) return;
+          if (current.installed) {
+            deleteTarget = current.id;
+            deleteDescription.textContent = `Delete the downloaded files for ${current.name}? If this model is active, it will be unloaded. Your chats and recordings will be kept. You can download the model again later.`;
+            updateActions();
+            deleteDialog.showModal();
+          } else {
+            await perform(current.id, "download");
+          }
+        });
+        const message = document.createElement("span");
+        message.className = "model-operation-message error";
+        message.setAttribute("role", "status");
+        option.append(label, download, message);
         options.append(option);
         radios.set(model.id, radio);
+        downloads.set(model.id, download);
+        operationMessages.set(model.id, message);
       }
     }
     render();
@@ -160,16 +244,14 @@ export function modelPicker(onChange) {
     }
   }
 
-  button.addEventListener("click", async () => {
-    const model = state?.models.find((item) => item.id === selected);
-    if (!model || button.disabled) return;
+  /** @param {string} modelId @param {"download" | "activate" | "delete"} action */
+  async function perform(modelId, action) {
     errorMessage.hidden = true;
     pending = true;
     generation++;
     render();
     try {
-      const action = model.installed ? "activate" : "download";
-      const response = await fetch(`/api/models/${encodeURIComponent(selected)}/${action}`, {
+      const response = await fetch(`/api/models/${encodeURIComponent(modelId)}/${action}`, {
         method: "POST",
         signal: AbortSignal.timeout(10_000),
       });
@@ -185,6 +267,20 @@ export function modelPicker(onChange) {
       render();
       void refresh();
     }
+  }
+
+  button.addEventListener("click", async () => {
+    if (!button.disabled) await perform(selected, "activate");
+  });
+  deleteCancel.addEventListener("click", () => deleteDialog.close());
+  deleteConfirm.addEventListener("click", async () => {
+    if (deleteConfirm.disabled || !deleteTarget || operationBlocked()) return;
+    const modelId = deleteTarget;
+    deleteDialog.close();
+    await perform(modelId, "delete");
+  });
+  deleteDialog.addEventListener("close", () => {
+    deleteTarget = "";
   });
 
   return {
@@ -194,15 +290,7 @@ export function modelPicker(onChange) {
     /** @param {boolean} active */
     lock: (active) => {
       locked = active;
-      picker.disabled = active || pending || !state;
-      const model = state?.models.find((item) => item.id === selected);
-      button.disabled =
-        active ||
-        pending ||
-        !model ||
-        Boolean(state?.busy) ||
-        model.state === "ready" ||
-        Boolean(state?.models.some((item) => ["loading", "downloading"].includes(item.state)));
+      updateActions();
     },
   };
 }

@@ -25,12 +25,13 @@ from diktator.models import CATALOG, ModelsStatus, ModelStatus  # noqa: E402
 
 
 def embed_screenshots() -> None:
-    """Only insert links after all three screenshots were captured successfully."""
+    """Only insert links after all screenshots were captured successfully."""
     readme = ROOT / "README.md"
     text = readme.read_text()
     captions = {
         "model-picker": "Choose a model by its language, recording mode, and download-size pills.",
         "model-download": "The download status reports the current model file.",
+        "model-delete": "Confirm model deletion while keeping chats and recordings.",
         "model-ready": "The sidebar shows Whisper ready, with its languages and recording mode.",
     }
     for name, caption in captions.items():
@@ -63,6 +64,7 @@ async def capture() -> None:
     status = ModelsStatus(active="phonon-2", busy=False, models=models)
     whisper = next(model for model in models if model.id == "whisper-large-v3-turbo")
     errors: list[str] = []
+    deletions: list[str] = []
 
     async def serve(route) -> None:
         path = route.request.url.removeprefix("http://diktator.test").split("?")[0]
@@ -85,6 +87,12 @@ async def capture() -> None:
             whisper.state = "ready"
             status.active = whisper.id
             await route.fulfill(status=202, json=status.model_dump())
+        elif path == "/api/models/whisper-large-v3-turbo/delete":
+            deletions.append(whisper.id)
+            whisper.installed = False
+            whisper.state = "missing"
+            status.active = None
+            await route.fulfill(status=202, json=status.model_dump())
         else:
             errors.append(f"Unexpected request: {path}")
             await route.fulfill(status=404, json={"detail": "Not found"})
@@ -103,12 +111,13 @@ async def capture() -> None:
             await page.locator('input[value="whisper-large-v3-turbo"]').check()
             dialog = page.locator("#model-settings")
             await expect(page.locator(".model-option")).to_have_count(3)
-            await expect(page.locator("#model-action")).to_have_text("Download (1.62 GB)")
+            download = page.locator('.model-download[data-model="whisper-large-v3-turbo"]')
+            await expect(download).to_have_text("Download")
             await dialog.screenshot(path=ROOT / "docs" / "screenshot-model-picker.png")
 
-            await page.locator("#model-action").click()
+            await download.click()
             await expect(page.locator("#model-help")).to_contain_text("file 1 of 5")
-            await expect(page.locator("#model-action")).to_be_disabled()
+            await expect(download).to_be_disabled()
             await dialog.screenshot(path=ROOT / "docs" / "screenshot-model-download.png")
 
             whisper.installed = True
@@ -121,12 +130,41 @@ async def capture() -> None:
             await page.locator("#model-settings-open").screenshot(
                 path=ROOT / "docs" / "screenshot-model-ready.png"
             )
+            await page.locator("#model-settings-open").click()
+            await expect(download).to_have_text("Delete download")
+            await download.click()
+            confirmation = page.locator("#model-delete-dialog")
+            await expect(confirmation).to_be_visible()
+            await expect(page.locator("#model-delete-cancel")).to_be_focused()
+            await confirmation.screenshot(path=ROOT / "docs" / "screenshot-model-delete.png")
+            await page.locator("#model-delete-cancel").click()
+            await expect(confirmation).not_to_be_visible()
+            await expect(download).to_be_focused()
+            assert deletions == []
+            await download.click()
+            await page.keyboard.press("Escape")
+            await expect(confirmation).not_to_be_visible()
+            assert deletions == []
+            await download.click()
+            await page.locator("#model-delete-confirm").click()
+            await expect(download).to_have_text("Download")
+            assert deletions == [whisper.id]
+            await expect(page.locator("#record")).to_be_disabled()
+
+            # Check modal scrolling and confirmation on a narrow phone viewport.
+            await page.set_viewport_size({"width": 390, "height": 844})
+            await page.locator('.model-download[data-model="phonon-2"]').click()
+            await expect(confirmation).to_be_visible()
+            assert await confirmation.evaluate("e => e.scrollWidth <= e.clientWidth")
+            await page.locator("#model-delete-cancel").click()
+            assert await dialog.evaluate("e => e.scrollWidth <= e.clientWidth")
+            await expect(download).to_be_visible()
             if errors:
                 raise RuntimeError("; ".join(errors))
         finally:
             await browser.close()
     embed_screenshots()
-    print("Saved three screenshots in docs/ and embedded them in README.md.")
+    print("Saved four screenshots in docs/ and embedded them in README.md.")
 
 
 def main() -> None:

@@ -144,6 +144,17 @@ class ModelStore:
         temporary.write_text(model_info(model_id).id + "\n")
         temporary.replace(self.root / "selected-model")
 
+    def delete(self, model_id: ModelId) -> None:
+        """Remove only this allowlisted model, coordinated with CLI downloads.
+
+        Keep its preference so a restart does not silently select another model.
+        The manager must release the backend before calling this on a worker.
+        """
+        directory = self.path(model_id)
+        with exclusive_lock(self.root / ".install.lock"):
+            if directory.exists():
+                shutil.rmtree(directory)
+
     async def install(self, model_id: ModelId, report: Callable[[str], None]) -> None:
         """Explicit download, at most one hour; failed staging is safe to retry."""
         destination = self.path(model_id)
