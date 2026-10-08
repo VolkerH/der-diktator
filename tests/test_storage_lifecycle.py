@@ -12,6 +12,7 @@ from diktator.db import (
     DATABASE_NAME,
     DataDirectoryLock,
     StorageInUse,
+    UnknownSchema,
     open_engine,
 )
 from diktator.db.rows import (
@@ -200,6 +201,21 @@ async def test_storage_owns_shutdown_and_releases_lock(tmp_path: Path) -> None:
     lock = DataDirectoryLock(tmp_path)
     lock.acquire()
     lock.release()
+
+
+def test_cli_reports_newer_schema_without_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from diktator.cli import main
+
+    with (
+        patch("sys.argv", ["diktator", "--data-dir", str(tmp_path)]),
+        patch("diktator.cli.open_storage", side_effect=UnknownSchema("schema is newer")),
+        pytest.raises(SystemExit) as exit_info,
+    ):
+        main()
+    assert exit_info.value.code == 1
+    assert "schema is newer" in capsys.readouterr().err
 
 
 def test_cli_releases_storage_if_server_setup_fails(tmp_path: Path) -> None:

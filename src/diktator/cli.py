@@ -8,7 +8,7 @@ import uvicorn
 
 from diktator.app import create_app
 from diktator.config import Settings, default_data_directory
-from diktator.db import DATABASE_NAME, StorageInUse
+from diktator.db import DATABASE_NAME, StorageInUse, UnknownSchema
 from diktator.storage import open_storage
 
 
@@ -38,12 +38,13 @@ def main() -> None:
     )
     print(f"Storing chats in {settings.data_directory}", flush=True)
     print(f"Database: {settings.data_directory / DATABASE_NAME}", flush=True)
-    # Open before Uvicorn's lifespan exception handler so expected lock refusal
-    # is a concise CLI error. The same owner is handed to the application's lifespan.
+    # Open before Uvicorn's lifespan exception handler so expected refusals (a held
+    # lock, a database from a newer version) are concise CLI errors. The same owner
+    # is handed to the application's lifespan.
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     try:
         storage = open_storage(settings)
-    except StorageInUse as error:
+    except (StorageInUse, UnknownSchema) as error:
         parser.exit(1, f"{error}\n")
     try:
         uvicorn.run(
