@@ -49,6 +49,8 @@ class ChatRow(Base):
     created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
     revision: Mapped[int] = mapped_column(default=1)
     text_revision: Mapped[int] = mapped_column(default=1)
+    custom_title: Mapped[str | None] = mapped_column(String, nullable=True)
+    title_revision: Mapped[int] = mapped_column(default=1)
     incarnation: Mapped[str] = mapped_column(String, default=lambda: uuid.uuid4().hex)
 
 

@@ -34,8 +34,8 @@ class Element {
   addEventListener(type, callback) {
     this.listeners.set(type, [...(this.listeners.get(type) ?? []), callback]);
   }
-  async emit(type) {
-    for (const callback of this.listeners.get(type) ?? []) await callback();
+  async emit(type, event = {}) {
+    for (const callback of this.listeners.get(type) ?? []) await callback(event);
   }
   append(...children) {
     this.children.push(...children);
@@ -71,7 +71,9 @@ class Element {
   }
   load() {}
   removeAttribute() {}
-  focus() {}
+  focus() {
+    if (!this.disabled) globalThis.document.activeElement = this;
+  }
   select() {}
 }
 
@@ -138,6 +140,9 @@ function chatServer() {
       recordings,
       revision: 1,
       text_revision: 1,
+      title_revision: 1,
+      title: text || "New chat",
+      custom_title: null,
     };
     server.chats.set(chat.id, chat);
     return chat;
@@ -148,6 +153,7 @@ function chatServer() {
     if (parsed.searchParams.has("model"))
       server.requestedModels.push(parsed.searchParams.get("model"));
     const method = options.method ?? "GET";
+    const titleEtag = (chat) => `"title-${chat.id}-${chat.title_revision}"`;
     const json = (body, status = 200) =>
       Response.json(body, {
         status,
@@ -155,6 +161,7 @@ function chatServer() {
           ? {
               ETag: `"chat-${body.id}-${body.revision}"`,
               "Text-ETag": `"text-${body.id}-${body.text_revision}"`,
+              "Title-ETag": titleEtag(body),
             }
           : undefined,
       });
@@ -190,7 +197,8 @@ function chatServer() {
       return json(
         [...server.chats.values()].map((chat) => ({
           id: chat.id,
-          title: chat.text || "New chat",
+          title: chat.title,
+          custom_title: chat.custom_title,
           updated: chat.updated,
           recording_count: chat.recordings.length,
           etag: `"chat-${chat.id}-${chat.revision}"`,
@@ -217,10 +225,30 @@ function chatServer() {
       server.chats.delete(chatId);
       return new Response(null, { status: 204 });
     }
+    if (rest === "/title") {
+      if (method === "GET")
+        return Response.json(
+          {
+            title: chat.title,
+            custom_title: chat.custom_title,
+            title_revision: chat.title_revision,
+          },
+          { headers: { ETag: titleEtag(chat), "Chat-Revision": String(chat.revision) } },
+        );
+      if (options.headers?.["If-Match"] !== titleEtag(chat))
+        return json({ detail: "This chat changed elsewhere.", code: "revision_conflict" }, 412);
+      const value = JSON.parse(options.body).custom_title;
+      chat.custom_title = value === null ? null : value.trim();
+      chat.title = chat.custom_title ?? (chat.text || "New chat");
+      chat.title_revision++;
+      chat.revision++;
+      return json(chat);
+    }
     if (rest === "/text") {
       if (options.headers?.["If-Match"] !== `"text-${chat.id}-${chat.text_revision}"`)
         return json({ detail: "This chat changed elsewhere.", code: "revision_conflict" }, 412);
       chat.text = JSON.parse(options.body).text;
+      chat.title = chat.custom_title ?? (chat.text || "New chat");
       chat.revision++;
       chat.text_revision++;
       return json(chat);
@@ -1242,4 +1270,346 @@ test("a late refresh cannot replace the sidebar while navigation GET is pending"
   releaseChat();
   await waitForIdle(app);
   assert.equal(app.element("transcript").value, "Second");
+});
+
+async function submitTitle(app, value) {
+  app.element("title-input").value = value;
+  await app.element("title-form").emit("submit", { preventDefault() {} });
+  await settle();
+}
+
+test("title editor cancellation keeps a new chat lazy; submitted literal labels are canonical", async (t) => {
+  const app = await appEnvironment(t);
+  await app.element("chat-title").emit("click");
+  assert.equal(app.element("title-editor").open, true);
+  await app.element("title-cancel").emit("click");
+  assert.equal(app.server.chats.size, 0);
+  await app.element("chat-title").emit("click");
+  await submitTitle(app, "");
+  assert.equal(app.server.chats.size, 0);
+  assert.equal(app.element("title-error").hidden, false);
+  await submitTitle(app, " <b>Notes</b> ");
+  assert.equal(app.server.chats.size, 1);
+  assert.equal(app.element("chat-title").textContent, "<b>Notes</b>");
+  assert.deepEqual(chatRows(app), [["<b>Notes</b>", true]]);
+  assert.equal(app.element("title-editor").open, false);
+  await app.element("chat-title").emit("click");
+  await app.element("title-reset").emit("click");
+  await settle();
+  assert.equal(app.element("chat-title").textContent, "New chat");
+});
+
+test("unsaved transcript uses its acknowledged server title until autosave completes", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => {
+    const chat = server.add("Transcript text");
+    chat.title = "A canonical server name";
+  });
+  app.element("transcript").value = "New draft";
+  await app.element("transcript").emit("input");
+  assert.equal(app.element("chat-title").textContent, "A canonical server name");
+  assert.deepEqual(chatRows(app), [["A canonical server name", true]]);
+  t.mock.timers.tick(700);
+  await settle();
+  assert.equal(app.element("chat-title").textContent, "New draft");
+});
+
+test("rename waits for pending text saves and keeps newer editor drafts", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  const fetch = globalThis.fetch;
+  let releaseText;
+  let releaseTitle;
+  let deferText = true;
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (String(url).endsWith("/text")) {
+      calls.push("text");
+      if (deferText) {
+        deferText = false;
+        await new Promise((resolve) => {
+          releaseText = resolve;
+        });
+      }
+    }
+    if (String(url).endsWith("/title") && options?.method === "PUT") {
+      calls.push("title");
+      await new Promise((resolve) => {
+        releaseTitle = resolve;
+      });
+    }
+    return response;
+  });
+  await editAndSave(t, app, "Submitted text");
+  await app.element("chat-title").emit("click");
+  await submitTitle(app, "Manual title");
+  assert.deepEqual(calls, ["text"]);
+  releaseText();
+  await settle();
+  assert.deepEqual(calls, ["text", "title"]);
+  app.element("transcript").value = "Newer draft";
+  await app.element("transcript").emit("input");
+  releaseTitle();
+  await settle();
+  assert.equal(app.element("transcript").value, "Newer draft");
+  assert.equal(app.element("chat-title").textContent, "Manual title");
+  t.mock.timers.tick(700);
+  await settle();
+  assert.equal(app.server.chats.get(id(1)).text, "Newer draft");
+  assert.equal(app.element("chat-title").textContent, "Manual title");
+});
+
+test("rename conflicts preserve input, read current metadata and retry explicitly", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  await app.element("chat-title").emit("click");
+  const stored = app.server.chats.get(id(1));
+  stored.custom_title = "Remote name";
+  stored.title = "Remote name";
+  stored.title_revision++;
+  stored.revision++;
+  await submitTitle(app, "My name");
+  assert.equal(app.element("title-editor").open, true);
+  assert.equal(app.element("title-input").value, "My name");
+  assert.equal(app.element("chat-title").textContent, "Remote name");
+  assert.match(app.element("title-error").textContent, /Remote name/);
+  assert.equal(stored.title, "Remote name");
+  await submitTitle(app, "My name");
+  assert.equal(stored.title, "My name");
+  assert.equal(app.element("title-editor").open, false);
+});
+
+test("title network failure keeps the confirmed label and input", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  const fetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url).endsWith("/title")) throw new TypeError("Network unavailable");
+    return fetch(url, options);
+  });
+  await app.element("chat-title").emit("click");
+  await submitTitle(app, "Keep this input");
+  assert.equal(app.element("chat-title").textContent, "Original");
+  assert.equal(app.element("title-input").value, "Keep this input");
+  assert.equal(app.element("title-editor").open, true);
+  assert.match(app.element("title-error").textContent, /Network unavailable/);
+});
+
+test("title responses with remote text never freshen the old text validator", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  const stored = app.server.chats.get(id(1));
+  stored.custom_title = "Manual";
+  stored.title = "Manual";
+  // Fetch the manual title first, as a real reload would.
+  await app.element("new-chat").emit("click");
+  await waitForIdle(app);
+  await app.element("chat-list").children[1].children[0].emit("click");
+  await waitForIdle(app);
+  stored.text = "Remote text";
+  stored.text_revision++;
+  stored.revision++;
+  await app.element("chat-title").emit("click");
+  await submitTitle(app, "Renamed");
+  assert.equal(app.element("transcript").value, "Original");
+  await editAndSave(t, app, "My draft");
+  assert.equal(app.element("text-conflict").hidden, false);
+  assert.equal(stored.text, "Remote text");
+});
+
+test("late title responses are ignored after navigating to another chat", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    server.add("First");
+    server.add("Second");
+  });
+  const fetch = globalThis.fetch;
+  let release;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (String(url).endsWith("/title") && options?.method === "PUT")
+      await new Promise((resolve) => {
+        release = resolve;
+      });
+    return response;
+  });
+  await app.element("chat-title").emit("click");
+  await submitTitle(app, "Renamed first");
+  await app.element("title-cancel").emit("click");
+  await app.element("chat-list").children[1].children[0].emit("click");
+  await waitForIdle(app);
+  release();
+  await settle();
+  assert.equal(app.element("chat-title").textContent, "Second");
+  assert.equal(app.element("transcript").value, "Second");
+});
+
+test("a delayed reset response cannot replace a newer title from autosave", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => {
+    const chat = server.add("Original");
+    chat.title = chat.custom_title = "Manual";
+  });
+  const fetch = globalThis.fetch;
+  let release;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (String(url).endsWith("/title") && options?.method === "PUT")
+      await new Promise((resolve) => {
+        release = resolve;
+      });
+    return response;
+  });
+  await app.element("chat-title").emit("click");
+  await app.element("title-reset").emit("click");
+  await settle();
+  await editAndSave(t, app, "New automatic name");
+  assert.equal(app.element("chat-title").textContent, "New automatic name");
+  release();
+  await settle();
+  assert.equal(app.element("chat-title").textContent, "New automatic name");
+  assert.equal(app.element("transcript").value, "New automatic name");
+});
+
+test("an older text response cannot undo an acknowledged rename", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => {
+    const chat = server.add("Original");
+    chat.title = chat.custom_title = "Manual";
+  });
+  const fetch = globalThis.fetch;
+  let releaseTitleRequest;
+  let releaseTextResponse;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url).endsWith("/title") && options?.method === "PUT") {
+      await new Promise((resolve) => {
+        releaseTitleRequest = resolve;
+      });
+    }
+    const response = await fetch(url, options);
+    if (String(url).endsWith("/text")) {
+      await new Promise((resolve) => {
+        releaseTextResponse = resolve;
+      });
+    }
+    return response;
+  });
+  await app.element("chat-title").emit("click");
+  await submitTitle(app, "Renamed");
+  await app.element("title-cancel").emit("click");
+  await editAndSave(t, app, "New text");
+  releaseTitleRequest();
+  await settle();
+  assert.equal(app.element("chat-title").textContent, "Renamed");
+  releaseTextResponse();
+  await settle();
+  assert.equal(app.server.chats.get(id(1)).title, "Renamed");
+  assert.equal(app.element("chat-title").textContent, "Renamed");
+});
+
+test("an older autosave cannot replace newer title metadata read after a conflict", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => {
+    const chat = server.add("Original");
+    chat.title = chat.custom_title = "Manual";
+  });
+  const fetch = globalThis.fetch;
+  let releaseTitleRequest;
+  let releaseTextResponse;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url).endsWith("/title") && options?.method === "PUT") {
+      await new Promise((resolve) => {
+        releaseTitleRequest = resolve;
+      });
+    }
+    const response = await fetch(url, options);
+    if (String(url).endsWith("/text")) {
+      await new Promise((resolve) => {
+        releaseTextResponse = resolve;
+      });
+    }
+    return response;
+  });
+  await app.element("chat-title").emit("click");
+  await submitTitle(app, "My name");
+  await app.element("title-cancel").emit("click");
+  await editAndSave(t, app, "New text");
+  const stored = app.server.chats.get(id(1));
+  stored.title = stored.custom_title = "Remote name";
+  stored.title_revision++;
+  stored.revision++;
+  releaseTitleRequest();
+  await settle();
+  assert.equal(app.element("chat-title").textContent, "Remote name");
+  releaseTextResponse();
+  await settle();
+  assert.equal(app.element("chat-title").textContent, "Remote name");
+  assert.equal(app.element("transcript").value, "New text");
+  await deleteRow(app, 0);
+  assert.equal(app.server.chats.size, 1, "metadata-only reads do not acknowledge deletion");
+});
+
+test("successful title save restores focus after a delayed sidebar refresh", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  const fetch = globalThis.fetch;
+  let finishRefresh;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (url === "/api/chats") {
+      await new Promise((resolve) => {
+        finishRefresh = resolve;
+      });
+    }
+    return fetch(url, options);
+  });
+  await app.element("chat-title").emit("click");
+  await submitTitle(app, "Renamed");
+  assert.equal(app.element("title-editor").open, false);
+  assert.equal(app.element("chat-title").disabled, false);
+  finishRefresh();
+  await settle();
+  assert.equal(app.element("chat-title").disabled, false);
+  assert.equal(globalThis.document.activeElement, app.element("chat-title"));
+});
+
+test("a failed rename after cancellation reports its error outside the closed dialog", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  const fetch = globalThis.fetch;
+  let fail;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url).endsWith("/title") && options?.method === "PUT") {
+      return new Promise((resolve, reject) => {
+        fail = reject;
+      });
+    }
+    return fetch(url, options);
+  });
+  await app.element("chat-title").emit("click");
+  await submitTitle(app, "Attempted name");
+  await app.element("title-cancel").emit("click");
+  fail(new TypeError("Network unavailable"));
+  await settle();
+  assert.equal(app.element("title-editor").open, false);
+  assert.match(app.element("error").textContent, /Network unavailable/);
+  assert.equal(app.element("error").hidden, false);
+  assert.equal(app.element("chat-title").textContent, "Original");
+});
+
+test("a dismissed slow rename preserves focus moved into the transcript", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  const fetch = globalThis.fetch;
+  let finishRename;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url).endsWith("/title") && options?.method === "PUT") {
+      await new Promise((resolve) => {
+        finishRename = resolve;
+      });
+    }
+    return fetch(url, options);
+  });
+  await app.element("chat-title").emit("click");
+  await submitTitle(app, "Renamed");
+  await app.element("title-cancel").emit("click");
+  app.element("transcript").focus();
+  finishRename();
+  await settle();
+  assert.equal(app.element("chat-title").textContent, "Renamed");
+  assert.equal(globalThis.document.activeElement, app.element("transcript"));
 });

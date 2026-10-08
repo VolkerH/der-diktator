@@ -489,6 +489,12 @@
                   "type": "string"
                 }
               },
+              "Title-ETag": {
+                "description": "Opaque quoted strong validator for the title subresource.",
+                "schema": {
+                  "type": "string"
+                }
+              },
               "Text-ETag": {
                 "description": "Opaque quoted strong validator for the text subresource.",
                 "schema": {
@@ -558,6 +564,12 @@
                   "type": "string"
                 }
               },
+              "Title-ETag": {
+                "description": "Opaque quoted strong validator for the title subresource.",
+                "schema": {
+                  "type": "string"
+                }
+              },
               "Text-ETag": {
                 "description": "Opaque quoted strong validator for the text subresource.",
                 "schema": {
@@ -590,6 +602,12 @@
             "headers": {
               "ETag": {
                 "description": "Opaque quoted strong validator for the complete Chat.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Title-ETag": {
+                "description": "Opaque quoted strong validator for the title subresource.",
                 "schema": {
                   "type": "string"
                 }
@@ -641,6 +659,12 @@
             "headers": {
               "ETag": {
                 "description": "Opaque quoted strong validator for the complete Chat.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Title-ETag": {
+                "description": "Opaque quoted strong validator for the title subresource.",
                 "schema": {
                   "type": "string"
                 }
@@ -857,6 +881,176 @@
             "headers": {
               "ETag": {
                 "description": "Opaque quoted strong validator for the complete Chat.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Title-ETag": {
+                "description": "Opaque quoted strong validator for the title subresource.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Text-ETag": {
+                "description": "Opaque quoted strong validator for the text subresource.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "412": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Precondition Failed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        }
+      }
+    },
+    "/api/chats/{chat_id}/title": {
+      "get": {
+        "summary": "Get Title",
+        "description": "Read the custom title and its revision. Retain ETag for conditional renames.",
+        "operationId": "get_title_api_chats__chat_id__title_get",
+        "parameters": [
+          {
+            "name": "chat_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$",
+              "title": "Chat Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatTitle"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "Opaque quoted strong validator for the title subresource.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Title",
+        "description": "Set a shared title, or null for automatic naming. Optional If-Match checks only title metadata; transcript edits do not conflict. Returns the complete Chat.",
+        "operationId": "update_title_api_chats__chat_id__title_put",
+        "parameters": [
+          {
+            "name": "chat_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$",
+              "title": "Chat Id"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TitleUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Chat"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "Opaque quoted strong validator for the complete Chat.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Title-ETag": {
+                "description": "Opaque quoted strong validator for the title subresource.",
                 "schema": {
                   "type": "string"
                 }
@@ -1402,10 +1596,32 @@
             "type": "integer",
             "title": "Text Revision",
             "default": 1
+          },
+          "custom_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Title"
+          },
+          "title_revision": {
+            "type": "integer",
+            "title": "Title Revision",
+            "default": 1
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "One canonical effective name for every public representation.",
+            "readOnly": true
           }
         },
         "type": "object",
-        "required": ["id", "created", "updated"],
+        "required": ["id", "created", "updated", "title"],
         "title": "Chat",
         "description": "One editable transcript and every recording made for it."
       },
@@ -1426,6 +1642,17 @@
             "type": "string",
             "title": "Title"
           },
+          "custom_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Title"
+          },
           "updated": {
             "type": "string",
             "format": "date-time",
@@ -1441,7 +1668,7 @@
           }
         },
         "type": "object",
-        "required": ["id", "title", "updated", "recording_count", "etag"],
+        "required": ["id", "title", "custom_title", "updated", "recording_count", "etag"],
         "title": "ChatSummary",
         "description": "What the chat list needs, without transcripts or recordings."
       },
@@ -1460,6 +1687,29 @@
         "required": ["text", "text_revision"],
         "title": "ChatText",
         "description": "Canonical text resource, independent of the chat's recordings."
+      },
+      "ChatTitle": {
+        "properties": {
+          "custom_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Title"
+          },
+          "title_revision": {
+            "type": "integer",
+            "title": "Title Revision"
+          }
+        },
+        "type": "object",
+        "required": ["custom_title", "title_revision"],
+        "title": "ChatTitle",
+        "description": "Shared title metadata, independently writable from transcript and audio."
       },
       "ModelStatus": {
         "properties": {
@@ -1605,6 +1855,26 @@
         "type": "object",
         "required": ["text"],
         "title": "TextUpdate"
+      },
+      "TitleUpdate": {
+        "properties": {
+          "custom_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Title"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["custom_title"],
+        "title": "TitleUpdate",
+        "description": "Null restores automatic naming; an absent override is invalid."
       },
       "Transcription": {
         "properties": {

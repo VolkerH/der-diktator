@@ -41,6 +41,7 @@ The error codes below are implemented:
 | `engine_unavailable`                       | 503  | Engine unreachable/unavailable; check health and reconcile any submitted work.    |
 | `engine_error`                             | 502  | Upstream failure or invalid response; outcome may be uncertain.                   |
 | `engine_timeout`                           | 504  | Timed out waiting for the engine; work may still be running.                      |
+| `invalid_title`                            | 422  | Invalid title string; use 1–120 characters without controls or line breaks.       |
 | `validation_error`                         | 422  | Invalid request fields; correct them.                                             |
 | `revision_conflict`                        | 412  | Preserve the draft, fetch current state and reconcile.                            |
 | `idempotency_conflict`                     | 409  | Same key, different input; reconcile the original operation.                      |
@@ -160,8 +161,8 @@ Creation sets `created` and `updated` to the same UTC timestamp. Text replacemen
 sets `updated` during its database mutation; saving identical text changes nothing. Uploads update recency after audio
 finalization to the later of the database mutation time and the stored `updated`,
 so a text save during finalization cannot be overwritten by an earlier timestamp.
-The recording keeps its upload-start `created` timestamp. Reading and listing
-chats do not change recency. Lists sort by `updated` descending, with chat ID as
+The recording keeps its upload-start `created` timestamp. Changed title overrides also update recency; identical normalized names do not.
+Reading and listing chats do not change recency. Lists sort by `updated` descending, with chat ID as
 the tie breaker.
 Recordings sort by creation time and ID. Legacy import preserves the original
 creation and update instants and the import-time transcript independently of a

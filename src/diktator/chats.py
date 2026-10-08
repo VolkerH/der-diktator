@@ -5,13 +5,14 @@ import logging
 import os
 import re
 import shutil
+import unicodedata
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
 
-from pydantic import BaseModel, PrivateAttr
+from pydantic import BaseModel, ConfigDict, PrivateAttr, computed_field, field_validator
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
@@ -42,7 +43,15 @@ class Chat(BaseModel):
     recordings: list[Recording] = []
     revision: int = 1
     text_revision: int = 1
+    custom_title: str | None = None
+    title_revision: int = 1
     _incarnation: str = PrivateAttr(default="")
+
+    @computed_field
+    @property
+    def title(self) -> str:
+        """One canonical effective name for every public representation."""
+        return title_for(self.text, self.custom_title)
 
     @property
     def etag(self) -> str:
@@ -53,6 +62,48 @@ class Chat(BaseModel):
     def text_etag(self) -> str:
         """Text changes independently of recordings and chat metadata."""
         return f'"text-{self.id}-{self._incarnation}-{self.text_revision}"'
+
+    @property
+    def title_etag(self) -> str:
+        """Validate writable title metadata independently of transcript edits."""
+        return title_etag(self.id, self._incarnation, self.title_revision)
+
+
+class ChatTitle(BaseModel):
+    """Shared title metadata, independently writable from transcript and audio."""
+
+    custom_title: str | None
+    title_revision: int
+
+
+class TitleUpdate(BaseModel):
+    """Null restores automatic naming; an absent override is invalid."""
+
+    model_config = ConfigDict(extra="forbid")
+    custom_title: str | None
+
+    @field_validator("custom_title")
+    @classmethod
+    def validate_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        # Reject controls before trimming, so edge newlines cannot disappear silently.
+        if any(unicodedata.category(character) in {"Cc", "Cs", "Zl", "Zp"} for character in value):
+            raise ApiFailure("Titles cannot contain controls or line breaks.", "invalid_title", 422)
+        value = value.strip()
+        if any(
+            "\u202a" <= character <= "\u202e" or "\u2066" <= character <= "\u2069"
+            for character in value
+        ):
+            raise ApiFailure("Titles cannot contain bidirectional controls.", "invalid_title", 422)
+        if not any(
+            not character.isspace() and unicodedata.category(character) != "Cf"
+            for character in value
+        ):
+            raise ApiFailure("A title must contain visible characters.", "invalid_title", 422)
+        if not 1 <= len(value) <= 120:
+            raise ApiFailure("A title must contain 1 to 120 characters.", "invalid_title", 422)
+        return value
 
 
 class ChatText(BaseModel):
@@ -67,6 +118,7 @@ class ChatSummary(BaseModel):
 
     id: str
     title: str
+    custom_title: str | None
     updated: datetime
     recording_count: int
     etag: str
@@ -90,6 +142,11 @@ def chat_etag(row: ChatRow) -> str:
 def text_etag(row: ChatRow) -> str:
     """Compute the independently writable text validator from its row snapshot."""
     return f'"text-{row.id}-{row.incarnation}-{row.text_revision}"'
+
+
+def title_etag(chat_id: str, incarnation: str, revision: int) -> str:
+    """Compute a title validator from either a row or a public snapshot."""
+    return f'"title-{chat_id}-{incarnation}-{revision}"'
 
 
 class ChatNotFound(ApiFailure):
@@ -119,8 +176,10 @@ def idempotency_conflict() -> ApiFailure:
     return ApiFailure("This identifier is already in use.", "idempotency_conflict", 409)
 
 
-def title_for(text: str) -> str:
+def title_for(text: str, custom_title: str | None = None) -> str:
     """Name a chat after the start of its transcript."""
+    if custom_title is not None:
+        return custom_title
     words = " ".join(text.split())
     if not words:
         return "New chat"
@@ -198,6 +257,8 @@ class ChatService:
             recordings=[self._recording_model(recording) for recording in recordings],
             revision=row.revision,
             text_revision=row.text_revision,
+            custom_title=row.custom_title,
+            title_revision=row.title_revision,
         )
         # Keep validator metadata in the typed response snapshot, without exposing DB rows
         # or adding the incarnation to the public JSON representation.
@@ -226,7 +287,8 @@ class ChatService:
             return [
                 ChatSummary(
                     id=row.id,
-                    title=title_for(row.text),
+                    title=title_for(row.text, row.custom_title),
+                    custom_title=row.custom_title,
                     updated=row.updated,
                     recording_count=recording_count,
                     etag=chat_etag(row),
@@ -267,6 +329,21 @@ class ChatService:
             if row.text != text:
                 row.text = text
                 row.text_revision += 1
+                row.revision += 1
+                row.updated = _now()
+            return self._model(session, row)
+
+    def update_title(
+        self, actor_id: str, chat_id: str, custom_title: str | None, if_match: str | None = None
+    ) -> Chat:
+        """Change shared metadata in one transaction, preserving transcript and audio."""
+        custom_title = TitleUpdate(custom_title=custom_title).custom_title
+        with session_scope(self.engine, write=True) as session:
+            row = self._chat(session, actor_id, chat_id)
+            check_precondition(if_match, title_etag(row.id, row.incarnation, row.title_revision))
+            if row.custom_title != custom_title:
+                row.custom_title = custom_title
+                row.title_revision += 1
                 row.revision += 1
                 row.updated = _now()
             return self._model(session, row)

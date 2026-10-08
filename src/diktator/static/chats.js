@@ -1,8 +1,10 @@
 import { ApiRequestError } from "./errors.js";
 
 /** @typedef {{ id: string, created: string, duration_seconds: number }} Recording */
-/** @typedef {{ id: string, created: string, updated: string, text: string, recordings: Recording[], revision: number, text_revision: number, etag: string | null, textEtag: string | null }} Chat */
-/** @typedef {{ id: string, title: string, updated: string, recording_count: number, etag: string }} ChatSummary */
+/** A title observation carries its parent ordering revision without acknowledging the whole Chat.
+ * @typedef {{ title: string, custom_title: string | null, title_revision: number, titleChatRevision: number, titleEtag: string | null }} ChatTitle */
+/** @typedef {ChatTitle & { id: string, created: string, updated: string, text: string, recordings: Recording[], revision: number, text_revision: number, etag: string | null, textEtag: string | null }} Chat */
+/** @typedef {{ id: string, title: string, custom_title: string | null, updated: string, recording_count: number, etag: string }} ChatSummary */
 /** @typedef {{ recording: Recording, chatEtag: string | null, chatRevision: number | null }} RecordingUpload */
 
 /** @param {string} path @param {RequestInit} [options] */
@@ -19,7 +21,13 @@ async function request(path, options = {}) {
  * @param {string} path @param {RequestInit} [options] @returns {Promise<Chat>} */
 async function chatRequest(path, options = {}) {
   const { body, headers } = await request(path, options);
-  return { ...body, etag: headers.get("ETag"), textEtag: headers.get("Text-ETag") };
+  return {
+    ...body,
+    etag: headers.get("ETag"),
+    textEtag: headers.get("Text-ETag"),
+    titleEtag: headers.get("Title-ETag"),
+    titleChatRevision: body.revision,
+  };
 }
 
 /** @param {unknown} result @returns {string} */
@@ -37,6 +45,21 @@ export const chatApi = {
   create: (id) => chatRequest(`/api/chats/${id}`, { method: "PUT" }),
   /** @param {string} id @returns {Promise<Chat>} */
   get: (id) => chatRequest(`/api/chats/${id}`),
+  /** @param {string} id @returns {Promise<{ custom_title: string | null, title_revision: number, titleEtag: string | null }>} */
+  getTitle: async (id) => {
+    const { body, headers } = await request(`/api/chats/${id}/title`);
+    return {
+      ...body,
+      titleEtag: headers.get("ETag"),
+    };
+  },
+  /** @param {string} id @param {string | null} customTitle @param {string} etag @returns {Promise<Chat>} */
+  saveTitle: (id, customTitle, etag) =>
+    chatRequest(`/api/chats/${id}/title`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "If-Match": etag },
+      body: JSON.stringify({ custom_title: customTitle }),
+    }),
   /** @param {string} id @param {string} etag */
   remove: (id, etag) =>
     request(`/api/chats/${id}`, { method: "DELETE", headers: { "If-Match": etag } }),
@@ -106,12 +129,4 @@ export function spliceText(text, start, end, insertion) {
     text: before + lead + words + trail + after,
     caret: before.length + lead.length + words.length,
   };
-}
-
-/** Matches the server's chat titles. @param {string} text */
-export function titleFor(text) {
-  const words = text.split(/\s+/u).filter(Boolean).join(" ");
-  if (!words) return "New chat";
-  if (words.length <= 48) return words;
-  return words.slice(0, 48).replace(/\s+\S*$/u, "") + "…";
 }

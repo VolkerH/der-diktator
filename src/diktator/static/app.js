@@ -1,12 +1,13 @@
 import { ApiRequestError } from "./errors.js";
 import { MAX_DURATION_SECONDS, wordCount } from "./audio.js";
-import { chatApi, spliceText, titleFor } from "./chats.js";
+import { chatApi, spliceText } from "./chats.js";
 import { modelPicker } from "./models.js";
 import { LiveTranscriber } from "./live.js";
 import { MicrophoneRecorder } from "./recorder.js";
 
 /** @typedef {import("./chats.js").Chat} Chat */
 /** @typedef {import("./chats.js").ChatSummary} ChatSummary */
+/** @typedef {import("./chats.js").ChatTitle} ChatTitle */
 /** @typedef {import("./chats.js").Recording} Recording */
 
 const recordButton = /** @type {HTMLButtonElement} */ (document.getElementById("record"));
@@ -30,7 +31,17 @@ const copyVersionButton = /** @type {HTMLButtonElement} */ (
 );
 const liveMode = /** @type {HTMLInputElement} */ (document.getElementById("live-mode"));
 const chatList = /** @type {HTMLElement} */ (document.getElementById("chat-list"));
-const chatTitle = /** @type {HTMLElement} */ (document.getElementById("chat-title"));
+const chatTitle = /** @type {HTMLButtonElement} */ (document.getElementById("chat-title"));
+const titleDialog = /** @type {HTMLDialogElement} */ (document.getElementById("title-editor"));
+const titleForm = /** @type {HTMLFormElement} */ (document.getElementById("title-form"));
+const titleInput = /** @type {HTMLInputElement} */ (document.getElementById("title-input"));
+const titleSave = /** @type {HTMLButtonElement} */ (document.getElementById("title-save"));
+const titleCancel = /** @type {HTMLButtonElement} */ (document.getElementById("title-cancel"));
+const titleReset = /** @type {HTMLButtonElement} */ (document.getElementById("title-reset"));
+const titleError = /** @type {HTMLElement} */ (document.getElementById("title-error"));
+let titleSaving = false;
+/** @type {{ generation: number, chatId: string | null } | null} */
+let titleTarget = null;
 const clips = /** @type {HTMLElement} */ (document.getElementById("clips"));
 const sidebar = /** @type {HTMLElement} */ (document.getElementById("sidebar"));
 const scrim = /** @type {HTMLElement} */ (document.getElementById("scrim"));
@@ -160,7 +171,8 @@ function updateControls() {
   transcript.readOnly = active;
   const words = wordCount(transcript.value);
   count.textContent = `${words} ${words === 1 ? "word" : "words"}`;
-  chatTitle.textContent = titleFor(transcript.value);
+  chatTitle.textContent = chat?.title ?? "New chat";
+  chatTitle.disabled = active;
   stage.classList.toggle("recording", recording);
   stage.classList.toggle("busy", busy && !recording);
   sidebar.classList.toggle("locked", active);
@@ -260,11 +272,11 @@ function renderChats() {
   const items = chats.map((summary) =>
     chatItem(
       summary.id,
-      summary.id === chat?.id ? titleFor(transcript.value) : summary.title,
+      summary.id === chat?.id ? chat.title : summary.title,
       `${formatWhen(summary.updated)} · ${summary.recording_count} ${summary.recording_count === 1 ? "clip" : "clips"}`,
     ),
   );
-  if (!chat) items.unshift(chatItem(null, titleFor(transcript.value), "Not saved yet"));
+  if (!chat) items.unshift(chatItem(null, "New chat", "Not saved yet"));
   chatList.replaceChildren(...items);
 }
 
@@ -379,7 +391,8 @@ async function ensureChat() {
         chats = [
           {
             id: created.id,
-            title: "New chat",
+            title: created.title,
+            custom_title: created.custom_title,
             updated: created.updated,
             recording_count: 0,
             etag: created.etag ?? "",
@@ -433,17 +446,19 @@ async function writeText(generation) {
     if (generation !== navigationGeneration || chat?.id !== target.id) return;
     // Acknowledge the submitted snapshot; edits made during the request remain dirty.
     target.text = saved.text;
-    target.updated = saved.updated;
+    if (saved.revision >= target.titleChatRevision) target.updated = saved.updated;
     target.textEtag = saved.textEtag;
     target.text_revision = saved.text_revision;
     // The response is a complete Chat: show recordings added elsewhere before taking up
     // the whole-chat validator that covers them.
     addRecordings(target, saved.recordings);
+    acknowledgeTitleMetadata(target, saved);
     if (saved.revision >= target.revision) {
       target.etag = saved.etag;
       target.revision = saved.revision;
     }
     renderClips();
+    updateControls();
     textDirty = transcript.value !== text;
     setSaveState(textDirty ? "Editing…" : "Saved");
     await refreshChats();
@@ -479,6 +494,8 @@ function scheduleSave() {
 /** @param {Chat | null} next */
 function setChat(next) {
   navigationGeneration++;
+  titleDialog.close();
+  titleTarget = null;
   creating = null;
   pendingChatId = newId();
   clearTimeout(saveTimer);
@@ -601,6 +618,121 @@ loadLatestButton.addEventListener("click", async () => {
   }
 });
 copyVersionButton.addEventListener("click", copyTranscript);
+
+/** The dialog targets a navigation incarnation, not whichever chat is open later. */
+chatTitle.addEventListener("click", () => {
+  if (recording || busy || titleSaving) return;
+  titleTarget = { generation: navigationGeneration, chatId: chat?.id ?? null };
+  titleInput.value = chat?.custom_title ?? chat?.title ?? "";
+  titleError.hidden = true;
+  titleReset.disabled = !chat?.custom_title;
+  titleDialog.showModal();
+  titleInput.focus();
+  titleInput.select();
+});
+titleCancel.addEventListener("click", () => titleDialog.close());
+titleDialog.addEventListener("close", () => {
+  titleTarget = null;
+  chatTitle.focus();
+});
+
+/** Title freshness is separate from the complete chat version acknowledged for deletion.
+ * A newer title response can contain text this tab has not acknowledged yet.
+ * @param {Chat} target
+ * @param {ChatTitle} saved */
+function acknowledgeTitleMetadata(target, saved) {
+  if (saved.titleChatRevision < target.titleChatRevision) return;
+  target.title = saved.title;
+  target.custom_title = saved.custom_title;
+  target.title_revision = saved.title_revision;
+  target.titleEtag = saved.titleEtag;
+  target.titleChatRevision = saved.titleChatRevision;
+}
+
+/** Apply a title response without acknowledging unseen text or replacing the editor draft.
+ * @param {Chat} target @param {Chat} saved */
+function acknowledgeTitle(target, saved) {
+  if (saved.revision < target.revision) return;
+  if (saved.revision >= target.titleChatRevision) target.updated = saved.updated;
+  acknowledgeTitleMetadata(target, saved);
+  addRecordings(target, saved.recordings);
+  if (saved.text_revision === target.text_revision && saved.revision >= target.revision) {
+    target.revision = saved.revision;
+    target.etag = saved.etag;
+  }
+  renderClips();
+  renderChats();
+  updateControls();
+}
+
+/** @param {string | null} customTitle */
+async function commitTitle(customTitle) {
+  const editing = titleTarget;
+  if (!editing || titleSaving || recording || busy) return;
+  // Do not create an empty draft just to reset/cancel its name. The server validates strings.
+  if (!chat && (customTitle === null || !customTitle.trim())) {
+    if (customTitle === null) titleDialog.close();
+    else {
+      titleError.textContent = "Enter a chat name.";
+      titleError.hidden = false;
+    }
+    return;
+  }
+  titleSaving = true;
+  titleSave.disabled = true;
+  titleReset.disabled = true;
+  titleError.hidden = true;
+  updateControls();
+  try {
+    // Flush existing autosaves first; editing remains possible while the request runs.
+    await saveText();
+    if (editing.generation !== navigationGeneration) return;
+    const target = await ensureChat();
+    if (
+      editing.generation !== navigationGeneration ||
+      (editing.chatId && editing.chatId !== target.id)
+    )
+      return;
+    if (!target.titleEtag)
+      throw new Error("The title version could not be loaded. Reload this chat.");
+    const saved = await chatApi.saveTitle(target.id, customTitle, target.titleEtag);
+    if (editing.generation !== navigationGeneration || chat?.id !== target.id) return;
+    acknowledgeTitle(target, saved);
+    // Cancel/Escape may have closed this dialog while the request was submitted.
+    if (titleTarget === editing) titleDialog.close();
+    await refreshChats();
+  } catch (error) {
+    if (editing.generation !== navigationGeneration) return;
+    titleError.textContent =
+      error instanceof Error ? error.message : "The name could not be saved.";
+    titleError.hidden = false;
+    if (!titleDialog.open) showError(error);
+    if (error instanceof ApiRequestError && error.code === "revision_conflict" && chat) {
+      try {
+        const latest = await chatApi.get(chat.id);
+        if (editing.generation !== navigationGeneration) return;
+        acknowledgeTitleMetadata(chat, latest);
+        titleError.textContent = `The current name is “${chat.title}”. Save again to use your name.`;
+        renderChats();
+        updateControls();
+      } catch {
+        titleError.textContent =
+          "The name changed elsewhere. Close and reopen the chat before retrying.";
+      }
+    }
+  } finally {
+    titleSaving = false;
+    titleSave.disabled = false;
+    titleReset.disabled = !chat?.custom_title;
+    updateControls();
+  }
+}
+
+titleForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  void commitTitle(titleInput.value);
+});
+titleReset.addEventListener("click", () => void commitTitle(null));
 
 function captureInsertion() {
   return {

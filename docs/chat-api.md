@@ -88,3 +88,37 @@ There is no tombstone for chosen IDs: a chat ID can create a new incarnation aft
 A recording ID can be reused once its owning chat and recording row have been deleted. Retry
 responses report current resource state rather than a historical response. There is no generic
 `Idempotency-Key` ledger; transcription/share commands retain their own future recovery contract.
+
+## Shared chat names
+
+`Chat` and `ChatSummary` include the server's effective `title` and nullable
+`custom_title`. Automatic names use the transcript's first 48 Unicode code
+points with whitespace normalization and word-boundary truncation, or `New chat`
+for empty text. A custom title persists through text and recording changes and
+is shared among members. Existing chats start with no override.
+
+`GET /api/chats/{id}/title` returns `{custom_title, title_revision}` and `ETag`.
+The revision starts at 1 and advances only when the override changes. The same
+validator appears as `Title-ETag` on complete-chat responses. Transcript edits
+and recording uploads do not invalidate it. Read a complete `Chat` for its
+effective title.
+
+`PUT /api/chats/{id}/title` accepts `{"custom_title": "My notes"}` or
+`{"custom_title": null}` to restore automatic naming. Strings are trimmed and
+must contain 1–120 Unicode code points with at least one visible character.
+Controls, surrogates, line separators and bidi embedding/override/isolate controls
+return 422 `invalid_title`; emoji joiners and ordinary Unicode are accepted.
+Missing, mistyped or unknown fields return 422 `validation_error`.
+
+Optional `If-Match` checks the title validator atomically. Strong lists and `*`
+follow the shared precondition rules; stale, weak or wrong-scope tokens return
+412 `revision_conflict`. Omission permits unconditional writes. Missing or
+inaccessible chats return 404 `chat_not_found`. Success returns a complete `Chat`
+with all scoped validators. Changed overrides advance whole-chat/title revisions
+and recency, preserving text, text revision and recordings. No-op updates change
+nothing. After a lost response, read and compare before retrying.
+
+Clients must preserve drafts and retained audio when applying metadata responses,
+ignore older observations, and refresh text/deletion validators only when the
+corresponding content has been acknowledged. The browser keeps entered names on
+conflict and requires an explicit retry.

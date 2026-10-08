@@ -83,7 +83,7 @@ def test_released_schema_fixture_opens_and_upgrades(tmp_path: Path, revision: st
     engine = open_engine(tmp_path / DATABASE_NAME)
     try:
         upgrade_schema(engine, tmp_path)
-        assert (tmp_path / "backups").exists() == (revision != "0002")
+        assert (tmp_path / "backups").exists()
         service = ChatService(tmp_path, engine)
         chat = service.create(LOCAL_USER_ID)
         assert service.get(LOCAL_USER_ID, chat.id) == chat
