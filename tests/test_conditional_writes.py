@@ -446,3 +446,101 @@ def test_recreation_waits_for_old_folder_cleanup(service: ChatService) -> None:
         recreating.result()
     assert len(service.get(LOCAL_USER_ID, CHAT_ID).recordings) == 1
     assert (service.root / CHAT_ID / f"{RECORDING_ID}.wav").read_bytes() == make_wav(frames=320)
+
+
+@pytest.mark.anyio
+async def test_list_validators_protect_sidebar_deletion(tmp_path: Path) -> None:
+    async with client_for(transcribing_engine, Settings(data_directory=tmp_path)) as client:
+        created = await client.put(f"/api/chats/{CHAT_ID}")
+        listed = (await client.get("/api/chats")).json()[0]
+        assert listed["etag"] == created.headers["etag"]
+        await client.put(f"/api/chats/{CHAT_ID}/text", json={"text": "Changed since list read"})
+        rejected = await client.delete(
+            f"/api/chats/{CHAT_ID}", headers={"If-Match": listed["etag"]}
+        )
+        assert rejected.status_code == 412
+        assert rejected.json()["code"] == "revision_conflict"
+        fresh = (await client.get("/api/chats")).json()[0]
+        assert fresh["etag"] != listed["etag"]
+        assert (
+            await client.delete(f"/api/chats/{CHAT_ID}", headers={"If-Match": fresh["etag"]})
+        ).status_code == 204
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("method", ["POST", "PUT"])
+async def test_upload_parent_validator_is_an_atomic_snapshot(tmp_path: Path, method: str) -> None:
+    original_upload = ChatService.upload_recording
+    captured = []
+
+    def upload_then_edit(self, *args, **kwargs):
+        result = original_upload(self, *args, **kwargs)
+        captured.append(result)
+        # Another mutation completes before the route serializes its response. A separate
+        # header reread would silently return the wrong revision for this upload snapshot.
+        self.update_text(LOCAL_USER_ID, CHAT_ID, f"Later text {len(captured)}")
+        return result
+
+    async with client_for(transcribing_engine, Settings(data_directory=tmp_path)) as client:
+        created = await client.put(f"/api/chats/{CHAT_ID}")
+        route = f"/api/chats/{CHAT_ID}/recordings"
+        if method == "PUT":
+            route += f"/{RECORDING_ID}"
+        with patch.object(ChatService, "upload_recording", upload_then_edit):
+            response = await client.request(
+                method, route, content=make_wav(), headers=AUDIO_HEADERS
+            )
+            assert response.status_code == (201 if method == "POST" else 200)
+            assert response.json()["id"] == captured[0].recording.id
+            assert response.headers["chat-etag"] == captured[0].chat_etag
+            assert response.headers["chat-etag"] != created.headers["etag"]
+            assert "etag" not in response.headers  # Recording is not a Chat representation.
+            assert "text-etag" not in response.headers  # Uploads never acknowledge client text.
+            current = await client.get(f"/api/chats/{CHAT_ID}")
+            assert current.headers["etag"] != response.headers["chat-etag"]
+            if method == "PUT":
+                retry = await client.put(route, content=make_wav(), headers=AUDIO_HEADERS)
+                assert retry.status_code == 200
+                assert retry.json() == response.json()
+                assert retry.headers["chat-etag"] == current.headers["etag"]
+                assert retry.headers["chat-etag"] == captured[1].chat_etag
+        stale = await client.put(
+            f"/api/chats/{CHAT_ID}/text",
+            json={"text": "Old draft"},
+            headers={"If-Match": created.headers["text-etag"]},
+        )
+        assert stale.status_code == 412
+
+
+@pytest.mark.anyio
+async def test_legacy_recording_identity_is_publicly_retryable(tmp_path: Path) -> None:
+    async with client_for(transcribing_engine, Settings(data_directory=tmp_path)) as client:
+        await client.put(f"/api/chats/{CHAT_ID}")
+        uploaded = await client.put(
+            f"/api/chats/{CHAT_ID}/recordings/{RECORDING_ID}",
+            content=make_wav(),
+            headers=AUDIO_HEADERS,
+        )
+        engine = open_engine(tmp_path / DATABASE_NAME)
+        try:
+            with session_scope(engine, write=True) as session:
+                row = session.get(RecordingRow, RECORDING_ID)
+                assert row is not None
+                row.audio_sha256 = None  # Same nullable identity as an imported recording.
+            chat = await client.get(f"/api/chats/{CHAT_ID}")
+            visible_id = chat.json()["recordings"][0]["id"]
+            retry = await client.put(
+                f"/api/chats/{CHAT_ID}/recordings/{visible_id}",
+                content=make_wav(),
+                headers=AUDIO_HEADERS,
+            )
+            assert retry.status_code == 200
+            assert retry.json() == uploaded.json()
+            assert retry.headers["chat-etag"] == chat.headers["etag"]
+            assert (await client.get(f"/api/chats/{CHAT_ID}")).json() == chat.json()
+            with session_scope(engine) as session:
+                row = session.get(RecordingRow, visible_id)
+                assert row is not None
+                assert row.audio_sha256 == hashlib.sha256(make_wav()).hexdigest()
+        finally:
+            engine.dispose()

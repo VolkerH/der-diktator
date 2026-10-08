@@ -74,3 +74,15 @@ test("chat validators stay opaque and quoted through save, delete and keepalive"
   await chatApi.remove(chat.id, saved.etag);
   assert.equal(calls[2][1].headers["If-Match"], '"opaque-chat-token"');
 });
+
+test("recording upload reads the explicit parent validator without treating the body as a Chat", async (t) => {
+  const recording = { id: "b".repeat(32), created: "2026-10-08T10:00:00Z", duration_seconds: 1 };
+  t.mock.method(globalThis, "fetch", async () =>
+    Response.json(recording, {
+      headers: { "Chat-ETag": '"opaque-parent"', ETag: '"recording-only"' },
+    }),
+  );
+  const uploaded = await chatApi.addRecording("a".repeat(32), new Blob(), recording.id);
+  assert.deepEqual(uploaded, { recording, chatEtag: '"opaque-parent"' });
+  assert.equal(uploaded.recording.etag, undefined);
+});

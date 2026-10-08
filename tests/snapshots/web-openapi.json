@@ -456,6 +456,7 @@
     "/api/chats": {
       "get": {
         "summary": "List Chats",
+        "description": "List accessible chats with a server-issued opaque `etag` per entry. Use that value in `If-Match` for conditional deletion without reading the full chat.",
         "operationId": "list_chats_api_chats_get",
         "responses": {
           "200": {
@@ -476,6 +477,7 @@
       },
       "post": {
         "summary": "Create Chat",
+        "description": "Create an empty chat with a server-chosen ID. Returns the complete Chat with its `ETag` and independent `Text-ETag` for subsequent text saves.",
         "operationId": "create_chat_api_chats_post",
         "responses": {
           "201": {
@@ -508,6 +510,7 @@
     "/api/chats/{chat_id}": {
       "put": {
         "summary": "Create Chat With Id",
+        "description": "Create an empty chat using a lowercase 32-hex client ID. Accepts no body, null or an empty object; unknown options return 422. Returns 201 for creation, 200 for an accessible existing chat without resetting its edits, or 409 `idempotency_conflict` for an inaccessible ID. Reuse the ID after a lost response. No tombstones: deletion permits a new incarnation with fresh validators.",
         "operationId": "create_chat_with_id_api_chats__chat_id__put",
         "parameters": [
           {
@@ -611,6 +614,7 @@
       },
       "get": {
         "summary": "Get Chat",
+        "description": "Read a complete Chat. `ETag` validates the entire returned representation; `Text-ETag` independently validates its text. Retain quoted header values verbatim. Validators change across deletion and recreation, even if revisions repeat.",
         "operationId": "get_chat_api_chats__chat_id__get",
         "parameters": [
           {
@@ -673,6 +677,7 @@
       },
       "delete": {
         "summary": "Delete Chat",
+        "description": "Delete a chat and its recordings. Optional `If-Match` checks the whole-chat validator from a Chat response or list entry, atomically with deletion. A stale validator returns 412 `revision_conflict` without deleting anything. Missing or inaccessible chats return 404. Without `If-Match`, deletion is unconditional for legacy clients. No tombstones are retained.",
         "operationId": "delete_chat_api_chats__chat_id__delete",
         "parameters": [
           {
@@ -742,6 +747,7 @@
     "/api/chats/{chat_id}/text": {
       "get": {
         "summary": "Get Text",
+        "description": "Read the canonical text subresource. Its `ETag` validates only `{text, text_revision}` and can be sent to text PUT as `If-Match`.",
         "operationId": "get_text_api_chats__chat_id__text_get",
         "parameters": [
           {
@@ -798,6 +804,7 @@
       },
       "put": {
         "summary": "Update Text",
+        "description": "Replace text, checking optional `If-Match` against the text validator atomically with the write. A stale or weak validator returns 412 `revision_conflict` and writes nothing; `*` matches an existing accessible chat. No header retains legacy last-writer-wins behavior. Identical text changes no revisions or recency. Returns a complete Chat: `ETag` validates that body and `Text-ETag` acknowledges the saved text. Clients keep drafts after conflict and must not fetch a new validator to overwrite unseen edits with the same stale draft.",
         "operationId": "update_text_api_chats__chat_id__text_put",
         "parameters": [
           {
@@ -898,6 +905,7 @@
     "/api/chats/{chat_id}/recordings": {
       "post": {
         "summary": "Add Recording",
+        "description": "Store validated PCM WAV as a new recording with a server-chosen ID. Returns 201 with the Recording and a parent `Chat-ETag`. The upload changes the chat validator while preserving the text validator; clients retain their acknowledged text validator. Retain capture buffers until storage is acknowledged.",
         "operationId": "add_recording_api_chats__chat_id__recordings_post",
         "parameters": [
           {
@@ -918,6 +926,14 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Recording"
+                }
+              }
+            },
+            "headers": {
+              "Chat-ETag": {
+                "description": "Opaque whole-chat validator captured atomically with the upload. This header validates the parent Chat, not the Recording response body.",
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -978,6 +994,7 @@
     "/api/chats/{chat_id}/recordings/{recording_id}": {
       "put": {
         "summary": "Put Recording",
+        "description": "Store validated PCM WAV once with a client-chosen lowercase 32-hex ID. Returns 200 with the Recording for both creation and an exact-byte SHA-256 matching retry. Different bytes or an ID owned by another chat return 409 `idempotency_conflict` without overwriting winner audio. `Chat-ETag` is the parent validator captured with the mutation; it does not validate the Recording body or acknowledge the client's text. A retry changes no revision or recency. Legacy rows recover identity from their original audio; missing/unreadable audio returns 404 `recording_not_found` until restored. Reuse the chosen ID after a lost response and retain capture buffers until storage is acknowledged. No tombstones are retained.",
         "operationId": "put_recording_api_chats__chat_id__recordings__recording_id__put",
         "parameters": [
           {
@@ -1008,6 +1025,14 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Recording"
+                }
+              }
+            },
+            "headers": {
+              "Chat-ETag": {
+                "description": "Opaque whole-chat validator captured atomically with the upload. This header validates the parent Chat, not the Recording response body.",
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -1373,10 +1398,14 @@
           "recording_count": {
             "type": "integer",
             "title": "Recording Count"
+          },
+          "etag": {
+            "type": "string",
+            "title": "Etag"
           }
         },
         "type": "object",
-        "required": ["id", "title", "updated", "recording_count"],
+        "required": ["id", "title", "updated", "recording_count", "etag"],
         "title": "ChatSummary",
         "description": "What the chat list needs, without transcripts or recordings."
       },

@@ -193,6 +193,7 @@ function chatServer() {
           title: chat.text || "New chat",
           updated: chat.updated,
           recording_count: chat.recordings.length,
+          etag: `"chat-${chat.id}-${chat.revision}"`,
         })),
       );
     }
@@ -211,6 +212,8 @@ function chatServer() {
     if (!chat) return json({ detail: "This chat no longer exists." }, 404);
     if (!rest && method === "GET") return json(chat);
     if (!rest && method === "DELETE") {
+      if (options.headers?.["If-Match"] !== `"chat-${chat.id}-${chat.revision}"`)
+        return json({ detail: "This chat changed elsewhere.", code: "revision_conflict" }, 412);
       server.chats.delete(chatId);
       return new Response(null, { status: 204 });
     }
@@ -226,11 +229,18 @@ function chatServer() {
       if (server.failRecordings) return json({ detail: "The disk is full." }, 500);
       const recordingId = rest.split("/")[2] ?? id(server.nextId++);
       const existing = chat.recordings.find((clip) => clip.id === recordingId);
-      if (existing) return json(existing);
+      if (existing) {
+        return Response.json(existing, {
+          headers: { "Chat-ETag": `"chat-${chat.id}-${chat.revision}"` },
+        });
+      }
       const recording = { id: recordingId, created: chat.updated, duration_seconds: 2 };
       chat.revision++;
       chat.recordings.push(recording);
-      return json(recording, 201);
+      return Response.json(recording, {
+        status: 200,
+        headers: { "Chat-ETag": `"chat-${chat.id}-${chat.revision}"` },
+      });
     }
     if (rest.endsWith("/transcribe")) {
       server.storedTranscriptions++;
@@ -773,7 +783,7 @@ test("a conflict keeps the draft, drops queued saves, and confirms before switch
   assert.equal(saves, 1);
 });
 
-for (const destination of ["switch", "new", "delete another"]) {
+for (const destination of ["switch", "new"]) {
   test(`a network save failure requires confirmation before ${destination}`, async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     const app = await appEnvironment(t, (server) => {
@@ -792,11 +802,6 @@ for (const destination of ["switch", "new", "delete another"]) {
       if (destination === "switch")
         await app.element("chat-list").children[1].children[0].emit("click");
       if (destination === "new") await app.element("new-chat").emit("click");
-      if (destination === "delete another") {
-        const remove = app.element("chat-list").children[1].children[1];
-        await remove.emit("click");
-        await remove.emit("click");
-      }
       await settle();
     };
     await navigate();
@@ -804,15 +809,12 @@ for (const destination of ["switch", "new", "delete another"]) {
     assert.equal(app.server.chats.size, 2);
     t.mock.method(globalThis.window, "confirm", () => true);
     await navigate();
-    assert.equal(
-      app.element("transcript").value,
-      destination === "switch" ? "Second" : destination === "new" ? "" : "Keep this draft",
-    );
-    assert.equal(app.server.chats.size, destination === "delete another" ? 1 : 2);
+    assert.equal(app.element("transcript").value, destination === "switch" ? "Second" : "");
+    assert.equal(app.server.chats.size, 2);
   });
 }
 
-for (const destination of ["new", "delete another"]) {
+for (const destination of ["new"]) {
   test(`a conflicted draft confirms before ${destination}`, async (t) => {
     t.mock.timers.enable({ apis: ["setTimeout"] });
     const app = await appEnvironment(t, (server) => {
@@ -823,12 +825,7 @@ for (const destination of ["new", "delete another"]) {
     await editAndSave(t, app, "Conflicted draft");
     t.mock.method(globalThis.window, "confirm", () => false);
     const navigate = async () => {
-      if (destination === "new") await app.element("new-chat").emit("click");
-      else {
-        const remove = app.element("chat-list").children[1].children[1];
-        await remove.emit("click");
-        await remove.emit("click");
-      }
+      await app.element("new-chat").emit("click");
       await settle();
     };
     await navigate();
@@ -836,8 +833,8 @@ for (const destination of ["new", "delete another"]) {
     assert.equal(app.server.chats.size, 2);
     t.mock.method(globalThis.window, "confirm", () => true);
     await navigate();
-    assert.equal(app.element("transcript").value, destination === "new" ? "" : "Conflicted draft");
-    assert.equal(app.server.chats.size, destination === "new" ? 2 : 1);
+    assert.equal(app.element("transcript").value, "");
+    assert.equal(app.server.chats.size, 2);
   });
 }
 
@@ -994,4 +991,210 @@ test("a late list response is ignored after navigating away and back to the same
   await settle();
   assert.deepEqual(chatRows(app), beforeResponse);
   assert.equal(app.element("transcript").value, firstDraft);
+});
+
+async function deleteRow(app, index) {
+  const remove = app.element("chat-list").children[index].children[1];
+  await remove.emit("click");
+  await remove.emit("click");
+  await settle();
+}
+
+for (const failure of ["network", "conflict"]) {
+  test(`sidebar deletion preserves a ${failure} draft and retained audio without prompts or saves`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const app = await appEnvironment(t, (server) => {
+      server.add("First");
+      server.add("Second");
+      server.failRecordings = true;
+    });
+    app.element("live-mode").checked = false;
+    await app.element("record").emit("click");
+    await app.element("stop").emit("click");
+    await waitForIdle(app);
+    const fetch = globalThis.fetch;
+    const calls = [];
+    t.mock.method(globalThis, "fetch", async (url, options) => {
+      calls.push([url, options]);
+      if (String(url).endsWith("/text")) {
+        if (failure === "network") throw new TypeError("Network unavailable");
+        return Response.json(
+          { detail: "Changed elsewhere", code: "revision_conflict" },
+          { status: 412 },
+        );
+      }
+      return fetch(url, options);
+    });
+    await editAndSave(t, app, "My retained draft");
+    const clipsBefore = app.element("clips").children.length;
+    calls.length = 0;
+    t.mock.method(globalThis.window, "confirm", () =>
+      assert.fail("Deleting another chat cannot discard this chat"),
+    );
+    await deleteRow(app, 1);
+    assert.equal(app.server.chats.size, 1);
+    assert.equal(app.element("transcript").value, "My retained draft");
+    assert.equal(app.element("clips").children.length, clipsBefore);
+    assert.deepEqual(
+      calls.map(([url]) => url),
+      [`/api/chats/${id(2)}`, "/api/chats"],
+    );
+    assert.equal(calls[0][1].headers["If-Match"], `"chat-${id(2)}-1"`);
+  });
+}
+
+test("sidebar deletion rejects an entry changed since its list was read", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    server.add("First");
+    server.add("Second");
+  });
+  app.server.chats.get(id(2)).revision++;
+  await deleteRow(app, 1);
+  assert.equal(app.server.chats.size, 2);
+  assert.match(app.element("error").textContent, /changed elsewhere/);
+  assert.equal(app.element("transcript").value, "First");
+});
+
+for (const changed of [false, true]) {
+  test(`current deletion ${changed ? "preserves failed draft and audio" : "discards on success"} without saving text`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const app = await appEnvironment(t, (server) => {
+      server.add("Original");
+      server.failRecordings = true;
+    });
+    app.element("live-mode").checked = false;
+    await app.element("record").emit("click");
+    await app.element("stop").emit("click");
+    await waitForIdle(app);
+    app.element("transcript").value = "Unsaved draft";
+    await app.element("transcript").emit("input");
+    const clipsBefore = app.element("clips").children.length;
+    if (changed) app.server.chats.get(id(1)).revision++;
+    const fetch = globalThis.fetch;
+    let saves = 0;
+    t.mock.method(globalThis, "fetch", async (url, options) => {
+      if (String(url).endsWith("/text")) saves++;
+      return fetch(url, options);
+    });
+    t.mock.method(globalThis.window, "confirm", () =>
+      assert.fail("Deletion already has its own confirmation"),
+    );
+    await deleteRow(app, 0);
+    t.mock.timers.tick(700);
+    await settle();
+    assert.equal(saves, 0);
+    assert.equal(app.server.chats.size, changed ? 1 : 0);
+    assert.equal(app.element("transcript").value, changed ? "Unsaved draft" : "");
+    assert.equal(app.element("clips").children.length, changed ? clipsBefore : 0);
+    if (changed) assert.match(app.element("error").textContent, /changed elsewhere/);
+  });
+}
+
+test("current deletion waits for the submitted save and drops queued and closing-page saves", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  const fetch = globalThis.fetch;
+  let release;
+  let saves = 0;
+  let deletes = 0;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (String(url).endsWith("/text")) {
+      saves++;
+      await new Promise((resolve) => {
+        release = resolve;
+      });
+    }
+    if (options?.method === "DELETE") {
+      deletes++;
+      assert.equal(options.headers["If-Match"], `"chat-${id(1)}-2"`);
+    }
+    return response;
+  });
+  await editAndSave(t, app, "Submitted draft");
+  await editAndSave(t, app, "Queued draft");
+  await deleteRow(app, 0);
+  app.windowListeners.get("pagehide")();
+  await settle();
+  assert.equal(deletes, 0);
+  assert.equal(saves, 1);
+  assert.equal(app.element("transcript").value, "Queued draft");
+  release();
+  await waitForIdle(app);
+  assert.equal(deletes, 1);
+  assert.equal(saves, 1);
+  assert.equal(app.server.chats.size, 0);
+});
+
+test("successful upload requires no chat GET and cannot freshen a stale text validator", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  const stored = app.server.chats.get(id(1));
+  stored.text = "Remote edit";
+  stored.text_revision++;
+  stored.revision++;
+  const fetch = globalThis.fetch;
+  let gets = 0;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (url === `/api/chats/${id(1)}` && (!options?.method || options.method === "GET")) {
+      gets++;
+      throw new TypeError("Reading the chat failed");
+    }
+    return fetch(url, options);
+  });
+  app.element("live-mode").checked = false;
+  await app.element("record").emit("click");
+  await app.element("stop").emit("click");
+  await waitForIdle(app);
+  assert.equal(gets, 0);
+  assert.equal(stored.recordings.length, 1);
+  assert.equal(
+    app.element("clips").children.length,
+    1,
+    "no duplicate unsaved clip after successful upload",
+  );
+  assert.equal(stored.text, "Remote edit");
+  assert.equal(app.element("transcript").value, "Original Stored recording.");
+  assert.equal(app.element("text-conflict").hidden, false);
+});
+
+test("a late refresh cannot replace the sidebar while navigation GET is pending", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    server.add("First");
+    server.add("Second");
+  });
+  const fetch = globalThis.fetch;
+  let releaseList;
+  let releaseChat;
+  let deferList = true;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (url === "/api/chats" && deferList) {
+      deferList = false;
+      const stale = await response.json();
+      stale[1].title = "Stale title arriving during navigation";
+      return await new Promise((resolve) => {
+        releaseList = () => resolve(Response.json(stale));
+      });
+    }
+    if (url === `/api/chats/${id(2)}` && (!options?.method || options.method === "GET")) {
+      return await new Promise((resolve) => {
+        releaseChat = () => resolve(response);
+      });
+    }
+    return response;
+  });
+  app.element("live-mode").checked = false;
+  await app.element("record").emit("click");
+  await app.element("stop").emit("click");
+  await waitForIdle(app);
+  const before = chatRows(app);
+  await app.element("chat-list").children[1].children[0].emit("click");
+  await settle();
+  assert.equal(typeof releaseChat, "function");
+  releaseList();
+  await settle();
+  assert.deepEqual(chatRows(app), before);
+  releaseChat();
+  await waitForIdle(app);
+  assert.equal(app.element("transcript").value, "Second");
 });

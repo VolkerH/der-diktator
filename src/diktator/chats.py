@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
@@ -68,6 +69,25 @@ class ChatSummary(BaseModel):
     title: str
     updated: datetime
     recording_count: int
+    etag: str
+
+
+@dataclass(frozen=True)
+class RecordingUpload:
+    """Stored audio and the parent validator captured in the same serialized mutation."""
+
+    recording: Recording
+    chat_etag: str
+
+
+def chat_etag(row: ChatRow) -> str:
+    """Compute the complete-chat validator without querying its recordings."""
+    return f'"chat-{row.id}-{row.incarnation}-{row.revision}"'
+
+
+def text_etag(row: ChatRow) -> str:
+    """Compute the independently writable text validator from its row snapshot."""
+    return f'"text-{row.id}-{row.incarnation}-{row.text_revision}"'
 
 
 class ChatNotFound(ApiFailure):
@@ -177,6 +197,8 @@ class ChatService:
             revision=row.revision,
             text_revision=row.text_revision,
         )
+        # Keep validator metadata in the typed response snapshot, without exposing DB rows
+        # or adding the incarnation to the public JSON representation.
         chat._incarnation = row.incarnation
         return chat
 
@@ -205,6 +227,7 @@ class ChatService:
                     title=title_for(row.text),
                     updated=row.updated,
                     recording_count=recording_count,
+                    etag=chat_etag(row),
                 )
                 for row, recording_count in rows
             ]
@@ -238,7 +261,7 @@ class ChatService:
     ) -> Chat:
         with session_scope(self.engine, write=True) as session:
             row = self._chat(session, actor_id, chat_id)
-            check_precondition(if_match, self._model(session, row).text_etag)
+            check_precondition(if_match, text_etag(row))
             if row.text != text:
                 row.text = text
                 row.text_revision += 1
@@ -251,7 +274,7 @@ class ChatService:
             folder = self._folder(chat_id)
             with session_scope(self.engine, write=True) as session:
                 row = self._chat(session, actor_id, chat_id)
-                check_precondition(if_match, self._model(session, row).etag)
+                check_precondition(if_match, chat_etag(row))
                 session.delete(row)
             if folder.exists():
                 try:
@@ -268,6 +291,19 @@ class ChatService:
         duration_seconds: float,
         recording_id: str | None = None,
     ) -> Recording:
+        """Store audio for callers that only need the recording representation."""
+        return self.upload_recording(
+            actor_id, chat_id, audio, duration_seconds, recording_id
+        ).recording
+
+    def upload_recording(
+        self,
+        actor_id: str,
+        chat_id: str,
+        audio: bytes,
+        duration_seconds: float,
+        recording_id: str | None = None,
+    ) -> RecordingUpload:
         """Store durable audio once. Retrying a different payload never touches winner bytes.
 
         Hashing incoming audio does not hold a lock. The service lock spans existing-row
@@ -278,8 +314,8 @@ class ChatService:
             raise RecordingNotFound()
         digest = hashlib.sha256(audio).hexdigest()
         with self._mutation_lock:
-            self.get(actor_id, chat_id)
             with session_scope(self.engine) as session:
+                parent_etag = chat_etag(self._chat(session, actor_id, chat_id))
                 existing = session.get(RecordingRow, recording_id)
                 if existing is not None:
                     if existing.chat_id != chat_id:
@@ -301,7 +337,7 @@ class ChatService:
                         row.audio_sha256 = stored_hash
                 if stored_hash != digest:
                     raise idempotency_conflict()
-                return recording
+                return RecordingUpload(recording=recording, chat_etag=parent_etag)
             recording = Recording(
                 id=recording_id, created=_now(), duration_seconds=duration_seconds
             )
@@ -317,6 +353,7 @@ class ChatService:
                     # inside this write transaction and preserve any later stored value.
                     chat.updated = max(chat.updated, _now())
                     chat.revision += 1
+                    parent_etag = chat_etag(chat)
                     session.add(
                         RecordingRow(
                             id=recording.id,
@@ -334,7 +371,7 @@ class ChatService:
                 except OSError:
                     log.exception("Uncommitted recording cleanup failed: %s", path)
                 raise
-            return recording
+            return RecordingUpload(recording=recording, chat_etag=parent_etag)
 
     def recording_audio(self, actor_id: str, chat_id: str, recording_id: str) -> bytes:
         if not IDENTIFIER.fullmatch(recording_id):

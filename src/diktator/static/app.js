@@ -70,11 +70,15 @@ let chats = [];
 let creating = null;
 let textDirty = false;
 let textConflict = false;
+/** Suspend queued/closing-page saves while deleting the open chat.
+ * @type {string | null} */
+let deletingChatId = null;
 /** Invalidate every late result, including leaving and reopening the same chat ID. */
 let navigationGeneration = 0;
 /** Chosen once for this new chat and retained after a failed creation. */
-let pendingChatId = crypto.randomUUID().replaceAll("-", "");
-/** Audio objects retain their identity through storage failure and retry. */
+let pendingChatId = newId();
+/** Choose the ID before the first upload: the server may commit and lose its response.
+ * @type {WeakMap<Blob, string>} */
 const recordingIds = new WeakMap();
 /** @type {ReturnType<typeof setTimeout> | undefined} */
 let saveTimer;
@@ -126,6 +130,10 @@ function drawMeter() {
     context.roundRect(x, (height - size) / 2, bar, size, bar / 2);
     context.fill();
   });
+}
+
+function newId() {
+  return crypto.randomUUID().replaceAll("-", "");
 }
 
 function pushLevel() {
@@ -362,7 +370,13 @@ async function ensureChat() {
       if (generation === navigationGeneration) {
         chat = created;
         chats = [
-          { id: created.id, title: "New chat", updated: created.updated, recording_count: 0 },
+          {
+            id: created.id,
+            title: "New chat",
+            updated: created.updated,
+            recording_count: 0,
+            etag: created.etag ?? "",
+          },
           ...chats.filter((item) => item.id !== created.id),
         ];
         renderChats();
@@ -389,7 +403,9 @@ async function refreshChats() {
 
 /** @param {number} generation */
 async function writeText(generation) {
-  if (generation !== navigationGeneration || textConflict) return;
+  if (generation !== navigationGeneration || textConflict || chat?.id === deletingChatId) {
+    return;
+  }
   clearTimeout(saveTimer);
   if (!textDirty) return;
   const text = transcript.value;
@@ -400,9 +416,12 @@ async function writeText(generation) {
   setSaveState("Saving…");
   try {
     const target = await ensureChat();
-    if (generation !== navigationGeneration || textConflict) return;
-    if (!target.textEtag)
+    if (generation !== navigationGeneration || textConflict || chat?.id === deletingChatId) {
+      return;
+    }
+    if (!target.textEtag) {
       throw new Error("The text version could not be loaded. Reload this chat.");
+    }
     const saved = await chatApi.saveText(target.id, text, target.textEtag);
     if (generation !== navigationGeneration || chat?.id !== target.id) return;
     // Acknowledge the submitted snapshot; edits made during the request remain dirty.
@@ -448,7 +467,7 @@ function scheduleSave() {
 function setChat(next) {
   navigationGeneration++;
   creating = null;
-  pendingChatId = crypto.randomUUID().replaceAll("-", "");
+  pendingChatId = newId();
   clearTimeout(saveTimer);
   textConflict = false;
   conflictNotice.hidden = true;
@@ -467,7 +486,6 @@ function setChat(next) {
   updateControls();
 }
 
-/** Leaving a chat drops an unsaved recording, so ask first. */
 function canLeaveChat() {
   return (
     !unsaved ||
@@ -490,6 +508,8 @@ async function openChat(id) {
   updateControls();
   try {
     if (!(await prepareToLeave())) return;
+    // Uploads can leave refreshChats() in flight after busy clears. Invalidate that
+    // old list response before this GET, so it cannot replace the sidebar mid-navigation.
     const generation = ++navigationGeneration;
     const next = await chatApi.get(id);
     if (generation === navigationGeneration) setChat(next);
@@ -522,18 +542,26 @@ async function deleteChat(id) {
   if (recording || busy) return;
   busy = true;
   updateControls();
+  const isCurrent = chat?.id === id;
   try {
-    if (!(await prepareToLeave())) return;
-    // Use the open chat's acknowledged version, including recording changes fetched
-    // below. Sidebar entries have no validator; fetch their version before deleting.
-    const target = chat?.id === id ? chat : await chatApi.get(id);
-    if (!target.etag) throw new Error("The chat version could not be loaded. Retry deletion.");
+    if (isCurrent) {
+      deletingChatId = id;
+      clearTimeout(saveTimer);
+      // Let an already submitted save acknowledge its snapshot. Queued saves are
+      // skipped, so the draft and retained audio survive a failed DELETE unchanged.
+      await saving;
+    }
+    const target = isCurrent ? chat : chats.find((item) => item.id === id);
+    if (!target?.etag) {
+      throw new Error("The chat version could not be loaded. Retry deletion.");
+    }
     await chatApi.remove(id, target.etag);
-    if (chat?.id === id) setChat(null);
+    if (isCurrent) setChat(null);
     await refreshChats();
   } catch (error) {
     showError(error);
   } finally {
+    deletingChatId = null;
     busy = false;
     updateControls();
   }
@@ -555,7 +583,7 @@ loadLatestButton.addEventListener("click", async () => {
     updateControls();
   }
 });
-copyVersionButton.addEventListener("click", () => copyButton.click());
+copyVersionButton.addEventListener("click", copyTranscript);
 
 function captureInsertion() {
   return {
@@ -592,17 +620,18 @@ async function storeRecording(audio) {
     const target = await ensureChat();
     let recordingId = recordingIds.get(audio);
     if (!recordingId) {
-      recordingId = crypto.randomUUID().replaceAll("-", "");
+      recordingId = newId();
       recordingIds.set(audio, recordingId);
     }
-    const stored = await chatApi.addRecording(target.id, audio, recordingId);
+    const { recording: stored, chatEtag } = await chatApi.addRecording(
+      target.id,
+      audio,
+      recordingId,
+    );
     if (generation !== navigationGeneration) return { chatId: target.id, recording: stored };
-    // The upload changes the chat validator, while its text validator stays valid.
-    // Refresh headers without replacing the local editor or its acknowledged text.
-    const latest = await chatApi.get(target.id);
-    if (generation !== navigationGeneration) return { chatId: target.id, recording: stored };
-    target.etag = latest.etag;
-    target.revision = latest.revision;
+    // This acknowledges the upload's parent version, never unseen remote text.
+    // Keep the original textEtag so a stale local draft still conflicts on save.
+    target.etag = chatEtag;
     target.recordings.push(stored);
     if (unsaved === audio) discardUnsaved();
     renderClips();
@@ -829,7 +858,7 @@ for (const type of ["pause", "ended"]) {
     renderClips();
   });
 }
-copyButton.addEventListener("click", async () => {
+async function copyTranscript() {
   try {
     await navigator.clipboard.writeText(transcript.value);
     status.textContent = "Text copied.";
@@ -840,13 +869,15 @@ copyButton.addEventListener("click", async () => {
     transcript.select();
     status.textContent = "Text selected. Press Ctrl+C to copy.";
   }
-});
+}
+copyButton.addEventListener("click", copyTranscript);
 
 window.addEventListener("pagehide", () => {
   window.clearInterval(timerId);
   clearTimeout(saveTimer);
-  if (textDirty && chat?.textEtag && !textConflict)
+  if (textDirty && chat?.textEtag && !textConflict && chat.id !== deletingChatId) {
     void chatApi.saveText(chat.id, transcript.value, chat.textEtag, true).catch(() => {});
+  }
   activeStream?.cancel();
   void recorder.release();
   discardUnsaved();
