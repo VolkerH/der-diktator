@@ -1,32 +1,16 @@
 # API conventions
 
-Status: initial design contract, implementing the decisions in
-[ADR 0002](adr/0002-api-conventions.md). These conventions are targets for upcoming implementation;
-this document does not change the running API. Existing routes do not yet consistently provide the
-error codes, conditional writes, idempotency or stream envelopes described here. Each feature must
-document and test its adoption, including compatibility with existing clients.
+Status: initial design contract from [ADR 0002](adr/0002-api-conventions.md), not a description of
+implemented behavior. Each feature documents and tests adoption, compatibility and its additions.
+Browser, TUI and other clients share this contract; responsibilities follow [AGENTS.md](../AGENTS.md).
 
-The browser, a TUI and other clients use the same application contract. The backend owns validation,
-permissions, persistence, application preferences and resource limits. Clients own device access,
-presentation, selection and undo, and fulfill documented capture/buffering obligations. See
-[AGENTS.md](../AGENTS.md).
+## Schemas and errors
 
-## Schemas and feature contracts
+Use Pydantic API models separately from database rows. Publish HTTP schemas in OpenAPI and stream
+schemas alongside it. Specify defaults, side effects, limits, authorization and completion behavior.
+Actor identity comes from server context, never a client/session identifier.
 
-Define requests, responses and events as typed Pydantic models, separately from database rows.
-Publish HTTP schemas in OpenAPI and streaming schemas alongside it. A feature specifies defaults,
-side effects, resource limits, authorization, completion, cancellation and retry behavior. Actor
-identity comes from server authentication/context; a client or operation identifier is not proof of
-identity. Recheck access before returning a stored result or applying delayed work.
-
-Feature plans refer here for common rules and describe their additions. The ADRs record architectural
-decisions; endpoint documentation supplies concrete schemas and examples. Do not interpret proposed
-endpoints or example payloads as implemented capabilities.
-
-## Errors
-
-Application HTTP errors use a JSON object with a human-readable `detail` string, a stable `code`,
-and optional structured `context`:
+HTTP errors use a human-readable `detail` string, stable `code` and optional structured `context`:
 
 ```json
 {
@@ -35,124 +19,101 @@ and optional structured `context`:
 }
 ```
 
-Clients branch on `code` and HTTP status, not the wording of `detail`. Context is documented per code;
-it must not expose inaccessible data or internal diagnostics. Map FastAPI validation and HTTP errors
-to this envelope too. Validation details belong in structured context rather than changing `detail`
-to an array. This is a change from FastAPI's default validation response and needs compatibility tests.
+Clients use status/code, not message text. Map FastAPI validation and HTTP errors to this envelope;
+validation details belong in context, not an array-valued `detail`. Keep context free of inaccessible
+information and internal diagnostics. Clients must also tolerate legacy/intermediary error formats.
 
-Initial common code registry (target behavior):
+Adopt codes for existing errors first. This registry specifies target mappings, not current codes:
 
-| Code                   | HTTP status | Client action                                                                 |
-| ---------------------- | ----------- | ----------------------------------------------------------------------------- |
-| `revision_conflict`    | 412         | Keep the draft; fetch current state and reconcile before submitting again.    |
-| `idempotency_conflict` | 409         | The key was used for different input; reconcile the original operation first. |
-| `validation_error`     | 422         | Correct the invalid input; repeating the same request will not fix it.        |
+| Code                                       | HTTP | Meaning / client action                                                           |
+| ------------------------------------------ | ---- | --------------------------------------------------------------------------------- |
+| `chat_not_found`                           | 404  | Missing or inaccessible chat; show the same message for both.                     |
+| `audio_too_large`                          | 413  | Upload exceeds the byte limit; reduce it.                                         |
+| `unsupported_audio`                        | 415  | Unsupported media type; use the documented audio format.                          |
+| `invalid_audio`                            | 400  | Invalid audio or violated audio constraints; correct the input.                   |
+| `model_busy`                               | 409  | Inference or another model operation occupies the engine; wait and refresh state. |
+| `model_loading` / `model_deleting`         | 409  | Model lifecycle transition; refresh state before retrying.                        |
+| `model_not_active` / `model_not_installed` | 409  | Activate/download the requested model; waiting alone is insufficient.             |
+| `live_transcription_unsupported`           | 409  | Choose a supported mode/model; never silently change audio-retention policy.      |
+| `model_conflict`                           | 409  | Legacy/unclassified model conflict; refresh state, do not assume busy.            |
+| `engine_unavailable`                       | 503  | Engine unreachable/unavailable; check health and reconcile any submitted work.    |
+| `engine_error`                             | 502  | Upstream failure or invalid response; outcome may be uncertain.                   |
+| `engine_timeout`                           | 504  | Timed out waiting for the engine; work may still be running.                      |
+| `validation_error`                         | 422  | Invalid request fields; correct them.                                             |
+| `revision_conflict`                        | 412  | Preserve the draft, fetch current state and reconcile.                            |
+| `idempotency_conflict`                     | 409  | Same key, different input; reconcile the original operation.                      |
 
-Add feature-specific codes, statuses and retry guidance when their contracts are defined. A 409
-describes a logical conflict; it does not replace 412 for a failed `If-Match` precondition. A timeout
-or lost connection alone does not establish whether a mutation succeeded. Clients must also handle
-legacy or intermediary errors that do not have this envelope, without blindly retrying a mutation.
+For authenticated chat access, missing and inaccessible resources have the same public 404 status
+and body, without distinguishing context. Apply this to chat-scoped audio, history and subscriptions
+as well. A viewer's forbidden write to an otherwise visible chat is a separate authorization case.
 
-## Conditional writes and revisions
+The internal engine API adopts the same envelope with structured codes. The web application's
+`EngineClient` validates and maps known codes into this public registry; it does not parse messages or
+label every 409 `model_busy`. During migration, a code-less engine 409 maps to `model_conflict`.
+Transport/unavailable, timeout and invalid-response failures map to 503/504/502 respectively. Unknown
+upstream failures become a sanitized `engine_error`; they are not passed through unchecked.
+`EngineUnavailable` currently covers several of these cases, so its class name alone cannot select a
+code. Register further feature errors with their statuses and recovery guidance.
 
-Use opaque, strong `ETag` validators and `If-Match` for revision-guarded writes. Clients preserve the
-quoted validator exactly. Each endpoint defines which representation supplies its validator and
-which changes invalidate it. A validator must cover the state that the write can overwrite; clients
-must not substitute a timestamp or a validator from a different resource.
+## Conditional writes
 
-Check the precondition and commit the change atomically. A stale validator returns 412 with
-`revision_conflict` and applies none of that mutation. Supply the resulting validator with the
-successful response, or document how the client reads it. When enabling mandatory preconditions on
-existing routes, specify the rollout and the response to a missing validator; do not silently treat a
-missing validator as permission to overwrite newer data.
+Use opaque, strong `ETag` validators and `If-Match`. Each endpoint defines the read representation and
+validator scope; clients preserve the quoted value. Check and commit atomically: a stale validator
+returns 412 and applies no mutation. Return the new validator or document how to retrieve it.
 
-After a conflict, preserve the local draft and fetch current state. Do not simply attach the new
-validator to the old full-text replacement: that can erase another person's edit. Conditional text
-saves are the interim behavior in [ADR 0005](adr/0005-collaborative-editing-protocol.md). Automatic
-merging requires the protocol prototype and a defined conflict policy.
+Keep drafts on conflict. Fetching a new validator and resending the old full-text replacement can
+erase another person's edits. Conditional saves remain the interim contract until the
+[collaboration prototype](adr/0005-collaborative-editing-protocol.md) establishes merging. Document,
+chat-event and metadata revisions stay separate; metadata alone does not advance text revisions.
 
-Document revisions, chat event sequences and metadata revisions have distinct meanings. A
-metadata-only history entry must not advance the document revision. See
-[ADR 0004](adr/0004-edit-history.md).
+## Retries and idempotency
 
-## Idempotency and retries
+Plain resource replacement/deletion (PUT/DELETE) normally needs no idempotency key. This does not
+promise identical retry responses or deduplicate history: enforce preconditions and avoid duplicate
+user-visible events where required. A retry may find an already-deleted resource or a stale validator.
+Commands whose duplication creates extra effects require keys: creating chats, starting transcription,
+applying results, sending shares and recording dictation sessions/edits.
 
-Non-idempotent commands use a client-generated `Idempotency-Key`, kept unchanged when retrying the
-same logical operation. A feature documents key format, scope, retention and how callers recover an
-operation's status. Streaming/session identifiers must have an explicit relationship to operation
-keys; an HTTP header alone does not define streaming deduplication.
+Use `Idempotency-Key` for HTTP commands and document equivalent stream/session identifiers:
 
-- Scope the key to the authenticated actor and operation, including its target resource. Reserve it
-  atomically before work is admitted, and compare a hash of the operation's effective input. Define
-  normalization and include inputs that affect side effects, including applicable preconditions.
-- A matching retry refers to the original operation. It must not start a second copy. Return its
-  recorded result or documented pending/uncertain status; different input under the same key returns
-  409 `idempotency_conflict`.
-- Recheck current authorization before replaying a result. A retry of a completed, authorized
-  operation must not reapply its mutation or fail solely because the original mutation advanced the
-  resource revision. A reconciled command with changed input is a new operation with a new key.
-- Record pending and uncertain outcomes as well as completed responses. Admission to the inference
-  process and external side effects are not atomic with an application database transaction. Define
-  recovery for that gap; do not promise exactly-once execution across processes.
-- Publish the deduplication window and behavior after expiry. A forgotten key cannot by itself prove
-  that an operation never ran. Clients must reconcile an unknown outcome instead of automatically
-  resubmitting outside the guaranteed window. The storage/recovery mechanism is feature-specific.
+- Scope to actor, operation and target; reserve atomically before admission. Hash normalized effective
+  input, including applicable preconditions. Different input with the same key returns 409.
+- A matching retry returns the original result or pending/uncertain status without repeating work.
+  Recheck authorization. A completed operation must not fail solely because its own mutation advanced
+  the revision. Changed input after reconciliation needs a new key.
+- Define recovery across database/engine boundaries; do not promise exactly-once external effects.
+  Publish retention/expiry behavior. Reconcile unknown outcomes rather than blindly retrying after
+  timeout, disconnect or expiry. A forgotten key does not prove that work never ran.
 
-The engine currently rejects work while busy. A waiting state requires an explicit bounded queue
-with admission and cancellation rules in [#12](https://github.com/VolkerH/der-diktator/issues/12).
-Do not interpret a busy response as successful admission.
+Busy means rejected, not queued. A queue needs explicit admission and cancellation rules in
+[#12](https://github.com/VolkerH/der-diktator/issues/12).
 
-## Time and ordering
+## Time and streams
 
-Serialize timestamps as RFC 3339 in UTC, with `Z` or an explicit `+00:00` offset. API values must not
-contain naive local datetimes. Timestamps describe time; revisions and sequence numbers determine
-ordering and concurrency. Each feature specifies which actions change its recency fields, including
-`updated`, so list ordering does not depend on a frontend's guess.
+Timestamps are RFC 3339 UTC (`Z` or `+00:00`). Revisions/sequences establish ordering; timestamps do
+not. Specify which actions change recency fields such as `updated`.
 
-## Streaming and subscriptions
+Typed events use `type` with documented sequence/correlation identifiers. Finite jobs have one
+authoritative terminal state: completed, failed or cancelled. Long-lived subscriptions use feed
+cursors; disconnect is not completion or cancellation. Lost terminal events need a recovery path.
+Cancellation remains a request until confirmed; disconnect does not prove native work stopped.
+Specify cumulative versus delta text and provisional versus confirmed content.
 
-Use typed events discriminated by `type`, with documented sequence and correlation identifiers.
-Define the concrete envelope in each streaming schema: sequence scope, initial value, ordering,
-duplicate handling and relationship between request, operation and session identifiers. These
-conventions do not rename the existing audio protocol's events or choose SSE versus WebSocket.
+Chat history is the durable catch-up source. Publish after commit; prevent gaps between catch-up and
+subscription. Bound slow clients/catch-up and define recovery for expired cursors. Authorize reads
+and live delivery, including revocation. Do not leak private group events; filtered sequence gaps
+are not evidence of lost events unless the feed contract says so. This does not rename the current
+audio events or choose SSE versus WebSocket.
 
-| Stream                  | Contract                                                                                       |
-| ----------------------- | ---------------------------------------------------------------------------------------------- |
-| Finite job              | One authoritative terminal state: completed, failed or cancelled.                              |
-| Long-lived subscription | A sequence/cursor for its documented feed; disconnect is not a job completion or cancellation. |
+## Adoption and open decisions
 
-A terminal event may be lost in transit. Job contracts define status recovery and whether replay is
-supported. Cancellation is a request until the authoritative outcome confirms it; a disconnected
-client does not establish that native inference has stopped. Define provisional versus confirmed
-text and whether text events carry cumulative content or deltas.
+Prefer additive changes. Required inputs, changed meanings and terminal behavior need an explicit
+compatibility path. Unknown optional fields/events must not become successful completion. Review
+OpenAPI/event schemas and test HTTP/stream behavior without browser JavaScript, including conflicts,
+retries, disconnects and authorization; test client behavior separately.
 
-For chat subscriptions, committed database history is the durable catch-up source. Publish changes
-after commit, define reconnect cursors and bounded catch-up, and prevent gaps between catch-up and
-live delivery. Specify slow-client handling and recovery when a cursor is no longer available.
-Authorize both history reads and live delivery, and stop access on revocation. Private per-user
-group changes must not leak through another member's feed. Sequence scopes must accommodate such
-filtering; clients must not infer missing events from numeric gaps without that contract.
-
-## Compatibility and verification
-
-Prefer additive changes and document breaking changes with their migration path. Adding a required
-input, changing a field's meaning, or changing terminal-event behavior is not automatically backward
-compatible. Document how clients handle unknown optional fields and event types; unknown events
-must not silently become a successful completion. Keep existing clients usable during adoption or
-provide an explicit coordinated upgrade.
-
-Review generated OpenAPI snapshots and published event schemas with contract changes. Exercise
-application behavior through HTTP/streams without browser JavaScript, including conflicts, duplicate
-requests, disconnects and authorization. Test client capture, draft preservation and presentation
-separately. Schema snapshots complement behavioral tests; they do not replace them.
-
-## Decisions still required before the affected features ship
-
-- Per-command idempotency retention, pending/uncertain response shapes and recovery after expiry.
-- Per-resource validator scope, missing-precondition responses and existing-client rollout.
-- Per-stream wire schemas, cursor retention, resynchronization and slow-client limits.
-- Recency rules and feature-specific error codes, registered with their implementing contracts.
-- The collaborative editor/protocol, offset units, newline handling, anchor mapping and merge policy,
-  selected through the [ADR 0005 prototype](adr/0005-collaborative-editing-protocol.md).
-
-These are explicit implementation gates, not permission for each client to invent its own behavior.
+Before each feature ships, specify validator scope and missing-precondition responses, key retention
+and pending/uncertain recovery, stream schemas/cursor limits, and recency rules. Collaboration's
+wire format, offsets, anchors and merge policy remain gated by
+[ADR 0005](adr/0005-collaborative-editing-protocol.md). These are shared contracts to settle before
+implementation, not choices for individual clients.

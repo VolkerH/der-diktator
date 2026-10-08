@@ -20,6 +20,8 @@ users on one instance. A single owner column or ownership-based storage paths wo
 - Access is decided by `chat_members(chat_id, user_id, role)`, consulted for text, audio, search,
   export, history and subscriptions. A creator/owner field may exist as metadata, not as the
   access check.
+- Missing and inaccessible chats return the same public 404 status and body, including access
+  through chat-scoped resources. See [API conventions](../api-conventions.md).
 - **Audio paths** depend only on stable chat and recording IDs, not on who owns a chat. This
   replaces the `users/<user-id>/chats/<chat-id>/` layout proposed in #10.
 - **Group placement is per user** (#14): two members can file the same chat in different groups.
