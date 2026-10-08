@@ -177,7 +177,10 @@ async def test_lifespan_moves_legacy_under_lock_and_resumes(
         async with app.router.lifespan_context(app):
             engine = open_engine(target / DATABASE_NAME)
             try:
-                assert ChatService(target, engine).get(LOCAL_USER_ID, chat.id) == chat
+                assert (
+                    ChatService(target, engine).get(LOCAL_USER_ID, chat.id).model_dump()
+                    == chat.model_dump()
+                )
             finally:
                 engine.dispose()
     assert not legacy.exists()

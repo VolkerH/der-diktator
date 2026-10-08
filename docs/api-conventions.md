@@ -1,7 +1,8 @@
 # API conventions
 
 Status: shared design contract from [ADR 0002](adr/0002-api-conventions.md). The existing-error
-envelope, live error codes, chat/text conditional writes and safe-create retries are implemented. Each feature documents and tests adoption, compatibility and its additions.
+envelope, live error codes, chat/text conditional writes and safe-create retries are implemented.
+Each feature documents and tests adoption, compatibility and its additions.
 Browser, TUI and other clients share this contract; responsibilities follow [AGENTS.md](../AGENTS.md).
 
 ## Schemas and errors

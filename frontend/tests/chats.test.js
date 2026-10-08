@@ -53,3 +53,24 @@ for (const [name, payload, message, code] of [
     });
   });
 }
+
+test("chat validators stay opaque and quoted through save, delete and keepalive", async (t) => {
+  const calls = [];
+  const chat = { id: "a".repeat(32), text: "", recordings: [], revision: 900, text_revision: 800 };
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    calls.push([url, options]);
+    return options?.method === "DELETE"
+      ? new Response(null, { status: 204 })
+      : Response.json(chat, {
+          headers: { ETag: '"opaque-chat-token"', "Text-ETag": '"opaque-text-token"' },
+        });
+  });
+  const read = await chatApi.get(chat.id);
+  assert.equal(read.etag, '"opaque-chat-token"');
+  assert.equal(read.textEtag, '"opaque-text-token"');
+  const saved = await chatApi.saveText(chat.id, "Draft", read.textEtag, true);
+  assert.equal(calls[1][1].headers["If-Match"], '"opaque-text-token"');
+  assert.equal(calls[1][1].keepalive, true);
+  await chatApi.remove(chat.id, saved.etag);
+  assert.equal(calls[2][1].headers["If-Match"], '"opaque-chat-token"');
+});

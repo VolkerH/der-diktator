@@ -40,14 +40,14 @@ def test_baseline_backup_unknown_schema_and_repeated_startup(tmp_path: Path) -> 
     engine = open_engine(tmp_path / DATABASE_NAME)
     try:
         upgrade_schema(engine, tmp_path)
-        assert not (tmp_path / "backups").exists()
+        assert (tmp_path / "backups").exists() == (revision != "0002")
         upgrade_schema(engine, tmp_path)
-        assert not (tmp_path / "backups").exists()
+        assert (tmp_path / "backups").exists() == (revision != "0002")
         with engine.begin() as connection:
             connection.exec_driver_sql("UPDATE alembic_version SET version_num='9999'")
         with pytest.raises(UnknownSchema, match="newer"):
             upgrade_schema(engine, tmp_path)
-        assert not (tmp_path / "backups").exists()
+        assert (tmp_path / "backups").exists() == (revision != "0002")
     finally:
         engine.dispose()
 
@@ -74,15 +74,16 @@ def test_backup_contains_existing_data_before_baseline_upgrade(tmp_path: Path) -
         engine.dispose()
 
 
-def test_released_baseline_fixture_opens_without_upgrade(tmp_path: Path) -> None:
+@pytest.mark.parametrize("revision", ["0001", "0002"])
+def test_released_schema_fixture_opens_and_upgrades(tmp_path: Path, revision: str) -> None:
     import shutil
 
-    fixture = Path(__file__).parent / "fixtures" / "database" / "0001.sqlite3"
+    fixture = Path(__file__).parent / "fixtures" / "database" / f"{revision}.sqlite3"
     shutil.copyfile(fixture, tmp_path / DATABASE_NAME)
     engine = open_engine(tmp_path / DATABASE_NAME)
     try:
         upgrade_schema(engine, tmp_path)
-        assert not (tmp_path / "backups").exists()
+        assert (tmp_path / "backups").exists() == (revision != "0002")
         service = ChatService(tmp_path, engine)
         chat = service.create(LOCAL_USER_ID)
         assert service.get(LOCAL_USER_ID, chat.id) == chat

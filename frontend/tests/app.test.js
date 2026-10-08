@@ -957,3 +957,41 @@ test("edits made during a save remain dirty until their own snapshot is acknowle
   assert.equal([...app.server.chats.values()][0].text, "Later edit");
   assert.equal(app.element("save-state").textContent, "Saved");
 });
+
+test("a late list response is ignored after navigating away and back to the same chat", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    server.add("First");
+    server.add("Second");
+  });
+  const fetch = globalThis.fetch;
+  let release;
+  let deferList = true;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (url === "/api/chats" && deferList) {
+      deferList = false;
+      const stale = await response.json();
+      stale[1].title = "Obsolete title from another navigation";
+      return await new Promise((resolve) => {
+        release = () => resolve(Response.json(stale));
+      });
+    }
+    return response;
+  });
+  app.element("live-mode").checked = false;
+  await app.element("record").emit("click");
+  await app.element("stop").emit("click");
+  await waitForIdle(app);
+  assert.equal(typeof release, "function");
+  const firstDraft = app.element("transcript").value;
+  await app.element("chat-list").children[1].children[0].emit("click");
+  await waitForIdle(app);
+  await app.element("chat-list").children[0].children[0].emit("click");
+  await waitForIdle(app);
+  assert.equal(app.element("transcript").value, firstDraft);
+  const beforeResponse = chatRows(app);
+  release();
+  await settle();
+  assert.deepEqual(chatRows(app), beforeResponse);
+  assert.equal(app.element("transcript").value, firstDraft);
+});

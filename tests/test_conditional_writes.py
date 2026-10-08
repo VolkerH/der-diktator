@@ -296,3 +296,153 @@ def test_upload_delete_and_recreate_serialize_file_cleanup(service: ChatService)
     service.create_with_id(LOCAL_USER_ID, CHAT_ID)
     service.add_recording(LOCAL_USER_ID, CHAT_ID, make_wav(frames=320), 0.02, RECORDING_ID)
     assert (service.root / CHAT_ID / f"{RECORDING_ID}.wav").read_bytes() == make_wav(frames=320)
+
+
+@pytest.mark.anyio
+async def test_concurrent_conditional_text_saves_have_one_winner(tmp_path: Path) -> None:
+    async with client_for(transcribing_engine, Settings(data_directory=tmp_path)) as client:
+        created = await client.put(f"/api/chats/{CHAT_ID}")
+        responses = await asyncio.gather(
+            *(
+                client.put(
+                    f"/api/chats/{CHAT_ID}/text",
+                    json={"text": text},
+                    headers={"If-Match": created.headers["text-etag"]},
+                )
+                for text in ["First client", "Second client"]
+            )
+        )
+        assert sorted(response.status_code for response in responses) == [200, 412]
+        winner = next(response for response in responses if response.status_code == 200)
+        assert (await client.get(f"/api/chats/{CHAT_ID}")).json() == winner.json()
+
+
+@pytest.mark.anyio
+async def test_inaccessible_create_and_cross_chat_recording_collision_over_http(
+    tmp_path: Path,
+) -> None:
+    async with client_for(transcribing_engine, Settings(data_directory=tmp_path)) as client:
+        await client.put(f"/api/chats/{CHAT_ID}")
+        await client.put(
+            f"/api/chats/{CHAT_ID}/recordings/{RECORDING_ID}",
+            content=make_wav(),
+            headers=AUDIO_HEADERS,
+        )
+        another = "e" * 32
+        await client.put(f"/api/chats/{another}")
+        collision = await client.put(
+            f"/api/chats/{another}/recordings/{RECORDING_ID}",
+            content=make_wav(),
+            headers=AUDIO_HEADERS,
+        )
+        assert collision.status_code == 409
+        assert collision.json()["code"] == "idempotency_conflict"
+        assert not (tmp_path / another).exists()
+        assert (tmp_path / CHAT_ID / f"{RECORDING_ID}.wav").read_bytes() == make_wav()
+        engine = open_engine(tmp_path / DATABASE_NAME)
+        try:
+            with session_scope(engine, write=True) as session:
+                membership = session.get(ChatMemberRow, (CHAT_ID, LOCAL_USER_ID))
+                assert membership is not None
+                session.delete(membership)
+            inaccessible = await client.put(f"/api/chats/{CHAT_ID}")
+            assert inaccessible.status_code == 409
+            assert inaccessible.json()["code"] == "idempotency_conflict"
+        finally:
+            engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_validators_persist_across_application_restart(tmp_path: Path) -> None:
+    settings = Settings(data_directory=tmp_path)
+    async with client_for(transcribing_engine, settings) as client:
+        original = await client.put(f"/api/chats/{CHAT_ID}")
+    async with client_for(transcribing_engine, settings) as client:
+        reopened = await client.get(f"/api/chats/{CHAT_ID}")
+        assert reopened.headers["etag"] == original.headers["etag"]
+        assert reopened.headers["text-etag"] == original.headers["text-etag"]
+        accepted = await client.put(
+            f"/api/chats/{CHAT_ID}/text",
+            json={"text": "After restart"},
+            headers={"If-Match": original.headers["text-etag"]},
+        )
+        assert accepted.status_code == 200
+
+
+def test_baseline_upgrade_preserves_rows_and_populates_incarnations(tmp_path: Path) -> None:
+    import shutil
+    import sqlite3
+
+    fixture = Path(__file__).parent / "fixtures" / "database" / "0001.sqlite3"
+    shutil.copyfile(fixture, tmp_path / DATABASE_NAME)
+    with sqlite3.connect(tmp_path / DATABASE_NAME) as old:
+        old.execute(
+            "INSERT INTO chats VALUES (?, ?, ?, ?, ?)",
+            (CHAT_ID, "2026-10-07 10:00:00", "2026-10-07 11:00:00", "Preserved", LOCAL_USER_ID),
+        )
+        old.execute("INSERT INTO chat_members VALUES (?, ?, ?)", (CHAT_ID, LOCAL_USER_ID, "owner"))
+        old.execute(
+            "INSERT INTO recordings VALUES (?, ?, ?, ?, ?)",
+            (RECORDING_ID, CHAT_ID, "2026-10-07 10:30:00", 0.01, f"{CHAT_ID}/{RECORDING_ID}.wav"),
+        )
+    engine = open_engine(tmp_path / DATABASE_NAME)
+    try:
+        upgrade_schema(engine, tmp_path)
+        service = ChatService(tmp_path, engine)
+        chat = service.get(LOCAL_USER_ID, CHAT_ID)
+        assert chat.text == "Preserved"
+        assert chat.created == datetime(2026, 10, 7, 10, tzinfo=UTC)
+        assert chat.updated == datetime(2026, 10, 7, 11, tzinfo=UTC)
+        assert len(chat.recordings) == 1
+        assert chat.recordings[0].id == RECORDING_ID
+        assert chat.revision == chat.text_revision == 1
+        with session_scope(engine) as session:
+            from diktator.db.rows import ChatRow
+
+            row = session.get(ChatRow, CHAT_ID)
+            assert row is not None
+            assert len(row.incarnation) == 32
+            recording = session.get(RecordingRow, RECORDING_ID)
+            assert recording is not None
+            assert recording.audio_sha256 is None
+        backups = list((tmp_path / "backups").glob("*.sqlite3"))
+        assert len(backups) == 1
+        with sqlite3.connect(backups[0]) as backup:
+            assert backup.execute("SELECT version_num FROM alembic_version").fetchone() == ("0001",)
+            assert backup.execute("SELECT text FROM chats").fetchone() == ("Preserved",)
+        upgrade_schema(engine, tmp_path)
+        assert service.get(LOCAL_USER_ID, CHAT_ID).etag == chat.etag
+        assert list((tmp_path / "backups").glob("*.sqlite3")) == backups
+    finally:
+        engine.dispose()
+
+
+def test_recreation_waits_for_old_folder_cleanup(service: ChatService) -> None:
+    import shutil
+
+    original = service.create_with_id(LOCAL_USER_ID, CHAT_ID)[0]
+    service.add_recording(LOCAL_USER_ID, CHAT_ID, make_wav(), 0.01, RECORDING_ID)
+    entered, release = Event(), Event()
+    real_remove = shutil.rmtree
+
+    def paused_remove(folder: Path) -> None:
+        entered.set()
+        assert release.wait(5)
+        real_remove(folder)
+
+    def recreate_and_upload() -> None:
+        recreated, created = service.create_with_id(LOCAL_USER_ID, CHAT_ID)
+        assert created
+        assert recreated.etag != original.etag
+        service.add_recording(LOCAL_USER_ID, CHAT_ID, make_wav(frames=320), 0.02, RECORDING_ID)
+
+    with ThreadPoolExecutor(2) as pool, patch("diktator.chats.shutil.rmtree", paused_remove):
+        deleting = pool.submit(service.delete, LOCAL_USER_ID, CHAT_ID)
+        assert entered.wait(5)
+        recreating = pool.submit(recreate_and_upload)
+        assert not recreating.done()
+        release.set()
+        deleting.result()
+        recreating.result()
+    assert len(service.get(LOCAL_USER_ID, CHAT_ID).recordings) == 1
+    assert (service.root / CHAT_ID / f"{RECORDING_ID}.wav").read_bytes() == make_wav(frames=320)
