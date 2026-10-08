@@ -1,9 +1,18 @@
 [project]
 name = "diktator-engine"
 version = "0.1.0"
-description = "Separate CPU inference environment for Fermion Phonon-2"
+description = "CPU inference service for Phonon-2, Parakeet v3 and Whisper"
 requires-python = ">=3.12,<3.13"
-dependencies = ["fermion-research==0.2.10", "torch>=2.3"]
+# Native libraries are shipped separately; keep the matching core explicit.
+dependencies = [
+    "diktator",
+    "fermion-research==0.2.10",
+    "torch>=2.3",
+    "sherpa-onnx==1.13.8",
+    "sherpa-onnx-core==1.13.8",
+    "faster-whisper==1.2.1",
+    "numpy>=2,<3",
+]
 
 [tool.uv]
 package = false
@@ -15,4 +24,5 @@ url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [tool.uv.sources]
+diktator = { path = "..", editable = true }
 torch = { index = "pytorch-cpu" }

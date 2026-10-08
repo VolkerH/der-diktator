@@ -2,7 +2,6 @@
 set -euo pipefail
 task_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd -- "$task_root"
-export FERMION_CACHE_DIR="$task_root/.cache/fermion"
 uv sync --project engine
 uv sync --locked
 task_engine_pid=""
@@ -16,7 +15,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-engine/.venv/bin/fermion serve phonon-2 --port 8010 &
+engine/.venv/bin/python -m diktator.inference serve --port 8010 &
 task_engine_pid=$!
 .venv/bin/diktator &
 task_web_pid=$!

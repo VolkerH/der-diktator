@@ -71,7 +71,7 @@ async def test_unusable_health_response_is_not_ready(payload: object) -> None:
         assert (await client.get("/api/health")).json()["ready"] is False
 
 
-async def test_valid_audio_is_forwarded_in_fermion_multipart_format() -> None:
+async def test_valid_audio_is_forwarded_with_the_requested_model() -> None:
     audio = make_wav()
     captured: list[httpx.Request] = []
 
@@ -87,12 +87,10 @@ async def test_valid_audio_is_forwarded_in_fermion_multipart_format() -> None:
     assert response.json() == {"text": "Hello from WSL."}
     assert len(captured) == 1
     upstream = captured[0]
-    assert upstream.url.path == "/v1/audio/transcriptions"
-    assert upstream.headers["content-type"].startswith("multipart/form-data;")
-    body = upstream.content
-    assert b'filename="recording.wav"' in body
-    assert b'name="model"\r\n\r\nphonon-2' in body
-    assert audio in body
+    assert upstream.url.path == "/transcribe"
+    assert upstream.url.params["model"] == "phonon-2"
+    assert upstream.headers["content-type"] == "audio/wav"
+    assert upstream.content == audio
 
 
 async def test_silence_can_return_an_empty_transcript() -> None:

@@ -51,15 +51,18 @@ export const chatApi = {
     }),
   /** @param {string} id @param {string} recordingId */
   recordingUrl: (id, recordingId) => `/api/chats/${id}/recordings/${recordingId}`,
-  /** @param {string} id @param {string} recordingId @returns {Promise<string>} */
-  transcribeRecording: async (id, recordingId) =>
+  /** @param {string} id @param {string} recordingId @param {string} [model] @returns {Promise<string>} */
+  transcribeRecording: async (id, recordingId, model = "phonon-2") =>
     transcriptText(
-      await request(`/api/chats/${id}/recordings/${recordingId}/transcribe`, { method: "POST" }),
+      await request(
+        `/api/chats/${id}/recordings/${recordingId}/transcribe?model=${encodeURIComponent(model)}`,
+        { method: "POST" },
+      ),
     ),
-  /** Transcribe audio that could not be stored. @param {Blob} audio @returns {Promise<string>} */
-  transcribe: async (audio) =>
+  /** Transcribe audio that could not be stored. @param {Blob} audio @param {string} [model] @returns {Promise<string>} */
+  transcribe: async (audio, model = "phonon-2") =>
     transcriptText(
-      await request("/api/transcribe", {
+      await request(`/api/transcribe?model=${encodeURIComponent(model)}`, {
         method: "POST",
         headers: { "Content-Type": "audio/wav" },
         body: audio,

@@ -1,7 +1,7 @@
 [project]
 name = "diktator"
 version = "0.1.0"
-description = "Der Diktator: local dictation and transcription in the browser, powered by Phonon-2"
+description = "Der Diktator: local dictation and transcription in the browser, with Phonon-2 and Parakeet v3"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE.md"]
