@@ -6,15 +6,25 @@ from contextlib import asynccontextmanager, suppress
 from typing import Annotated
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Path, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    Body,
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Path,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocketState
 from websockets.exceptions import WebSocketException
 
 from diktator.audio import RecordingInfo, validate_recording
-from diktator.chats import Chat, ChatService, ChatSummary, Recording
+from diktator.chats import Chat, ChatService, ChatSummary, ChatText, Recording
 from diktator.config import Settings
 from diktator.db.rows import LOCAL_USER_ID
 from diktator.engine import EngineClient, Transcription
@@ -67,6 +77,11 @@ def create_app(
 
     class TextUpdate(BaseModel):
         text: str = Field(max_length=settings.max_text_characters)
+
+    class ChatCreate(BaseModel):
+        """Creation has no options; reject ignored inputs on retryable requests."""
+
+        model_config = ConfigDict(extra="forbid")
 
     # The bundled interface is small: load once rather than reading files per request.
     html = (STATIC_DIRECTORY / "index.html").read_bytes()
@@ -167,21 +182,81 @@ def create_app(
     def list_chats(actor_id: Actor) -> list[ChatSummary]:
         return store().list(actor_id)
 
-    @app.post("/api/chats", status_code=201)
-    def create_chat(actor_id: Actor) -> Chat:
-        return store().create(actor_id)
+    validator_headers = {
+        "ETag": {
+            "description": "Opaque quoted strong validator for the complete Chat.",
+            "schema": {"type": "string"},
+        },
+        "Text-ETag": {
+            "description": "Opaque quoted strong validator for the text subresource.",
+            "schema": {"type": "string"},
+        },
+    }
 
-    @app.get("/api/chats/{chat_id}", responses=error_responses(404, 422))
-    def get_chat(chat_id: ChatId, actor_id: Actor) -> Chat:
-        return store().get(actor_id, chat_id)
+    def chat_headers(response: Response, chat: Chat) -> Chat:
+        response.headers["ETag"] = chat.etag
+        response.headers["Text-ETag"] = chat.text_etag
+        return chat
 
-    @app.put("/api/chats/{chat_id}/text", responses=error_responses(404, 422))
-    def update_text(chat_id: ChatId, update: TextUpdate, actor_id: Actor) -> Chat:
-        return store().update_text(actor_id, chat_id, update.text)
+    @app.post("/api/chats", status_code=201, responses={201: {"headers": validator_headers}})
+    def create_chat(actor_id: Actor, response: Response) -> Chat:
+        return chat_headers(response, store().create(actor_id))
 
-    @app.delete("/api/chats/{chat_id}", status_code=204, responses=error_responses(404, 422))
-    def delete_chat(chat_id: ChatId, actor_id: Actor) -> None:
-        store().delete(actor_id, chat_id)
+    @app.put(
+        "/api/chats/{chat_id}",
+        responses={
+            **error_responses(409, 422),
+            200: {"headers": validator_headers},
+            201: {"model": Chat, "headers": validator_headers},
+        },
+    )
+    def create_chat_with_id(
+        chat_id: ChatId,
+        actor_id: Actor,
+        response: Response,
+        _input: Annotated[ChatCreate | None, Body()] = None,
+    ) -> Chat:
+        result, created = store().create_with_id(actor_id, chat_id)
+        response.status_code = 201 if created else 200
+        return chat_headers(response, result)
+
+    @app.get(
+        "/api/chats/{chat_id}",
+        responses={**error_responses(404, 422), 200: {"headers": validator_headers}},
+    )
+    def get_chat(chat_id: ChatId, actor_id: Actor, response: Response) -> Chat:
+        return chat_headers(response, store().get(actor_id, chat_id))
+
+    @app.get(
+        "/api/chats/{chat_id}/text",
+        responses={
+            **error_responses(404, 422),
+            200: {"headers": {"ETag": validator_headers["Text-ETag"]}},
+        },
+    )
+    def get_text(chat_id: ChatId, actor_id: Actor, response: Response) -> ChatText:
+        chat = store().get(actor_id, chat_id)
+        response.headers["ETag"] = chat.text_etag
+        return ChatText(text=chat.text, text_revision=chat.text_revision)
+
+    @app.put(
+        "/api/chats/{chat_id}/text",
+        responses={**error_responses(404, 412, 422), 200: {"headers": validator_headers}},
+    )
+    def update_text(
+        chat_id: ChatId,
+        update: TextUpdate,
+        actor_id: Actor,
+        response: Response,
+        if_match: Annotated[str | None, Header()] = None,
+    ) -> Chat:
+        return chat_headers(response, store().update_text(actor_id, chat_id, update.text, if_match))
+
+    @app.delete("/api/chats/{chat_id}", status_code=204, responses=error_responses(404, 412, 422))
+    def delete_chat(
+        chat_id: ChatId, actor_id: Actor, if_match: Annotated[str | None, Header()] = None
+    ) -> None:
+        store().delete(actor_id, chat_id, if_match)
 
     @app.post(
         "/api/chats/{chat_id}/recordings",
@@ -193,6 +268,19 @@ def create_app(
         audio, info = await read_recording(request)
         return await run_in_threadpool(
             store().add_recording, actor_id, chat_id, audio, info.duration_seconds
+        )
+
+    @app.put(
+        "/api/chats/{chat_id}/recordings/{recording_id}",
+        responses=error_responses(400, 404, 409, 413, 415, 422),
+    )
+    async def put_recording(
+        chat_id: ChatId, recording_id: ChatId, request: Request, actor_id: Actor
+    ) -> Recording:
+        await run_in_threadpool(store().get, actor_id, chat_id)
+        audio, info = await read_recording(request)
+        return await run_in_threadpool(
+            store().add_recording, actor_id, chat_id, audio, info.duration_seconds, recording_id
         )
 
     @app.get("/api/chats/{chat_id}/recordings/{recording_id}", responses=error_responses(404, 422))

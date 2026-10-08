@@ -1,5 +1,6 @@
 """Public chat representations and membership-authorized application service."""
 
+import hashlib
 import logging
 import os
 import re
@@ -9,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
 
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
@@ -38,6 +39,26 @@ class Chat(BaseModel):
     updated: datetime
     text: str = ""
     recordings: list[Recording] = []
+    revision: int = 1
+    text_revision: int = 1
+    _incarnation: str = PrivateAttr(default="")
+
+    @property
+    def etag(self) -> str:
+        """Opaque strong validator for this complete chat representation."""
+        return f'"chat-{self.id}-{self._incarnation}-{self.revision}"'
+
+    @property
+    def text_etag(self) -> str:
+        """Text changes independently of recordings and chat metadata."""
+        return f'"text-{self.id}-{self._incarnation}-{self.text_revision}"'
+
+
+class ChatText(BaseModel):
+    """Canonical text resource, independent of the chat's recordings."""
+
+    text: str
+    text_revision: int
 
 
 class ChatSummary(BaseModel):
@@ -61,6 +82,19 @@ class RecordingNotFound(ApiFailure):
 
     def __init__(self) -> None:
         super().__init__("This recording no longer exists.", "recording_not_found", 404)
+
+
+def check_precondition(if_match: str | None, etag: str) -> None:
+    """Allow legacy writes; match only strong validators or the existing-resource wildcard."""
+    if if_match is None or if_match.strip() == "*":
+        return
+    if etag not in [value.strip() for value in if_match.split(",")]:
+        raise ApiFailure("This chat changed elsewhere.", "revision_conflict", 412)
+
+
+def idempotency_conflict() -> ApiFailure:
+    """Do not reveal the resource held by another actor or another payload."""
+    return ApiFailure("This identifier is already in use.", "idempotency_conflict", 409)
 
 
 def title_for(text: str) -> str:
@@ -134,13 +168,17 @@ class ChatService:
             .where(RecordingRow.chat_id == row.id)
             .order_by(RecordingRow.created, RecordingRow.id)
         )
-        return Chat(
+        chat = Chat(
             id=row.id,
             created=row.created,
             updated=row.updated,
             text=row.text,
             recordings=[self._recording_model(recording) for recording in recordings],
+            revision=row.revision,
+            text_revision=row.text_revision,
         )
+        chat._incarnation = row.incarnation
+        return chat
 
     @staticmethod
     def _recording_model(row: RecordingRow) -> Recording:
@@ -172,35 +210,49 @@ class ChatService:
             ]
 
     def create(self, actor_id: str) -> Chat:
-        with self._mutation_lock:
+        return self.create_with_id(actor_id, uuid.uuid4().hex)[0]
+
+    def create_with_id(self, actor_id: str, chat_id: str) -> tuple[Chat, bool]:
+        """Create once for a chosen ID; retries return the accessible winner unchanged."""
+        self._folder(chat_id)
+        with self._mutation_lock, session_scope(self.engine, write=True) as session:
+            existing = session.get(ChatRow, chat_id)
+            if existing is not None:
+                try:
+                    return self._model(session, self._chat(session, actor_id, chat_id)), False
+                except ChatNotFound:
+                    raise idempotency_conflict() from None
             now = _now()
-            row = ChatRow(
-                id=uuid.uuid4().hex, created=now, updated=now, text="", created_by=actor_id
-            )
-            # Creation needs no folder until an upload. This avoids empty folders
-            # when a transaction fails and keeps all file I/O outside transactions.
-            with session_scope(self.engine, write=True) as session:
-                session.add(row)
-                session.flush()
-                session.add(ChatMemberRow(chat_id=row.id, user_id=actor_id, role="owner"))
-                return self._model(session, row)
+            row = ChatRow(id=chat_id, created=now, updated=now, text="", created_by=actor_id)
+            session.add(row)
+            session.flush()
+            session.add(ChatMemberRow(chat_id=row.id, user_id=actor_id, role="owner"))
+            return self._model(session, row), True
 
     def get(self, actor_id: str, chat_id: str) -> Chat:
         with session_scope(self.engine) as session:
             return self._model(session, self._chat(session, actor_id, chat_id))
 
-    def update_text(self, actor_id: str, chat_id: str, text: str) -> Chat:
+    def update_text(
+        self, actor_id: str, chat_id: str, text: str, if_match: str | None = None
+    ) -> Chat:
         with session_scope(self.engine, write=True) as session:
             row = self._chat(session, actor_id, chat_id)
-            row.text = text
-            row.updated = _now()
+            check_precondition(if_match, self._model(session, row).text_etag)
+            if row.text != text:
+                row.text = text
+                row.text_revision += 1
+                row.revision += 1
+                row.updated = _now()
             return self._model(session, row)
 
-    def delete(self, actor_id: str, chat_id: str) -> None:
+    def delete(self, actor_id: str, chat_id: str, if_match: str | None = None) -> None:
         with self._mutation_lock:
             folder = self._folder(chat_id)
             with session_scope(self.engine, write=True) as session:
-                session.delete(self._chat(session, actor_id, chat_id))
+                row = self._chat(session, actor_id, chat_id)
+                check_precondition(if_match, self._model(session, row).etag)
+                session.delete(row)
             if folder.exists():
                 try:
                     shutil.rmtree(folder)
@@ -209,14 +261,49 @@ class ChatService:
                     log.exception("Chat %s deleted; audio folder cleanup failed", chat_id)
 
     def add_recording(
-        self, actor_id: str, chat_id: str, audio: bytes, duration_seconds: float
+        self,
+        actor_id: str,
+        chat_id: str,
+        audio: bytes,
+        duration_seconds: float,
+        recording_id: str | None = None,
     ) -> Recording:
+        """Store durable audio once. Retrying a different payload never touches winner bytes.
+
+        Hashing incoming audio does not hold a lock. The service lock spans existing-row
+        lookup, legacy hash recovery, file finalization, commit and failure cleanup.
+        """
+        recording_id = recording_id or uuid.uuid4().hex
+        if not IDENTIFIER.fullmatch(recording_id):
+            raise RecordingNotFound()
+        digest = hashlib.sha256(audio).hexdigest()
         with self._mutation_lock:
-            # Authorization before any file changes; close the read transaction
-            # before durable finalization. The mutation lock preserves the result.
             self.get(actor_id, chat_id)
+            with session_scope(self.engine) as session:
+                existing = session.get(RecordingRow, recording_id)
+                if existing is not None:
+                    if existing.chat_id != chat_id:
+                        raise idempotency_conflict()
+                    stored_hash = existing.audio_sha256
+                    recording = self._recording_model(existing)
+                else:
+                    recording = None
+                    stored_hash = None
+            if recording is not None:
+                if stored_hash is None:
+                    # Missing legacy audio has unknown identity: do not overwrite it.
+                    stored_hash = hashlib.sha256(
+                        self.recording_audio(actor_id, chat_id, recording_id)
+                    ).hexdigest()
+                    with session_scope(self.engine, write=True) as session:
+                        row = session.get(RecordingRow, recording_id)
+                        assert row is not None  # protected by the mutation lock
+                        row.audio_sha256 = stored_hash
+                if stored_hash != digest:
+                    raise idempotency_conflict()
+                return recording
             recording = Recording(
-                id=uuid.uuid4().hex, created=_now(), duration_seconds=duration_seconds
+                id=recording_id, created=_now(), duration_seconds=duration_seconds
             )
             folder = self._folder(chat_id)
             folder.mkdir(exist_ok=True)
@@ -229,6 +316,7 @@ class ChatService:
                     # A text save may finish during audio finalization. Sample recency
                     # inside this write transaction and preserve any later stored value.
                     chat.updated = max(chat.updated, _now())
+                    chat.revision += 1
                     session.add(
                         RecordingRow(
                             id=recording.id,
@@ -236,6 +324,7 @@ class ChatService:
                             created=recording.created,
                             duration_seconds=duration_seconds,
                             audio_path=path.relative_to(self.root).as_posix(),
+                            audio_sha256=digest,
                         )
                     )
             except BaseException:

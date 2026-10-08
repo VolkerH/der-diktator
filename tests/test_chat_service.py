@@ -78,7 +78,7 @@ def test_commit_failure_removes_finalized_audio_and_rolls_back(service: ChatServ
             service.add_recording(LOCAL_USER_ID, chat.id, make_wav(), 0.01)
     finally:
         event.remove(service.engine, "commit", fail_commit)
-    assert service.get(LOCAL_USER_ID, chat.id) == chat
+    assert service.get(LOCAL_USER_ID, chat.id).model_dump() == chat.model_dump()
     assert list((service.root / chat.id).iterdir()) == []
 
 

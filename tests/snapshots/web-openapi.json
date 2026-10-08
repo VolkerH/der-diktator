@@ -480,6 +480,20 @@
         "responses": {
           "201": {
             "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Opaque quoted strong validator for the complete Chat.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Text-ETag": {
+                "description": "Opaque quoted strong validator for the text subresource.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -492,6 +506,109 @@
       }
     },
     "/api/chats/{chat_id}": {
+      "put": {
+        "summary": "Create Chat With Id",
+        "operationId": "create_chat_with_id_api_chats__chat_id__put",
+        "parameters": [
+          {
+            "name": "chat_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$",
+              "title": "Chat Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ChatCreate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": " Input"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Chat"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "Opaque quoted strong validator for the complete Chat.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Text-ETag": {
+                "description": "Opaque quoted strong validator for the text subresource.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "201": {
+            "headers": {
+              "ETag": {
+                "description": "Opaque quoted strong validator for the complete Chat.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Text-ETag": {
+                "description": "Opaque quoted strong validator for the text subresource.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Chat"
+                }
+              }
+            },
+            "description": "Created"
+          }
+        }
+      },
       "get": {
         "summary": "Get Chat",
         "operationId": "get_chat_api_chats__chat_id__get",
@@ -514,6 +631,20 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Chat"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "Opaque quoted strong validator for the complete Chat.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Text-ETag": {
+                "description": "Opaque quoted strong validator for the text subresource.",
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -553,11 +684,95 @@
               "pattern": "^[0-9a-f]{32}$",
               "title": "Chat Id"
             }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
           }
         ],
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "412": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Precondition Failed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        }
+      }
+    },
+    "/api/chats/{chat_id}/text": {
+      "get": {
+        "summary": "Get Text",
+        "operationId": "get_text_api_chats__chat_id__text_get",
+        "parameters": [
+          {
+            "name": "chat_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$",
+              "title": "Chat Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatText"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "Opaque quoted strong validator for the text subresource.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "404": {
             "content": {
@@ -580,9 +795,7 @@
             "description": "Unprocessable Entity"
           }
         }
-      }
-    },
-    "/api/chats/{chat_id}/text": {
+      },
       "put": {
         "summary": "Update Text",
         "operationId": "update_text_api_chats__chat_id__text_put",
@@ -595,6 +808,22 @@
               "type": "string",
               "pattern": "^[0-9a-f]{32}$",
               "title": "Chat Id"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
             }
           }
         ],
@@ -617,6 +846,20 @@
                   "$ref": "#/components/schemas/Chat"
                 }
               }
+            },
+            "headers": {
+              "ETag": {
+                "description": "Opaque quoted strong validator for the complete Chat.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Text-ETag": {
+                "description": "Opaque quoted strong validator for the text subresource.",
+                "schema": {
+                  "type": "string"
+                }
+              }
             }
           },
           "404": {
@@ -628,6 +871,16 @@
               }
             },
             "description": "Not Found"
+          },
+          "412": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Precondition Failed"
           },
           "422": {
             "content": {
@@ -723,6 +976,104 @@
       }
     },
     "/api/chats/{chat_id}/recordings/{recording_id}": {
+      "put": {
+        "summary": "Put Recording",
+        "operationId": "put_recording_api_chats__chat_id__recordings__recording_id__put",
+        "parameters": [
+          {
+            "name": "chat_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$",
+              "title": "Chat Id"
+            }
+          },
+          {
+            "name": "recording_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$",
+              "title": "Recording Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Recording"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        }
+      },
       "get": {
         "summary": "Recording Audio",
         "operationId": "recording_audio_api_chats__chat_id__recordings__recording_id__get",
@@ -980,12 +1331,29 @@
             "type": "array",
             "title": "Recordings",
             "default": []
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision",
+            "default": 1
+          },
+          "text_revision": {
+            "type": "integer",
+            "title": "Text Revision",
+            "default": 1
           }
         },
         "type": "object",
         "required": ["id", "created", "updated"],
         "title": "Chat",
         "description": "One editable transcript and every recording made for it."
+      },
+      "ChatCreate": {
+        "properties": {},
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ChatCreate",
+        "description": "Creation has no options; reject ignored inputs on retryable requests."
       },
       "ChatSummary": {
         "properties": {
@@ -1011,6 +1379,22 @@
         "required": ["id", "title", "updated", "recording_count"],
         "title": "ChatSummary",
         "description": "What the chat list needs, without transcripts or recordings."
+      },
+      "ChatText": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "text_revision": {
+            "type": "integer",
+            "title": "Text Revision"
+          }
+        },
+        "type": "object",
+        "required": ["text", "text_revision"],
+        "title": "ChatText",
+        "description": "Canonical text resource, independent of the chat's recordings."
       },
       "ModelStatus": {
         "properties": {

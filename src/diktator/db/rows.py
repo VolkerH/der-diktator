@@ -1,5 +1,6 @@
 """Persistence rows, kept separate from the public chat models."""
 
+import uuid
 from datetime import UTC, datetime
 from typing import override
 
@@ -46,6 +47,9 @@ class ChatRow(Base):
     updated: Mapped[datetime] = mapped_column(UtcDateTime, index=True)
     text: Mapped[str] = mapped_column(Text, default="")
     created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    revision: Mapped[int] = mapped_column(default=1)
+    text_revision: Mapped[int] = mapped_column(default=1)
+    incarnation: Mapped[str] = mapped_column(String, default=lambda: uuid.uuid4().hex)
 
 
 class ChatMemberRow(Base):
@@ -64,6 +68,7 @@ class RecordingRow(Base):
     created: Mapped[datetime] = mapped_column(UtcDateTime)
     duration_seconds: Mapped[float]
     audio_path: Mapped[str] = mapped_column(String)
+    audio_sha256: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class LegacyImportRow(Base):
