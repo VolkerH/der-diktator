@@ -81,13 +81,20 @@ main {
   margin: 0;
   font-size: inherit;
 }
+.chat-title-area {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  gap: 3px;
+}
 /* Keep the rename affordance visible at rest, then strengthen it on interaction. */
 .chat-title {
-  position: relative;
   display: inline-block;
+  min-width: 0;
   max-width: 100%;
   margin-left: -8px;
-  padding: 6px 34px 6px 8px;
+  padding: 6px 8px;
   border: 0;
   border-radius: 10px;
   background: transparent;
@@ -103,34 +110,43 @@ main {
   cursor: pointer;
   transition: background 0.15s;
 }
-.chat-title::after {
+.chat-title-edit {
+  flex: 0 0 30px;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0.72;
+  transition:
+    opacity 0.15s,
+    background 0.15s,
+    color 0.15s;
+}
+.chat-title-edit::before {
   content: "";
-  position: absolute;
-  top: 50%;
-  right: 10px;
   width: 16px;
   height: 16px;
-  margin-top: -8px;
-  background: var(--muted);
+  background: currentColor;
   mask: var(--icon-pencil) center / contain no-repeat;
-  opacity: 0.68;
-  transition: opacity 0.15s;
 }
 .chat-title:hover {
   background: var(--chip);
 }
-.chat-title:hover::after,
-.chat-title:focus-visible::after {
+.chat-title-edit:hover,
+.chat-title-edit:focus-visible {
+  background: var(--chip);
+  color: var(--ink);
   opacity: 1;
 }
 .chat-title:focus-visible {
   outline: 2px solid var(--violet);
   outline-offset: 2px;
-}
-@media (hover: none) {
-  .chat-title::after {
-    opacity: 0.72;
-  }
 }
 .menu-button {
   display: none;
@@ -1116,7 +1132,7 @@ textarea:read-only {
   display: none;
 }
 
-/* Rename dialog: reuses the .model-settings surface and .chip buttons. */
+/* Group dialogs reuse these shared text controls. */
 .title-editor form {
   display: grid;
   gap: 8px;
@@ -1166,6 +1182,109 @@ textarea:read-only {
 }
 .title-actions .quiet {
   margin-right: auto;
+}
+
+/* Chat names stay editable in place in both the heading and chat list. */
+.inline-title-editor {
+  flex: 1;
+  min-width: 0;
+}
+.inline-title-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+.inline-title-input {
+  min-width: 0;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 9px;
+  border: 1px solid var(--violet);
+  border-radius: 9px;
+  background: var(--page);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+}
+.heading-title-editor .inline-title-input {
+  min-height: 38px;
+  font-size: 18px;
+  font-weight: 700;
+}
+.inline-title-input:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px #7c3aed1f;
+}
+.inline-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.inline-title-actions button {
+  display: grid;
+  place-items: center;
+  min-width: 28px;
+  min-height: 30px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.inline-title-actions button:hover:not(:disabled),
+.inline-title-actions button:focus-visible {
+  background: var(--chip);
+  color: var(--ink);
+}
+.inline-title-actions button:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 1px;
+}
+.inline-title-actions .inline-title-save {
+  background: var(--violet);
+  color: white;
+}
+.inline-title-actions .inline-title-save:hover:not(:disabled) {
+  background: var(--pink);
+  color: white;
+}
+.inline-title-auto {
+  grid-column: 1 / -1;
+  justify-self: start;
+  min-height: 24px;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.inline-title-auto:hover:not(:disabled),
+.inline-title-auto:focus-visible {
+  color: var(--violet);
+  text-decoration: underline;
+}
+.inline-title-auto:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+.inline-title-error {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  margin: 1px 2px 0;
+  color: var(--danger);
+  font-size: 11px;
+  line-height: 1.35;
 }
 .chip.quiet {
   background: transparent;
@@ -1475,77 +1594,98 @@ textarea:read-only {
   list-style: none;
 }
 
-/* Chat actions stay available on touch and share the group menu pattern. */
-.chat-menu {
-  position: relative;
+/* Move and delete keep their quiet icon buttons; rename stays visible at rest. */
+.chat-rename,
+.chat-move {
   flex-shrink: 0;
-}
-.chat-menu-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
   padding: 0;
   border: 0;
-  border-radius: 10px;
-  background: none;
+  border-radius: 9px;
+  background: transparent;
   color: var(--muted);
-  font-size: 18px;
-  line-height: 1;
-  list-style: none;
   cursor: pointer;
   opacity: 0.72;
   transition:
     opacity 0.15s,
-    background 0.15s;
+    background 0.15s,
+    color 0.15s;
 }
-.chat-menu-toggle::-webkit-details-marker {
-  display: none;
+.chat-rename {
+  font-size: 0;
 }
-.chat-menu-toggle:hover,
-.chat-menu-toggle:focus-visible,
-.chat-menu[open] .chat-menu-toggle {
+.chat-move {
+  font-size: 0;
+}
+.chat-rename::before,
+.chat-move::before {
+  content: "";
+  width: 17px;
+  height: 17px;
+  background: currentColor;
+}
+.chat-rename::before {
+  mask: var(--icon-pencil) center / contain no-repeat;
+}
+.chat-move::before {
+  mask: var(--icon-move) center / contain no-repeat;
+}
+.chat-delete {
+  order: 3;
+}
+.chat-rename:hover,
+.chat-rename:focus-visible,
+.chat-move:hover,
+.chat-move:focus-visible,
+.chat-item:hover .chat-rename,
+.chat-item:focus-within .chat-rename,
+.chat-item:hover .chat-move,
+.chat-item:focus-within .chat-move {
   background: var(--chip);
   color: var(--ink);
   opacity: 1;
 }
-.chat-menu-toggle:focus-visible {
+.chat-rename:focus-visible,
+.chat-move:focus-visible {
   outline: 2px solid var(--violet);
-  outline-offset: 2px;
+  outline-offset: 1px;
 }
-.chat-menu-actions {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 5;
-  display: grid;
-  min-width: 148px;
-  padding: 6px;
-  border: 1px solid var(--sheet-line);
-  border-radius: 12px;
-  background: var(--sheet);
-  box-shadow: 0 18px 40px -12px #1a143366;
+.chat-move:hover {
+  color: var(--violet);
 }
-.chat-action-delete {
-  color: var(--danger);
+.chat-rename {
+  order: 1;
 }
-.chat-action-delete:hover,
-.chat-action-delete.confirm {
-  background: #e5384f1f;
-  color: var(--danger);
+.chat-move {
+  order: 2;
 }
-.chat-action-delete.confirm {
-  color: white;
+.chat-delete.confirm {
+  padding: 0 10px;
   background: var(--danger);
+  color: white;
+  opacity: 1;
+}
+.chat-delete.confirm::before {
+  display: none;
+}
+.chat-item:has(.chat-delete.confirm) :is(.chat-rename, .chat-move) {
+  display: none;
 }
 @media (hover: hover) and (min-width: 861px) {
+  .chat-item:not(:hover, :focus-within) :is(.chat-move, .chat-delete) {
+    display: none;
+  }
   .group-header:not(:hover, :focus-within) :is(.group-add, .group-menu:not([open])) {
     display: none;
   }
 }
 @media (max-width: 860px), (hover: none) {
-  .chat-menu-toggle {
+  .chat-move,
+  .chat-rename,
+  .chat-delete {
     opacity: 1;
   }
   .group-add,

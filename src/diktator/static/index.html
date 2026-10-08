@@ -20,29 +20,6 @@
       <p class="splash-tagline">Dictation &amp; transcription</p>
     </div>
     <dialog
-      id="title-editor"
-      class="model-settings title-editor"
-      aria-labelledby="title-editor-heading"
-    >
-      <form id="title-form">
-        <h2 id="title-editor-heading">Rename chat</h2>
-        <label for="title-input">Chat name</label>
-        <input
-          id="title-input"
-          type="text"
-          aria-describedby="title-help title-error"
-          autocomplete="off"
-        />
-        <p id="title-help">Up to 120 characters. The name stays when you edit or record more.</p>
-        <p id="title-error" class="error" role="alert" hidden></p>
-        <div class="title-actions">
-          <button id="title-reset" class="chip quiet" type="button">Use automatic name</button>
-          <button id="title-cancel" class="chip" type="button">Cancel</button>
-          <button id="title-save" class="chip accent" type="submit">Save</button>
-        </div>
-      </form>
-    </dialog>
-    <dialog
       id="group-editor"
       class="model-settings title-editor"
       aria-labelledby="group-editor-heading"
@@ -182,17 +159,19 @@
           >
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
           </button>
-          <h1>
-            <button
-              id="chat-title"
-              class="chat-title"
-              type="button"
-              aria-haspopup="dialog"
-              aria-controls="title-editor"
-              title="Rename chat"
-            >
-              New chat
-            </button>
+          <h1 id="chat-heading">
+            <span id="chat-title-area" class="chat-title-area">
+              <button id="chat-title" class="chat-title" type="button" title="Rename chat">
+                New chat
+              </button>
+              <button
+                id="chat-title-edit"
+                class="chat-title-edit"
+                type="button"
+                aria-label="Rename current chat"
+                title="Rename current chat"
+              ></button>
+            </span>
           </h1>
         </header>
 
