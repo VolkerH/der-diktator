@@ -13,7 +13,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from filelock import FileLock, Timeout
-from sqlalchemy import Connection, Engine, create_engine, event
+from sqlalchemy import URL, Connection, Engine, create_engine, event
 from sqlalchemy.orm import Session
 
 from diktator.durability import sync_directory
@@ -52,7 +52,9 @@ class DataDirectoryLock:
 
 def open_engine(path: Path) -> Engine:
     """Use explicit pysqlite transaction control, with write locks only on mutations."""
-    engine = create_engine(f"sqlite:///{path}", connect_args={"check_same_thread": False})
+    engine = create_engine(
+        URL.create("sqlite", database=str(path)), connect_args={"check_same_thread": False}
+    )
 
     @event.listens_for(engine, "connect")
     def configure(dbapi_connection: sqlite3.Connection, _record: object) -> None:

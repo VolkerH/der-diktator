@@ -572,3 +572,47 @@ def test_released_baseline_fixture_opens_without_upgrade(tmp_path: Path) -> None
         assert service.get(LOCAL_USER_ID, chat.id) == chat
     finally:
         engine.dispose()
+
+
+@pytest.mark.parametrize("suffix", ["?one", "?two", "#hash", "%20 space ü"])
+def test_database_path_preserves_special_characters(tmp_path: Path, suffix: str) -> None:
+    root = tmp_path / f"chats{suffix}"
+    root.mkdir()
+    path = root / DATABASE_NAME
+    engine = open_engine(path)
+    try:
+        upgrade_schema(engine, root)
+        assert path.is_file()
+        with engine.connect() as connection:
+            database = connection.exec_driver_sql("PRAGMA database_list").first()
+            assert database is not None
+            assert Path(database[2]) == path
+    finally:
+        engine.dispose()
+    assert not (tmp_path / "chats").exists()
+
+
+def test_independently_locked_special_character_directories_are_isolated(tmp_path: Path) -> None:
+    roots = [tmp_path / "chats?one", tmp_path / "chats?two"]
+    locks = [DataDirectoryLock(root) for root in roots]
+    engines = []
+    try:
+        for lock in locks:
+            lock.acquire()
+            engine = open_engine(lock.root / DATABASE_NAME)
+            engines.append(engine)
+            upgrade_schema(engine, lock.root)
+        first = ChatService(roots[0], engines[0])
+        second = ChatService(roots[1], engines[1])
+        first_chat = first.create(LOCAL_USER_ID)
+        assert second.list(LOCAL_USER_ID) == []
+        second_chat = second.create(LOCAL_USER_ID)
+        assert [chat.id for chat in first.list(LOCAL_USER_ID)] == [first_chat.id]
+        assert [chat.id for chat in second.list(LOCAL_USER_ID)] == [second_chat.id]
+        assert all((root / DATABASE_NAME).is_file() for root in roots)
+        assert not (tmp_path / "chats").exists()
+    finally:
+        for engine in engines:
+            engine.dispose()
+        for lock in locks:
+            lock.release()
