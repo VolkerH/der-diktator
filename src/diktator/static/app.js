@@ -29,6 +29,13 @@ const clips = /** @type {HTMLElement} */ (document.getElementById("clips"));
 const sidebar = /** @type {HTMLElement} */ (document.getElementById("sidebar"));
 const scrim = /** @type {HTMLElement} */ (document.getElementById("scrim"));
 const splash = /** @type {HTMLElement} */ (document.getElementById("splash"));
+const modelDialog = /** @type {HTMLDialogElement} */ (document.getElementById("model-settings"));
+const modelSettingsButton = /** @type {HTMLButtonElement} */ (
+  document.getElementById("model-settings-open")
+);
+const modelSettingsClose = /** @type {HTMLButtonElement} */ (
+  document.getElementById("model-settings-close")
+);
 const splashShownAt = performance.now();
 const recorder = new MicrophoneRecorder();
 /** @type {LiveTranscriber | null} */
@@ -44,7 +51,7 @@ const models = modelPicker((ready, live) => {
   modelLive = live;
   if (!recording && !busy) liveMode.checked = live && livePreference;
   updateControls();
-}, showError);
+});
 let startedAt = 0;
 /** @type {number | undefined} */
 let timerId;
@@ -704,6 +711,8 @@ menuButton.addEventListener("click", () => {
   menuButton.setAttribute("aria-expanded", String(open));
 });
 scrim.addEventListener("click", closeDrawer);
+modelSettingsButton.addEventListener("click", () => modelDialog.showModal());
+modelSettingsClose.addEventListener("click", () => modelDialog.close());
 transcript.addEventListener("input", () => {
   scheduleSave();
   updateControls();

@@ -3,12 +3,12 @@
 
 /** A model selection is local to the tab until the user presses Use model.
  * @param {(ready: boolean, live: boolean) => void} onChange
- * @param {(error: unknown) => void} onError
  */
-export function modelPicker(onChange, onError) {
+export function modelPicker(onChange) {
   const select = /** @type {HTMLSelectElement} */ (document.getElementById("model-picker"));
   const button = /** @type {HTMLButtonElement} */ (document.getElementById("model-action"));
   const help = /** @type {HTMLElement} */ (document.getElementById("model-help"));
+  const errorMessage = /** @type {HTMLElement} */ (document.getElementById("model-error"));
   const badge = /** @type {HTMLElement} */ (document.getElementById("engine-status"));
   /** @type {ModelsStatus | null} */
   let state = null;
@@ -64,7 +64,7 @@ export function modelPicker(onChange, onError) {
     for (const model of result.models) {
       const option = document.createElement("option");
       option.value = model.id;
-      option.textContent = `${model.name} · ${model.languages}`;
+      option.textContent = model.name;
       select.append(option);
     }
     select.value = selected;
@@ -101,6 +101,7 @@ export function modelPicker(onChange, onError) {
   button.addEventListener("click", async () => {
     const model = state?.models.find((item) => item.id === selected);
     if (!model || button.disabled) return;
+    errorMessage.hidden = true;
     pending = true;
     generation++;
     render();
@@ -114,7 +115,9 @@ export function modelPicker(onChange, onError) {
       if (!response.ok) throw new Error(result.detail || "The model operation failed. Retry.");
       accept(result);
     } catch (error) {
-      onError(error);
+      errorMessage.textContent =
+        error instanceof Error ? error.message : "The model operation failed. Retry.";
+      errorMessage.hidden = false;
     } finally {
       pending = false;
       render();

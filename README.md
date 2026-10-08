@@ -67,7 +67,8 @@ words: in German, a _Diktat_ is a dictation.
 
 ## How to use it
 
-1. **Choose a speech model.** Open the app, select **Phonon-2** or **Parakeet v3**,
+1. **Choose a speech model.** Open **Speech models** at the bottom of the sidebar
+   (on a phone, open the ☰ menu first). Select **Phonon-2** or **Parakeet v3**,
    and click **Download** if needed. Then click **Use model** and wait for the
    ready badge. Downloads and loading run in the background; failures show a retry
    message. The server remembers the last successfully activated model.
@@ -105,7 +106,8 @@ make run
 
 `make run` starts the model service on `127.0.0.1:8010` and the web app on
 `127.0.0.1:8080`; Ctrl-C stops both. Open <http://localhost:8080> in a browser on
-the same machine. Choose a model, download it, then click **Use model**. Starting
+the same machine. Open **Speech models** in the sidebar, choose a model, download
+it, then click **Use model**. Starting
 the services does not download model weights. With WSL, use your Windows browser:
 WSL forwards `localhost` to Windows. Model loading can take some time.
 

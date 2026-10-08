@@ -20,7 +20,7 @@
       <p class="splash-tagline">Dictation &amp; transcription</p>
     </div>
     <div class="shell">
-      <aside id="sidebar" class="sidebar" aria-label="Chats">
+      <aside id="sidebar" class="sidebar" aria-label="App navigation">
         <span class="brand">
           <img class="brand-mark" src="/assets/splash.svg" alt="" />
           <span class="brand-text">
@@ -33,6 +33,16 @@
           New chat
         </button>
         <ul id="chat-list" class="chat-list"></ul>
+        <button
+          id="model-settings-open"
+          class="settings-open"
+          type="button"
+          aria-haspopup="dialog"
+          aria-controls="model-settings"
+        >
+          <span>Speech models</span>
+          <span id="engine-status" class="engine-pill">Connecting…</span>
+        </button>
       </aside>
       <div id="scrim" class="scrim" hidden></div>
 
@@ -42,26 +52,14 @@
             id="menu"
             class="menu-button"
             type="button"
-            aria-label="Show chats"
+            aria-label="Show chats and settings"
             aria-controls="sidebar"
             aria-expanded="false"
           >
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
           </button>
           <h1 id="chat-title" class="chat-title">New chat</h1>
-          <span id="engine-status" class="engine-pill">Connecting…</span>
         </header>
-
-        <section class="model-settings" aria-label="Speech model">
-          <div class="model-controls">
-            <label for="model-picker">Speech model</label>
-            <select id="model-picker" aria-describedby="model-help" disabled>
-              <option>Connecting…</option>
-            </select>
-            <button id="model-action" class="chip" type="button" disabled>Download model</button>
-          </div>
-          <p id="model-help" role="status" aria-live="polite">Loading model information…</p>
-        </section>
 
         <section id="stage" class="stage" aria-label="Recorder">
           <canvas id="meter" class="meter" aria-hidden="true"></canvas>
@@ -120,5 +118,21 @@
         <noscript>Enable JavaScript to record and transcribe audio.</noscript>
       </main>
     </div>
+    <dialog id="model-settings" class="model-settings" aria-labelledby="model-settings-title">
+      <header class="settings-heading">
+        <h2 id="model-settings-title">Speech models</h2>
+        <button id="model-settings-close" class="chip" type="button">Close</button>
+      </header>
+      <p class="settings-intro">Choose the speech model used for all chats on this server.</p>
+      <div class="model-controls">
+        <label for="model-picker">Speech model</label>
+        <select id="model-picker" aria-describedby="model-help" disabled>
+          <option>Connecting…</option>
+        </select>
+        <button id="model-action" class="chip accent" type="button" disabled>Download model</button>
+      </div>
+      <p id="model-help" role="status" aria-live="polite">Loading model information…</p>
+      <p id="model-error" class="error" role="alert" hidden></p>
+    </dialog>
   </body>
 </html>

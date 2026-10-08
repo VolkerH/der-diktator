@@ -482,7 +482,7 @@ test("model action failures are visible and can be retried without losing text",
   await app.element("model-picker").emit("change");
   app.server.failModelAction = true;
   await app.element("model-action").emit("click");
-  assert.match(app.element("error").textContent, /Download failed/);
+  assert.match(app.element("model-error").textContent, /Download failed/);
   assert.equal(app.element("transcript").value, "Keep these words.");
   assert.equal(app.element("model-action").disabled, false);
   app.server.failModelAction = false;

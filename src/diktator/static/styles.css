@@ -150,6 +150,7 @@ main {
 }
 .chat-list {
   flex: 1;
+  min-height: 0;
   display: grid;
   align-content: start;
   gap: 2px;
@@ -880,29 +881,82 @@ textarea:read-only {
   }
 }
 
-.model-settings {
-  margin: 0;
-  padding: 0.75rem 1rem;
+.settings-open {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  flex-shrink: 0;
+  width: 100%;
+  padding: 14px 12px;
   border: 1px solid var(--sheet-line);
+  border-radius: 14px;
   background: var(--sheet);
-  border-radius: 1rem;
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+.settings-open:hover {
+  background: var(--chip);
+}
+.settings-open:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 3px;
+}
+.settings-open .engine-pill {
+  max-width: 100%;
+  white-space: normal;
+  text-align: left;
+}
+.model-settings {
+  width: min(520px, calc(100% - 32px));
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 24px;
+  border: 1px solid var(--sheet-line);
+  border-radius: 20px;
+  background: var(--sheet);
+  color: var(--ink);
+  box-shadow: 0 24px 80px #0d092044;
+}
+.model-settings::backdrop {
+  background: #0d092077;
+  backdrop-filter: blur(4px);
+}
+.settings-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+.settings-heading h2 {
+  margin: 0;
+  font-size: 21px;
+}
+.settings-intro {
+  margin: 16px 0 24px;
+  color: var(--muted);
+  line-height: 1.5;
 }
 .model-controls {
   display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
 }
 .model-controls label {
-  font-size: 0.85rem;
+  font-size: 14px;
+  font-weight: 600;
 }
 .model-controls select {
-  flex: 1;
+  width: 100%;
   min-width: 0;
-  max-width: 100%;
-  padding: 0.6rem;
+  padding: 12px;
   border: 1px solid var(--sheet-line);
-  border-radius: 0.6rem;
+  border-radius: 10px;
   color: inherit;
   background: var(--chip);
   font: inherit;
@@ -912,18 +966,11 @@ textarea:read-only {
   outline-offset: 2px;
 }
 #model-help {
-  margin: 0.65rem 0 0;
-  font-size: 0.8rem;
+  margin: 16px 0 0;
+  color: var(--muted);
+  font-size: 14px;
   line-height: 1.5;
-  opacity: 0.8;
 }
-@media (max-width: 520px) {
-  .model-controls label {
-    width: 100%;
-  }
-  .model-controls select {
-    width: 100%;
-    flex-basis: 100%;
-    font-size: 0.85rem;
-  }
+#model-error {
+  margin-top: 16px;
 }
