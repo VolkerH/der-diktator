@@ -49,49 +49,18 @@ remain reserved for conditional writes and safe retries; this error-contract cha
 For authenticated chat access, missing and inaccessible resources have the same public 404 status
 and body, without distinguishing context. Apply this to chat-scoped audio, history and subscriptions
 as well: a recording request for a missing or inaccessible chat returns `chat_not_found`, and
-`recording_not_found` only applies within an accessible chat. The backend checks the chat before
-looking up its recording; missing audio within an existing chat raises `RecordingNotFound`. A viewer's forbidden write to an otherwise visible chat is a separate
-authorization case.
+`recording_not_found` only applies within an accessible chat. Check chat access before recording
+access. A viewer's forbidden write to an otherwise visible chat is a separate authorization case.
 
-The internal engine API adopts the same envelope with structured codes. The web application's
-`EngineClient` validates and maps known codes into this public registry; it does not parse messages or
-label every 409 `model_busy`. During migration, a code-less engine 409 maps to `model_conflict`.
-Transport/unavailable, timeout and invalid-response failures map to 503/504/502 respectively. Unknown
-upstream failures become a sanitized `engine_error`; they are not passed through unchecked.
-`EngineUnavailable` carries the mapped code and status, so its class name alone does not select a
-code. Register further feature errors with their statuses and recovery guidance.
+The internal engine API uses the same envelope and code registry. Registered codes must match their
+HTTP status. Keep upstream diagnostics in server logs; use authored public messages at the client
+boundary. Register further feature errors with their statuses and recovery guidance. Implemented
+route behavior and compatibility details are documented in [API errors](api-errors.md).
 
-### Implemented error envelope
+### Terminal live errors
 
-Both web and engine HTTP APIs return `ApiError`. `context` is omitted when absent; validation errors
-include `context.errors` containing field `loc`, `type` and `msg`, with submitted values and exception
-objects omitted. FastAPI's 422 response now has a string `detail` instead of an array; this is the
-only changed field shape. Browser clients show `detail`, attach an optional string `code` to the
-thrown error, and tolerate legacy, non-JSON and non-string-detail responses with a generic message.
-
-Every declared error response in `/openapi.json` references `ApiError`, including 422. Checked-in
-snapshots in `tests/snapshots/` cover both services. Request-validation diagnostics are for correcting
-inputs; they do not include upstream diagnostics. Routing and static-asset failures also use the
-envelope: 404 `not_found` and 405 `method_not_allowed`. Other explicitly raised HTTP exceptions use
-`http_error` and their authored public message; status-specific headers such as `Allow` are preserved.
-
-The web upload boundary accepts `audio/wav` and `audio/x-wav`, enforces the configured byte limit
-while reading and checks recording duration and WAV validity before invoking inference.
-The 413 message reports `max_audio_bytes`, rather than assuming a fixed duration. Model and
-transcription requests share the same engine mapping: a recognized code must match its registered
-HTTP status and arrive in a valid error envelope. Its public message is selected locally by code;
-upstream `detail` and `context` are discarded. Unknown codes, status/code mismatches, malformed coded
-envelopes and invalid successful responses become 502 `engine_error`. Legacy code-less 409 and 503
-responses map to `model_conflict` and `engine_unavailable` respectively. No message parsing is used.
-Health checks keep their existing `{ready: false}` behavior when the engine cannot be checked.
-
-A rejected model admission has not been queued. Timeout, transport loss and upstream failures can
-leave the outcome uncertain; clients must retain audio and reconcile engine state before an explicit
-retry. This change adds no retry loop, job recovery or cancellation confirmation.
-
-### Existing live error events
-
-The engine `/v1/audio/stream` and web `/api/stream` use this additive terminal event:
+Finite audio streams use a terminal error event with a human-readable string `message` and an
+optional `code` for compatibility with older peers:
 
 ```json
 {
@@ -101,22 +70,10 @@ The engine `/v1/audio/stream` and web `/api/stream` use this additive terminal e
 }
 ```
 
-Its typed schema is published in [schemas/stream-error.json](schemas/stream-error.json), alongside
-HTTP OpenAPI. `message` stays a string; `code` is optional for compatibility with older peers. New
-engine and web failures carry it. The relay validates registered codes and replaces upstream error
-messages with the public message for that code. Unknown, malformed or code-less upstream error
-events become `engine_error`; arbitrary upstream fields and diagnostics are discarded. Non-error
-`partial`, `final` and `done` events keep their existing fields and names.
-
-Local oversize PCM frames use `audio_too_large`; exceeding the cumulative recording-duration limit
-uses `invalid_audio`; invalid control/configuration requests use `validation_error` or
-`unsupported_audio`. A bad model query emits `validation_error` and closes with code 1008. Connection
-failures use `engine_unavailable`, finalization timeouts use `engine_timeout`, and malformed upstream
-events use `engine_error`. An error event ends the relay and closes the socket. `ready` means the web
-relay connection opened; an engine admission failure can arrive immediately afterwards. Only `done`
-is successful completion. A disconnect or error never proves that native inference was cancelled.
-Clients retain their capture buffer through finalization and show a warning on live failure, so the
-user can explicitly retry the retained recording.
+The typed schema is published in [schemas/stream-error.json](schemas/stream-error.json). Only `done`
+means successful completion. An error or disconnect does not confirm native inference cancellation.
+Clients retain captured audio through finalization and warn on live failure so the user can retry
+explicitly. See [API errors](api-errors.md) for the existing routes and transport behavior.
 
 ## Conditional writes
 

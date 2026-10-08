@@ -42,6 +42,21 @@ def test_openapi_matches_snapshot_and_all_errors_use_api_error(
     assert {"400", "409", "413", "422", "502"} <= statuses
     if service == "web":
         assert {"415", "503", "504"} <= statuses
+        assert set(schema["paths"]["/api/models"]["get"]["responses"]) == {
+            "200",
+            "502",
+            "503",
+            "504",
+        }
+        for action in ("download", "activate", "delete"):
+            assert set(schema["paths"][f"/api/models/{{model}}/{action}"]["post"]["responses"]) == {
+                "202",
+                "409",
+                "422",
+                "502",
+                "503",
+                "504",
+            }
 
 
 def test_published_stream_error_schema_matches_typed_event() -> None:

@@ -5,7 +5,7 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, suppress
 
-from diktator.errors import ApiFailure
+from diktator.errors import ENGINE_ERRORS, ApiFailure
 from diktator.inference.backends import Backend, create_backend
 from diktator.inference.store import ModelStore
 from diktator.models import CATALOG, ModelId, ModelsStatus, ModelStatus, model_info
@@ -16,8 +16,9 @@ logger = logging.getLogger(__name__)
 class ModelConflict(ApiFailure):
     """An operation cannot proceed against the currently reserved model."""
 
-    def __init__(self, message: str, code: str) -> None:
-        super().__init__(message, code, 409)
+    def __init__(self, code: str) -> None:
+        status, message = ENGINE_ERRORS[code]
+        super().__init__(message, code, status)
 
 
 class ModelManager:
@@ -83,9 +84,7 @@ class ModelManager:
         if self.working:
             if self.job_model == model_id and self.job_kind == "download":
                 return
-            raise ModelConflict(
-                "A model operation is already running. Wait for it to finish.", "model_busy"
-            )
+            raise ModelConflict("model_busy")
         if self.store.installed(model_id):
             return
         self.errors.pop(model_id, None)
@@ -108,11 +107,9 @@ class ModelManager:
     def activate(self, model_id: ModelId) -> None:
         model_info(model_id)
         if self.busy or self.working:
-            raise ModelConflict(
-                "The engine is busy. Finish the recording or model operation first.", "model_busy"
-            )
+            raise ModelConflict("model_busy")
         if not self.store.installed(model_id):
-            raise ModelConflict("Download this model before using it.", "model_not_installed")
+            raise ModelConflict("model_not_installed")
         if self.active == model_id and self.backend is not None and self.backend.alive():
             return
         self.errors.pop(model_id, None)
@@ -145,9 +142,7 @@ class ModelManager:
         """Reserve deletion before yielding; HTTP disconnects cannot interrupt it."""
         model_info(model_id)
         if self.busy or self.working:
-            raise ModelConflict(
-                "The engine is busy. Finish the recording or model operation first.", "model_busy"
-            )
+            raise ModelConflict("model_busy")
         self.errors.pop(model_id, None)
         self.job_model, self.job_kind = model_id, "delete"
         self.message = "Deleting downloaded model…"
@@ -168,21 +163,13 @@ class ModelManager:
     def require(self, model_id: ModelId) -> Backend:
         model_info(model_id)
         if self.working and self.job_kind == "load":
-            raise ModelConflict(
-                "The model is loading. Wait for it to become ready.", "model_loading"
-            )
+            raise ModelConflict("model_loading")
         if self.working and self.job_kind == "delete":
-            raise ModelConflict(
-                "A model is being deleted. Wait for it to finish.", "model_deleting"
-            )
+            raise ModelConflict("model_deleting")
         if self.active != model_id or self.backend is None or not self.backend.alive():
-            raise ModelConflict(
-                "The selected model is not active. Choose Use model and retry.", "model_not_active"
-            )
+            raise ModelConflict("model_not_active")
         if self.busy:
-            raise ModelConflict(
-                "The engine is busy with another recording. Try again shortly.", "model_busy"
-            )
+            raise ModelConflict("model_busy")
         return self.backend
 
     async def transcribe(self, model_id: ModelId, audio: bytes) -> str:
@@ -199,10 +186,7 @@ class ModelManager:
     async def stream(self, model_id: ModelId) -> AsyncIterator[str]:
         backend = self.require(model_id)
         if backend.stream_endpoint is None:
-            raise ModelConflict(
-                f"{model_info(model_id).name} transcribes after recording. Turn off Live text.",
-                "live_transcription_unsupported",
-            )
+            raise ModelConflict("live_transcription_unsupported")
         self.streaming = True
         try:
             yield backend.stream_endpoint

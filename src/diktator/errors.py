@@ -41,7 +41,8 @@ class StreamErrorEvent(BaseModel):
     code: str | None = None
 
 
-# Engine text is untrusted. Select public messages by a validated code and status.
+# Shared engine messages are authored here, never copied from upstream diagnostics.
+# Both model admission and the public mapper use these canonical definitions.
 ENGINE_ERRORS: dict[str, tuple[int, str]] = {
     "model_busy": (409, "The engine is busy. Finish the recording or model operation first."),
     "model_loading": (409, "The model is loading. Wait for it to become ready."),
@@ -64,9 +65,6 @@ ENGINE_ERRORS: dict[str, tuple[int, str]] = {
     "engine_timeout": (504, "Transcription timed out. Stop recording and retry transcription."),
     "engine_error": (502, "The transcription engine could not process the audio."),
 }
-
-
-ENGINE_ERROR_STATUSES = tuple(sorted({status for status, _message in ENGINE_ERRORS.values()}))
 
 
 def engine_failure(code: object, status_code: int | None = None) -> ApiFailure:

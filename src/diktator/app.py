@@ -17,7 +17,6 @@ from diktator.chats import Chat, ChatStore, ChatSummary, Recording
 from diktator.config import Settings
 from diktator.engine import EngineClient, Transcription
 from diktator.errors import (
-    ENGINE_ERROR_STATUSES,
     ApiFailure,
     StreamErrorEvent,
     error_responses,
@@ -92,14 +91,14 @@ def create_app(
             "max_duration_seconds": settings.max_duration_seconds,
         }
 
-    @app.get("/api/models", responses=error_responses(*ENGINE_ERROR_STATUSES))
+    @app.get("/api/models", responses=error_responses(502, 503, 504))
     async def models() -> ModelsStatus:
         return await engine.models()
 
     @app.post(
         "/api/models/{model}/download",
         status_code=202,
-        responses=error_responses(*ENGINE_ERROR_STATUSES),
+        responses=error_responses(409, 422, 502, 503, 504),
     )
     async def download_model(model: ModelId) -> ModelsStatus:
         return await engine.models(model, "download")
@@ -107,7 +106,7 @@ def create_app(
     @app.post(
         "/api/models/{model}/activate",
         status_code=202,
-        responses=error_responses(*ENGINE_ERROR_STATUSES),
+        responses=error_responses(409, 422, 502, 503, 504),
     )
     async def activate_model(model: ModelId) -> ModelsStatus:
         return await engine.models(model, "activate")
@@ -115,7 +114,7 @@ def create_app(
     @app.post(
         "/api/models/{model}/delete",
         status_code=202,
-        responses=error_responses(*ENGINE_ERROR_STATUSES),
+        responses=error_responses(409, 422, 502, 503, 504),
     )
     async def delete_model(model: ModelId) -> ModelsStatus:
         return await engine.models(model, "delete")
@@ -140,13 +139,10 @@ def create_app(
             raise ApiFailure(str(error), "invalid_audio", 400) from error
         return recording, info
 
-    async def transcribe_audio(audio: bytes, model: ModelId) -> Transcription:
-        return await engine.transcribe(audio, model)
-
     @app.post("/api/transcribe", responses=error_responses(400, 409, 413, 415, 422, 502, 503, 504))
     async def transcribe(request: Request, model: ModelId = "phonon-2") -> Transcription:
         recording, _info = await read_recording(request)
-        return await transcribe_audio(recording, model)
+        return await engine.transcribe(recording, model)
 
     @app.get("/api/chats")
     async def list_chats() -> list[ChatSummary]:
@@ -189,7 +185,7 @@ def create_app(
     async def transcribe_recording(
         chat_id: ChatId, recording_id: ChatId, model: ModelId = "phonon-2"
     ) -> Transcription:
-        return await transcribe_audio(store.recording_audio(chat_id, recording_id), model)
+        return await engine.transcribe(store.recording_audio(chat_id, recording_id), model)
 
     @app.websocket("/api/stream")
     async def live_transcription(browser: WebSocket, model: ModelId = "phonon-2") -> None:

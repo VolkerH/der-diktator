@@ -206,7 +206,7 @@ async def test_malformed_upstream_event_is_reported(event: str) -> None:
         assert (await browser.receive())["type"] == "websocket.close"
 
 
-async def test_engine_busy_message_is_forwarded_and_connection_closed() -> None:
+async def test_engine_busy_code_is_preserved_and_message_sanitized() -> None:
     async with browser_for() as browser:
         await ready(browser)
         await browser.engine.incoming.put(
@@ -278,7 +278,9 @@ def test_stream_url_uses_the_configured_engine_host(engine_url: str, expected: s
 
 
 @pytest.mark.parametrize("code", [None, "private", 42, ["model_busy"]])
-async def test_unclassified_upstream_stream_failures_are_sanitized(code: object) -> None:
+async def test_unclassified_upstream_stream_failures_are_sanitized(
+    code: object, caplog: pytest.LogCaptureFixture
+) -> None:
     async with browser_for() as browser:
         await ready(browser)
         await browser.engine.incoming.put(
@@ -288,6 +290,8 @@ async def test_unclassified_upstream_stream_failures_are_sanitized(code: object)
         assert event["code"] == "engine_error"
         assert "private" not in str(event["message"])
         assert (await browser.receive())["type"] == "websocket.close"
+    assert "private native traceback" in caplog.text
+    assert "Upstream live error" in caplog.text
 
 
 async def test_invalid_stream_model_has_a_coded_terminal_event() -> None:
@@ -405,6 +409,40 @@ async def test_engine_stream_admission_code_reaches_browser_end_to_end(
                 reserved.cancel()
                 await asyncio.gather(reserved, return_exceptions=True)
                 manager.job = None
+
+
+async def test_native_live_diagnostics_are_logged_before_both_hops_sanitize(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from diktator.inference import server
+    from diktator.inference.manager import ModelManager
+    from diktator.inference.store import ModelStore
+    from tests.test_models import FakeBackend, install_fixture
+
+    native = FakeEngine()
+    await native.incoming.put(
+        json.dumps({"type": "error", "message": "private Fermion diagnostic"})
+    )
+
+    @asynccontextmanager
+    async def native_connection(_url: str) -> AsyncIterator[EngineStream]:
+        yield native
+
+    monkeypatch.setattr(server, "connect_engine", native_connection)
+    store = ModelStore(tmp_path)
+    install_fixture(store, "phonon-2")
+    manager = ModelManager(store, lambda _: FakeBackend())
+    app = server.create_engine(manager)
+    async with app.router.lifespan_context(app):
+        assert manager.job is not None
+        await manager.job
+        async with browser_for(connector=engine_connector(app)) as browser:
+            assert await browser.event() == {"type": "ready"}
+            event = await browser.event()
+            assert event["code"] == "engine_error"
+            assert "private" not in str(event["message"])
+            assert (await browser.receive())["type"] == "websocket.close"
+    assert "private Fermion diagnostic" in caplog.text
 
 
 @pytest.mark.parametrize(

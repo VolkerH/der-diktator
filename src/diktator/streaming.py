@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Protocol
@@ -14,6 +15,8 @@ from websockets.exceptions import WebSocketException
 from diktator.config import Settings
 from diktator.errors import ApiFailure, StreamErrorEvent, engine_failure
 from diktator.models import ModelId
+
+logger = logging.getLogger(__name__)
 
 
 class EngineStream(Protocol):
@@ -31,6 +34,8 @@ class StreamError(ApiFailure):
     """A refused audio frame or malformed engine response."""
 
     def __init__(self, message: str, code: str = "engine_error", status_code: int = 502) -> None:
+        # Retain the HTTP classification for shared failures. StreamErrorEvent sends
+        # only message/code; no HTTP status is sent after the WebSocket is accepted.
         super().__init__(message, code, status_code)
 
 
@@ -129,6 +134,9 @@ async def relay_stream(browser: WebSocket, engine: EngineStream, settings: Setti
             if not isinstance(event.get(field), str):
                 raise StreamError("The engine returned an invalid live transcript.")
             if event["type"] == "error":
+                logger.warning(
+                    "Upstream live error (code=%r): %s", event.get("code"), event["message"]
+                )
                 failure = engine_failure(event.get("code"))
                 event = StreamErrorEvent(message=str(failure), code=failure.code).model_dump()
             await browser.send_json(event)

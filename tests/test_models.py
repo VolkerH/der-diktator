@@ -15,6 +15,7 @@ from typing import override
 import httpx
 import pytest
 
+from diktator.errors import engine_failure
 from diktator.inference.backends import Backend, WhisperBackend, audio_windows, create_backend
 from diktator.inference.manager import ModelConflict, ModelManager
 from diktator.inference.server import create_engine
@@ -564,7 +565,7 @@ async def test_whisper_download_install_activate_and_restart(
     await manager.job
     assert manager.active == model and store.preference() == model
     assert await manager.transcribe(model, make_wav()) == "Hallo, this is mixed dictation."
-    with pytest.raises(ModelConflict, match=r"Whisper.*Turn off Live text") as conflict:
+    with pytest.raises(ModelConflict, match="Turn off Live text") as conflict:
         async with manager.stream(model):
             pytest.fail("Whisper has no live protocol")
     assert conflict.value.code == "live_transcription_unsupported"
@@ -700,7 +701,7 @@ async def test_shutdown_waits_for_deletion_worker(
     try:
         await asyncio.sleep(0)
         assert not closing.done()
-        with pytest.raises(ModelConflict, match="already running"):
+        with pytest.raises(ModelConflict, match="busy"):
             manager.download("parakeet-v3")
     finally:
         finish.set()
@@ -742,7 +743,7 @@ async def test_engine_http_classifies_model_admission(tmp_path: Path, code: str)
             response = await client.post(path, content=make_wav())
             assert response.status_code == 409
             assert response.json()["code"] == code
-            assert isinstance(response.json()["detail"], str)
+            assert response.json()["detail"] == str(engine_failure(code))
         finally:
             manager.streaming = False
             if reserved is not None:

@@ -5,7 +5,7 @@ from typing import Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from diktator.errors import ApiError, ApiFailure, engine_failure
+from diktator.errors import ApiError, engine_failure
 from diktator.models import ModelId, ModelsStatus
 
 
@@ -14,15 +14,6 @@ class Transcription(BaseModel):
 
     model_config = ConfigDict(strict=True)
     text: str
-
-
-class EngineUnavailable(ApiFailure):
-    """A sanitized inference failure, including conflict and upstream errors."""
-
-    @classmethod
-    def from_code(cls, code: object, status_code: int | None = None) -> "EngineUnavailable":
-        failure = engine_failure(code, status_code)
-        return cls(str(failure), failure.code, failure.status_code)
 
 
 class EngineClient:
@@ -65,9 +56,9 @@ class EngineClient:
                 timeout=self.client.timeout if timeout is None else timeout,
             )
         except httpx.TimeoutException as error:
-            raise EngineUnavailable.from_code("engine_timeout") from error
+            raise engine_failure("engine_timeout") from error
         except httpx.RequestError as error:
-            raise EngineUnavailable.from_code("engine_unavailable") from error
+            raise engine_failure("engine_unavailable") from error
         if response.is_success:
             return response
         try:
@@ -79,13 +70,13 @@ class EngineClient:
             try:
                 envelope = ApiError.model_validate(payload)
             except ValidationError as error:
-                raise EngineUnavailable.from_code("engine_error") from error
-            raise EngineUnavailable.from_code(envelope.code, response.status_code)
+                raise engine_failure("engine_error") from error
+            raise engine_failure(envelope.code, response.status_code)
         if response.status_code == 409:
-            raise EngineUnavailable.from_code("model_conflict")
+            raise engine_failure("model_conflict")
         if response.status_code == 503:
-            raise EngineUnavailable.from_code("engine_unavailable")
-        raise EngineUnavailable.from_code("engine_error")
+            raise engine_failure("engine_unavailable")
+        raise engine_failure("engine_error")
 
     async def transcribe(self, audio: bytes, model: ModelId = "phonon-2") -> Transcription:
         """Send an in-memory WAV upload and reject malformed upstream responses."""
@@ -93,7 +84,7 @@ class EngineClient:
         try:
             return Transcription.model_validate(response.json())
         except (ValueError, ValidationError) as error:
-            raise EngineUnavailable.from_code("engine_error") from error
+            raise engine_failure("engine_error") from error
 
     async def models(
         self,
@@ -109,4 +100,4 @@ class EngineClient:
         try:
             return ModelsStatus.model_validate(response.json())
         except (ValueError, ValidationError) as error:
-            raise EngineUnavailable.from_code("engine_error") from error
+            raise engine_failure("engine_error") from error
