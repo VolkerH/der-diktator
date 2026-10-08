@@ -51,9 +51,13 @@ requires internet access; installed models support offline startup.
 ## Storage and configuration
 
 The process runs as UID/GID **10001:10001**. Docker initializes new named volumes
-with the image directories' ownership. Keep the Compose project name `diktator`
-stable to reuse `diktator_data` and `diktator_models`; a different project name
-selects different volumes unless explicit volume names are saved in `.env`.
+with the image directories' ownership. The default volume names are always
+`diktator_data` and `diktator_models`, independent of the Compose project name.
+For separate deployments, set both `DIKTATOR_DATA_VOLUME` and
+`DIKTATOR_MODELS_VOLUME` to distinct names in each deployment's `.env`.
+If an existing deployment used a custom project name, save its actual volume
+names in those settings before starting this version. Changing `-p` alone does
+not select separate storage.
 `docker compose down` preserves them. **Do not use
 `down --volumes` for an upgrade**: it deletes the stored application data.
 
@@ -64,8 +68,8 @@ selects different volumes unless explicit volume names are saved in `.env`.
 | `DIKTATOR_CPU_THREADS`   | `4` in Compose       | Existing Parakeet/Whisper CPU setting                          |
 | `DIKTATOR_PORT`          | `8080`               | Compose host port only; container web port stays 8080          |
 | `DIKTATOR_IMAGE`         | `der-diktator:local` | Compose image tag; use a versioned tag for upgrades            |
-| `DIKTATOR_DATA_VOLUME`   | `<project>_data`     | Compose data volume name; persist a restored volume here       |
-| `DIKTATOR_MODELS_VOLUME` | `<project>_models`   | Compose model volume name; persist a restored volume here      |
+| `DIKTATOR_DATA_VOLUME`   | `diktator_data`      | Compose data volume name; persist a restored volume here       |
+| `DIKTATOR_MODELS_VOLUME` | `diktator_models`    | Compose model volume name; persist a restored volume here      |
 
 Changing a directory environment variable requires a corresponding writable
 mount at that path. The launcher owns the inference endpoint and fixes
@@ -123,21 +127,35 @@ that backup. Also save the model volume to avoid downloading weights again and
 to retain model selection. Stop both services before copying either volume.
 
 These commands discover the active image and named volumes from the existing
-Compose container, including deployments that have already been restored:
+Compose container, including deployments that have already been restored.
+Run the complete block; its subshell stops on any failure without closing your
+interactive shell. A missing container or named mount aborts before creating
+archives. If the container was removed with `docker compose down`, recover its
+deployment configuration and identify its existing volumes before proceeding;
+do not treat a failed backup as permission to upgrade.
 
 ```sh
-mkdir -p backups
+(
+set -eu
 docker compose stop
 container_id=$(docker compose ps --all --quiet diktator)
+: "${container_id:?No Compose container found; backup aborted}"
 data_volume=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "$container_id")
 models_volume=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/models"}}{{.Name}}{{end}}{{end}}' "$container_id")
+: "${data_volume:?No named data volume found; backup aborted}"
+: "${models_volume:?No named model volume found; backup aborted}"
+docker volume inspect "$data_volume" "$models_volume" > /dev/null
 # Keep the actual old image locally for a possible rollback.
-docker image tag "$(docker inspect --format '{{.Image}}' "$container_id")" der-diktator:before-upgrade
+image_id=$(docker inspect --format '{{.Image}}' "$container_id")
+: "${image_id:?No container image found; backup aborted}"
+docker image tag "$image_id" der-diktator:before-upgrade
 # Each archive is streamed to the host; no host-directory permission adjustment is needed.
+mkdir -p backups
 docker run --rm --entrypoint tar --mount "source=$data_volume,target=/data,readonly" \
   der-diktator:before-upgrade -C /data -czf - . > backups/data.tar.gz
 docker run --rm --entrypoint tar --mount "source=$models_volume,target=/models,readonly" \
   der-diktator:before-upgrade -C /models -czf - . > backups/models.tar.gz
+)
 ```
 
 Check that the archives list and extract successfully before upgrading. Store
@@ -171,6 +189,8 @@ For rollback, stop the new container and restore the pre-upgrade archives to
 schema; changing only the image is not a database downgrade.
 
 ```sh
+(
+set -eu
 docker compose down
 restore_id=$(date -u +%Y%m%dT%H%M%SZ)
 restored_data="diktator_restored_data_$restore_id"
@@ -187,6 +207,7 @@ docker run --rm -i --user 0:0 --entrypoint tar \
 # These are the three entries to set in .env for the restored deployment.
 printf 'DIKTATOR_IMAGE=der-diktator:before-upgrade\nDIKTATOR_DATA_VOLUME=%s\nDIKTATOR_MODELS_VOLUME=%s\n' \
   "$restored_data" "$restored_models"
+)
 ```
 
 Update those three keys in `.env`, preserving the other entries such as

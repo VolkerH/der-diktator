@@ -87,7 +87,7 @@ print("All native backend imports and SQLAlchemy compiled extensions passed; Tor
 # data path. This isolates the storage failure from unrelated engine startup
 # failures and lets the harness verify peer shutdown before the container exits.
 UNWRITABLE = r"""
-import os, pathlib, sys
+import os, pathlib, sys, time
 from diktator.container import supervise
 engine = ["/opt/diktator/engine/.venv/bin/python", "-m", "diktator.inference", "serve"]
 engine_start = (
@@ -95,15 +95,14 @@ engine_start = (
     f"os.execv({engine[0]!r}, {engine!r})"
 )
 web_start = '''
-import os, time, urllib.request
-from urllib.error import URLError
-deadline = time.monotonic() + 20
+import http.client, os, time, urllib.request
+deadline = time.monotonic() + 60
 while True:
     try:
         with urllib.request.urlopen("http://127.0.0.1:8010/models", timeout=1) as response:
             assert response.status == 200
         break
-    except URLError:
+    except (OSError, http.client.HTTPException):
         if time.monotonic() >= deadline:
             raise
         time.sleep(.1)
@@ -116,12 +115,16 @@ result = supervise(
 )
 assert result != 0
 engine_pid = int(pathlib.Path("/tmp/engine.pid").read_text())
-try:
-    os.killpg(engine_pid, 0)
-except ProcessLookupError:
-    pass
-else:
-    raise AssertionError("Engine process group survived web startup failure")
+# Tini may still be reaping orphaned descendants after supervise() returns.
+deadline = time.monotonic() + 5
+while True:
+    try:
+        os.killpg(engine_pid, 0)
+    except ProcessLookupError:
+        break
+    if time.monotonic() >= deadline:
+        raise AssertionError("Engine process group survived web startup failure")
+    time.sleep(.05)
 print("Engine process group stopped after data failure", flush=True)
 raise SystemExit(result)
 """
@@ -202,42 +205,57 @@ def main() -> None:
                     check=True,
                 )
                 print("Stopped data volume backed up and restored to a new volume")
-        # A data mount that cannot be written must fail promptly, stopping its peer.
-        docker(
-            "run",
-            "--detach",
-            "--name",
-            name,
-            "--network",
-            "none",
-            "--read-only",
-            "--tmpfs",
-            "/tmp",
-            "--env",
-            "DIKTATOR_DATA_DIR=/unwritable",
-            "--mount",
-            f"source={volumes[1]},target=/models",
-            "--entrypoint",
-            "/usr/bin/tini",
-            image,
-            "--",
-            "/opt/diktator/.venv/bin/python",
-            "-c",
-            UNWRITABLE,
-        )
-        result = subprocess.run(
-            ["docker", "wait", name], text=True, capture_output=True, timeout=30
-        )
-        assert result.returncode == 0 and int(result.stdout) != 0
-        logs = subprocess.check_output(
-            ["docker", "logs", name], text=True, stderr=subprocess.STDOUT
-        )
-        assert "Engine ready before unwritable-data check" in logs
-        assert "/unwritable" in logs and (
-            "Read-only file system" in logs or "Permission denied" in logs
-        )
-        assert "Engine process group stopped after data failure" in logs
-        print("Unwritable data fails web startup after engine readiness; engine group stopped")
+        # Check both the shipped entrypoint/exit status and isolated peer cleanup.
+        # The latter delays web startup until the engine is known to be healthy.
+        for isolated in (False, True):
+            launcher = (
+                [
+                    "--entrypoint",
+                    "/usr/bin/tini",
+                    image,
+                    "--",
+                    "/opt/diktator/.venv/bin/python",
+                    "-c",
+                    UNWRITABLE,
+                ]
+                if isolated
+                else [image]
+            )
+            docker(
+                "run",
+                "--detach",
+                "--name",
+                name,
+                "--network",
+                "none",
+                "--read-only",
+                "--tmpfs",
+                "/tmp",
+                "--env",
+                "DIKTATOR_DATA_DIR=/unwritable",
+                "--mount",
+                f"source={volumes[1]},target=/models",
+                *launcher,
+            )
+            # Budget for engine readiness (60s), web startup, supervisor grace
+            # (5s in the harness, 15s in main), reaping (5s), and Docker overhead.
+            result = subprocess.run(
+                ["docker", "wait", name], text=True, capture_output=True, timeout=120
+            )
+            logs = subprocess.check_output(
+                ["docker", "logs", name], text=True, stderr=subprocess.STDOUT
+            )
+            assert result.returncode == 0 and int(result.stdout) != 0, logs
+            assert "/unwritable" in logs and (
+                "Read-only file system" in logs or "Permission denied" in logs
+            ), logs
+            if isolated:
+                assert "Engine ready before unwritable-data check" in logs, logs
+                assert "Engine process group stopped after data failure" in logs, logs
+                print("Unwritable data fails after engine readiness; engine group stopped")
+            else:
+                print("Production entrypoint propagates unwritable-data startup failure")
+                docker("rm", name)
     finally:
         with suppress(subprocess.CalledProcessError):
             docker("rm", "--force", name)
