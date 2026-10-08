@@ -231,20 +231,14 @@ def test_baseline_backup_unknown_schema_and_repeated_startup(tmp_path: Path) -> 
     engine = open_engine(tmp_path / DATABASE_NAME)
     try:
         upgrade_schema(engine, tmp_path)
-        backups = list((tmp_path / "backups").glob("*.sqlite3"))
-        assert len(backups) == 1
-        with sqlite3.connect(backups[0]) as backup:
-            assert backup.execute("PRAGMA integrity_check").fetchone() == ("ok",)
-            assert (
-                backup.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall() == []
-            )
+        assert not (tmp_path / "backups").exists()
         upgrade_schema(engine, tmp_path)
-        assert list((tmp_path / "backups").glob("*.sqlite3")) == backups
+        assert not (tmp_path / "backups").exists()
         with engine.begin() as connection:
             connection.exec_driver_sql("UPDATE alembic_version SET version_num='9999'")
         with pytest.raises(UnknownSchema, match="newer"):
             upgrade_schema(engine, tmp_path)
-        assert list((tmp_path / "backups").glob("*.sqlite3")) == backups
+        assert not (tmp_path / "backups").exists()
     finally:
         engine.dispose()
 

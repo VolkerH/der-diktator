@@ -99,6 +99,12 @@ def upgrade_schema(engine: Engine, root: Path) -> None:
         scripts = ScriptDirectory.from_config(config)
         head = scripts.get_current_head()
         with engine.connect() as connection:
+            has_tables = (
+                connection.exec_driver_sql(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1"
+                ).first()
+                is not None
+            )
             exists = connection.exec_driver_sql(
                 "SELECT name FROM sqlite_master WHERE name='alembic_version'"
             ).first()
@@ -115,27 +121,33 @@ def upgrade_schema(engine: Engine, root: Path) -> None:
             raise UnknownSchema(f"Database schema {revisions} is newer than this Diktator version.")
         if revisions == [head]:
             return
-        backups = root / "backups"
-        backups.mkdir(exist_ok=True)
-        sync_directory(root)
-        name = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ") + "-" + uuid.uuid4().hex
-        # VACUUM cannot run in a transaction. The exclusive directory lock already
-        # excludes application writers; bind the filename rather than interpolating SQL.
-        backup_path = backups / f"{name}.sqlite3"
-        temporary = backup_path.with_suffix(".sqlite3.tmp")
-        raw = engine.raw_connection()
-        try:
-            cursor = raw.cursor()
-            try:
-                cursor.execute("VACUUM INTO ?", (str(temporary),))
-            finally:
-                cursor.close()
-        finally:
-            raw.close()
-        with temporary.open("rb") as stream:
-            os.fsync(stream.fileno())
-        os.replace(temporary, backup_path)
-        sync_directory(backups)
+        if has_tables:
+            _backup_database(engine, root)
         with engine.connect().execution_options(write=True) as connection:
             config.attributes["connection"] = connection
             command.upgrade(config, "head")
+
+
+def _backup_database(engine: Engine, root: Path) -> None:
+    """Durably retain an existing database before upgrading its schema."""
+    backups = root / "backups"
+    backups.mkdir(exist_ok=True)
+    sync_directory(root)
+    name = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ") + "-" + uuid.uuid4().hex
+    # VACUUM cannot run in a transaction. The exclusive directory lock already
+    # excludes application writers; bind the filename rather than interpolating SQL.
+    backup_path = backups / f"{name}.sqlite3"
+    temporary = backup_path.with_suffix(".sqlite3.tmp")
+    raw = engine.raw_connection()
+    try:
+        cursor = raw.cursor()
+        try:
+            cursor.execute("VACUUM INTO ?", (str(temporary),))
+        finally:
+            cursor.close()
+    finally:
+        raw.close()
+    with temporary.open("rb") as stream:
+        os.fsync(stream.fileno())
+    os.replace(temporary, backup_path)
+    sync_directory(backups)

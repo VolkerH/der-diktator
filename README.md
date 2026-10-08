@@ -277,7 +277,10 @@ chat; without a durable deletion tombstone, startup cannot prove ownership.
 Deleted imported chats remain known through the import ledger and can be swept.
 
 Before a schema upgrade, startup writes a consistent database snapshot using
-`VACUUM INTO` under `backups/`. The initial schema also gets a pre-upgrade snapshot.
+`VACUUM INTO` under `backups/`. A fresh, empty database needs no snapshot; an
+existing database is backed up even if it has no Alembic version table. One
+snapshot is retained per upgrade, with no automatic retention limit. Remove
+older snapshots manually after verifying your own complete backup.
 A database from a newer application version causes startup to refuse. These snapshots
 contain database data; a complete backup includes audio too. Stop the web app
 and copy the entire data directory when making a complete backup. Legacy JSON
