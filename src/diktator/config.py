@@ -9,6 +9,7 @@ from pathlib import Path
 
 from platformdirs import user_data_path
 
+from diktator.corrections import CorrectionSettings
 from diktator.durability import sync_directory
 
 DATABASE_NAME = "diktator.sqlite3"
@@ -120,6 +121,7 @@ def migrate_chats(legacy: Path, target: Path) -> bool:
 class Settings:
     """Keep the inference service separate from the browser-facing application."""
 
+    correction: CorrectionSettings = field(default_factory=CorrectionSettings)
     engine_url: str = "http://127.0.0.1:8010"
     transcription_timeout_seconds: float = 180.0
     max_audio_bytes: int = 20_000_044
@@ -136,6 +138,7 @@ class Settings:
             Path(configured).expanduser() if configured else default_data_directory()
         )
         return cls(
+            correction=CorrectionSettings.from_environment(),
             engine_url=os.environ.get("DIKTATOR_ENGINE_URL", "http://127.0.0.1:8010"),
             data_directory=directory,
         )

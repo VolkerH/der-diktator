@@ -34,6 +34,93 @@
         }
       }
     },
+    "/api/corrections/capabilities": {
+      "get": {
+        "summary": "Correction Capabilities",
+        "operationId": "correction_capabilities_api_corrections_capabilities_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorrectionCapabilities"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/corrections": {
+      "post": {
+        "summary": "Correct Text",
+        "description": "Generate a selected-text preview without writing a chat. The default mode is paragraphs. Deltas are provisional; only done.text may be accepted. Disconnect cancels the request. No retry, replay or persistence occurs automatically. See docs/local-correction.md and docs/schemas/correction-event.json.",
+        "operationId": "correct_text_api_corrections_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CorrectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Finite delta stream, ending in authoritative done or error.",
+            "content": {
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request Entity Too Large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/models": {
       "get": {
         "summary": "Models",
@@ -2737,6 +2824,109 @@
         "required": ["custom_title", "title_revision"],
         "title": "ChatTitle",
         "description": "Shared title metadata, independently writable from transcript and audio."
+      },
+      "CorrectionCapabilities": {
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "title": "Configured"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "language": {
+            "type": "string",
+            "const": "English",
+            "title": "Language",
+            "default": "English"
+          },
+          "default_mode": {
+            "type": "string",
+            "enum": ["spelling", "paragraphs", "headings"],
+            "title": "Default Mode",
+            "default": "paragraphs"
+          },
+          "modes": {
+            "items": {
+              "$ref": "#/components/schemas/CorrectionModeInfo"
+            },
+            "type": "array",
+            "title": "Modes"
+          },
+          "max_input_characters": {
+            "type": "integer",
+            "title": "Max Input Characters"
+          },
+          "max_output_characters": {
+            "type": "integer",
+            "title": "Max Output Characters"
+          },
+          "timeout_seconds": {
+            "type": "number",
+            "title": "Timeout Seconds"
+          },
+          "max_concurrent_jobs": {
+            "type": "integer",
+            "const": 1,
+            "title": "Max Concurrent Jobs",
+            "default": 1
+          }
+        },
+        "type": "object",
+        "required": [
+          "configured",
+          "model",
+          "modes",
+          "max_input_characters",
+          "max_output_characters",
+          "timeout_seconds"
+        ],
+        "title": "CorrectionCapabilities",
+        "description": "Configured does not imply the external provider is running or healthy."
+      },
+      "CorrectionModeInfo": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": ["spelling", "paragraphs", "headings"],
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "required": ["id", "label"],
+        "title": "CorrectionModeInfo"
+      },
+      "CorrectionRequest": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 16000,
+            "title": "Text"
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["spelling", "paragraphs", "headings"],
+            "title": "Mode",
+            "default": "paragraphs"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["text"],
+        "title": "CorrectionRequest",
+        "description": "Only the selected snapshot is sent; no chat mutation or browser offsets."
       },
       "DraftExport": {
         "properties": {

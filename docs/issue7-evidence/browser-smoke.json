@@ -1,0 +1,55 @@
+{
+  "browser": "153.0.8010.12",
+  "api": {
+    "capabilities": {
+      "configured": true,
+      "model": "smollm2-360m-instruct",
+      "language": "English",
+      "default_mode": "paragraphs",
+      "modes": [
+        {
+          "id": "spelling",
+          "label": "Spelling and punctuation"
+        },
+        {
+          "id": "paragraphs",
+          "label": "Readable paragraphs"
+        },
+        {
+          "id": "headings",
+          "label": "Paragraphs and Markdown headings"
+        }
+      ],
+      "max_input_characters": 4000,
+      "max_output_characters": 8000,
+      "timeout_seconds": 90.0,
+      "max_concurrent_jobs": 1
+    },
+    "terminal": {
+      "type": "done",
+      "text": "  i recieved the report yesterday please send it to alice by friday  ",
+      "mode": "spelling",
+      "model": "smollm2-360m-instruct"
+    },
+    "first_visible_seconds": 0.06724762497469783,
+    "total_seconds": 0.2724911329569295
+  },
+  "browser_checks": [
+    {
+      "viewport": [1280, 900],
+      "real_model_preview_accept_undo": true,
+      "preserves_outside_selection_and_whitespace": true,
+      "contextmenu_cancel": true,
+      "horizontal_overflow": false
+    },
+    {
+      "viewport": [390, 844],
+      "real_model_preview_accept_undo": true,
+      "preserves_outside_selection_and_whitespace": true,
+      "contextmenu_cancel": true,
+      "horizontal_overflow": false
+    }
+  ],
+  "page_errors": [],
+  "real_cpu_model": true
+}

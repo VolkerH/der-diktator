@@ -18,7 +18,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocketState
@@ -35,6 +35,11 @@ from diktator.chats import (
     TitleUpdate,
 )
 from diktator.config import Settings
+from diktator.corrections import (
+    CorrectionCapabilities,
+    CorrectionRequest,
+    CorrectionService,
+)
 from diktator.db.rows import LOCAL_USER_ID
 from diktator.engine import EngineClient, Transcription
 from diktator.errors import (
@@ -68,6 +73,7 @@ def create_app(
     *,
     transport: httpx.AsyncBaseTransport | None = None,
     stream_connector: StreamConnector = connect_engine,
+    correction_transport: httpx.AsyncBaseTransport | None = None,
     storage: Storage | None = None,
 ) -> FastAPI:
     """Create an application with injectable HTTP and streaming engine boundaries."""
@@ -79,6 +85,12 @@ def create_app(
         trust_env=False,
     )
     engine = EngineClient(client)
+    correction_client = httpx.AsyncClient(
+        timeout=settings.correction.timeout_seconds,
+        transport=correction_transport,
+        trust_env=False,
+    )
+    correction = CorrectionService(settings.correction, correction_client)
 
     def store() -> ChatService:
         return app.state.storage.chats
@@ -110,7 +122,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        async with client:
+        async with client, correction_client:
             owned = storage or await run_in_threadpool(open_storage, settings)
             _app.state.storage = owned
             try:
@@ -139,6 +151,35 @@ def create_app(
             "ready": await engine.is_ready(),
             "max_duration_seconds": settings.max_duration_seconds,
         }
+
+    @app.get("/api/corrections/capabilities")
+    async def correction_capabilities() -> CorrectionCapabilities:
+        return correction.capabilities()
+
+    @app.post(
+        "/api/corrections",
+        responses={
+            **error_responses(409, 413, 422, 503),
+            200: {
+                "content": {"application/x-ndjson": {"schema": {"type": "string"}}},
+                "description": "Finite delta stream, ending in authoritative done or error.",
+            },
+        },
+        response_class=StreamingResponse,
+        description=(
+            "Generate a selected-text preview without writing a chat. The default mode is "
+            "paragraphs. Deltas are provisional; only done.text may be accepted. Disconnect "
+            "cancels the request. No retry, replay or persistence occurs automatically. "
+            "See docs/local-correction.md and docs/schemas/correction-event.json."
+        ),
+    )
+    async def correct_text(draft: CorrectionRequest) -> StreamingResponse:
+        correction.admit(draft)
+        return StreamingResponse(
+            correction.stream(draft),
+            media_type="application/x-ndjson",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
 
     @app.get("/api/models", responses=error_responses(409, 422, 502, 503, 504))
     async def models() -> ModelsStatus:

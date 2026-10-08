@@ -228,6 +228,20 @@
               <span id="save-state" class="save-state"></span>
             </span>
             <div class="sheet-actions">
+              <button id="correction-undo" class="chip quiet" type="button" hidden disabled>
+                Undo correction
+              </button>
+              <button
+                id="correction-open"
+                class="chip"
+                type="button"
+                disabled
+                aria-haspopup="dialog"
+                aria-controls="correction-dialog"
+                title="Select text to fix with a local language model"
+              >
+                Fix selection…
+              </button>
               <button id="share" class="chip" type="button" disabled>
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path
@@ -250,6 +264,52 @@
         <noscript>Enable JavaScript to record and transcribe audio.</noscript>
       </main>
     </div>
+    <dialog
+      id="correction-dialog"
+      class="model-settings correction-dialog"
+      aria-labelledby="correction-title"
+      aria-describedby="correction-provider"
+    >
+      <header class="settings-heading">
+        <h2 id="correction-title">Fix selected text</h2>
+        <span class="prototype-label">Prototype</span>
+      </header>
+      <p id="correction-provider" class="settings-intro"></p>
+      <div class="correction-options">
+        <label for="correction-mode">Editing style</label>
+        <select id="correction-mode" disabled></select>
+        <button id="correction-generate" class="chip" type="button" disabled>
+          Generate preview
+        </button>
+      </div>
+      <div class="correction-comparison">
+        <div class="field">
+          <label for="correction-original">Your selection</label>
+          <textarea id="correction-original" class="export-text" rows="10" readonly></textarea>
+        </div>
+        <div class="field">
+          <label for="correction-proposal">Suggested replacement</label>
+          <textarea
+            id="correction-proposal"
+            class="export-text"
+            rows="10"
+            readonly
+            placeholder="Your preview will appear here."
+          ></textarea>
+        </div>
+      </div>
+      <p class="field-hint">
+        Small models can change meaning or miss details. Review the complete suggestion. Only the
+        selected text is replaced when you accept.
+      </p>
+      <p id="correction-status" class="dialog-status" role="status" aria-live="polite"></p>
+      <div class="dialog-actions">
+        <button id="correction-cancel" class="chip" type="button">Cancel</button>
+        <button id="correction-accept" class="chip accent" type="button" disabled>
+          Accept replacement
+        </button>
+      </div>
+    </dialog>
     <dialog
       id="preferences-dialog"
       class="model-settings export-dialog"

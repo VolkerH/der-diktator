@@ -1,0 +1,79 @@
+{
+  "$defs": {
+    "CorrectionDelta": {
+      "properties": {
+        "type": {
+          "const": "delta",
+          "default": "delta",
+          "title": "Type",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": ["text"],
+      "title": "CorrectionDelta",
+      "type": "object"
+    },
+    "CorrectionDone": {
+      "properties": {
+        "type": {
+          "const": "done",
+          "default": "done",
+          "title": "Type",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "mode": {
+          "enum": ["spelling", "paragraphs", "headings"],
+          "title": "Mode",
+          "type": "string"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        }
+      },
+      "required": ["text", "mode", "model"],
+      "title": "CorrectionDone",
+      "type": "object"
+    },
+    "CorrectionError": {
+      "properties": {
+        "type": {
+          "const": "error",
+          "default": "error",
+          "title": "Type",
+          "type": "string"
+        },
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        }
+      },
+      "required": ["code", "detail"],
+      "title": "CorrectionError",
+      "type": "object"
+    }
+  },
+  "anyOf": [
+    {
+      "$ref": "#/$defs/CorrectionDelta"
+    },
+    {
+      "$ref": "#/$defs/CorrectionDone"
+    },
+    {
+      "$ref": "#/$defs/CorrectionError"
+    }
+  ]
+}

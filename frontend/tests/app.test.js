@@ -3454,3 +3454,137 @@ for (const failure of ["conflict", "network"])
     assert.equal(app.element("share-preamble").checked, true);
     assert.equal(app.element("share-preamble").disabled, false);
   });
+
+/** The correction provider is separate from speech and never writes chats. */
+function correctionServer(t, produce = () => "  Corrected 🙂. \n") {
+  const upstreamFetch = globalThis.fetch;
+  const requests = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (url === "/api/corrections/capabilities")
+      return new Response(
+        JSON.stringify({
+          configured: true,
+          model: "smollm2-360m-instruct",
+          default_mode: "paragraphs",
+          modes: [
+            { id: "paragraphs", label: "Readable paragraphs" },
+            { id: "spelling", label: "Spelling and punctuation" },
+            { id: "headings", label: "Paragraphs and Markdown headings" },
+          ],
+          max_input_characters: 4000,
+          timeout_seconds: 90,
+        }),
+      );
+    if (url === "/api/corrections") {
+      requests.push(JSON.parse(options.body));
+      const text = await produce(options.signal);
+      return new Response(
+        JSON.stringify({ type: "delta", text: "provisional" }) +
+          "\n" +
+          JSON.stringify({ type: "done", text }) +
+          "\n",
+      );
+    }
+    return upstreamFetch(url, options);
+  });
+  return requests;
+}
+
+async function selectCorrection(app, start, end) {
+  setCursor(app, start, end);
+  await app.element("transcript").emit("select");
+  await app.element("correction-open").emit("click");
+}
+
+test("correction preview sends only selection; accept and undo use conditional saves", async (t) => {
+  const original = "Before 🪶\n  wrong 🙂. \nAfter";
+  const app = await appEnvironment(t, (server) => server.add(original));
+  const requests = correctionServer(t);
+  const editor = app.element("transcript");
+  const start = original.indexOf("  wrong");
+  const end = original.indexOf("After");
+  await selectCorrection(app, start, end);
+  assert.equal(app.element("correction-mode").value, "paragraphs");
+  await app.element("correction-generate").emit("click");
+  assert.equal(editor.value, original);
+  assert.deepEqual(requests, [{ text: original.slice(start, end), mode: "paragraphs" }]);
+  assert.equal(app.element("correction-accept").disabled, false);
+  await app.element("correction-accept").emit("click");
+  assert.equal(editor.value, "Before 🪶\n  Corrected 🙂. \nAfter");
+  for (let i = 0; i < 10; i++) await setImmediate();
+  assert.equal(app.server.chats.get(id(1)).text, editor.value);
+  assert.equal(app.element("correction-undo").hidden, false);
+  await app.element("correction-undo").emit("click");
+  assert.equal(editor.value, original);
+  for (let i = 0; i < 10; i++) await setImmediate();
+  assert.equal(app.server.chats.get(id(1)).text, original);
+});
+
+for (const change of ["edit-then-undo", "navigation", "cancel"]) {
+  test(`late correction cannot apply after ${change}`, async (t) => {
+    const app = await appEnvironment(t, (server) => server.add("Original"));
+    let finish;
+    correctionServer(
+      t,
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await selectCorrection(app, 0, 8);
+    const generating = app.element("correction-generate").emit("click");
+    if (change === "edit-then-undo") {
+      app.element("transcript").value = "Changed";
+      await app.element("transcript").emit("input");
+      app.element("transcript").value = "Original";
+      await app.element("transcript").emit("input");
+    } else if (change === "navigation") {
+      await app.element("new-chat").emit("click");
+    } else {
+      await app.element("correction-cancel").emit("click");
+    }
+    finish("Must not apply");
+    await generating;
+    assert.equal(app.element("correction-accept").disabled, true);
+    await app.element("correction-accept").emit("click");
+    assert.notEqual(app.element("transcript").value, "Must not apply");
+  });
+}
+
+test("remote edit conflict preserves accepted local draft and invalidates undo", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  correctionServer(t, () => "Corrected");
+  await selectCorrection(app, 0, 8);
+  await app.element("correction-generate").emit("click");
+  const remote = app.server.chats.get(id(1));
+  remote.text = "Changed elsewhere";
+  remote.text_revision++;
+  remote.revision++;
+  await app.element("correction-accept").emit("click");
+  for (let i = 0; i < 10; i++) await setImmediate();
+  assert.equal(remote.text, "Changed elsewhere");
+  assert.equal(app.element("transcript").value, "Corrected");
+  assert.equal(app.element("text-conflict").hidden, false);
+  assert.equal(app.element("correction-undo").disabled, true);
+});
+
+test("context menu uses the selected snapshot and a mode change requires regeneration", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  correctionServer(t, () => "Corrected");
+  setCursor(app, 0, 8);
+  let prevented = false;
+  await app.element("transcript").emit("contextmenu", {
+    preventDefault: () => {
+      prevented = true;
+    },
+  });
+  for (let i = 0; i < 5; i++) await setImmediate();
+  assert.equal(prevented, true);
+  assert.equal(app.element("correction-dialog").open, true);
+  await app.element("correction-generate").emit("click");
+  assert.equal(app.element("correction-accept").disabled, false);
+  app.element("correction-mode").value = "headings";
+  await app.element("correction-mode").emit("change");
+  assert.equal(app.element("correction-accept").disabled, true);
+  assert.equal(app.element("transcript").value, "Original");
+});

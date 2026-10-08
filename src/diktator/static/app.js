@@ -1,3 +1,4 @@
+import { correctionControls } from "./corrections.js";
 import { exportControls } from "./exports.js";
 import { ApiRequestError } from "./errors.js";
 import { MAX_DURATION_SECONDS, wordCount } from "./audio.js";
@@ -121,6 +122,8 @@ let textConflict = false;
 let deletingChatId = null;
 /** Invalidate every late result, including leaving and reopening the same chat ID. */
 let navigationGeneration = 0;
+/** Increment on every local editor input, including edit-then-undo sequences. */
+let editGeneration = 0;
 /** Chosen once for this new chat and retained after a failed creation. */
 let pendingChatId = newId();
 /** Choose the ID before the first upload: the server may commit and lose its response.
@@ -149,6 +152,28 @@ recorder.onLevel = (/** @type {number} */ level) => {
 
 const exports = exportControls(
   () => ({ text: transcript.value, key: navigationGeneration, active: recording || busy }),
+  (message) => {
+    status.textContent = message;
+  },
+);
+
+const corrections = correctionControls(
+  () => ({
+    text: transcript.value,
+    key: navigationGeneration,
+    version: editGeneration,
+    active: recording || busy || textConflict || chat?.id === deletingChatId,
+  }),
+  (text, start, end) => {
+    transcript.value = text;
+    transcript.setSelectionRange(start, end);
+    editGeneration++;
+    startupPending = false;
+    scheduleSave();
+    updateControls();
+    renderChats();
+    void saveText();
+  },
   (message) => {
     status.textContent = message;
   },
@@ -210,6 +235,7 @@ function updateControls() {
   stopButton.disabled = !recording || busy;
   copyButton.disabled = active || !transcript.value.trim();
   exports.update();
+  corrections.update();
   newChatButton.disabled = active;
   groupSidebar.lock(active);
   for (const control of chatList.querySelectorAll(".chat-rename"))
@@ -848,6 +874,7 @@ async function writeText(generation) {
       clearTimeout(saveTimer);
       conflictNotice.hidden = false;
       setSaveState("This chat changed elsewhere");
+      corrections.update();
     } else {
       setSaveState("Not saved");
       showError(error);
@@ -1609,6 +1636,7 @@ scrim.addEventListener("click", () => void dismissDrawer());
 modelSettingsButton.addEventListener("click", () => modelDialog.showModal());
 modelSettingsClose.addEventListener("click", () => modelDialog.close());
 transcript.addEventListener("input", () => {
+  editGeneration++;
   startupPending = false;
   scheduleSave();
   updateControls();

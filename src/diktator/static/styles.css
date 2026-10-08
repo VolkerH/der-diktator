@@ -1866,3 +1866,56 @@ textarea:read-only {
     padding: 20px;
   }
 }
+
+/* The correction prototype keeps source and proposal legible side by side. */
+.correction-dialog {
+  width: min(900px, calc(100vw - 32px));
+  max-width: 900px;
+}
+
+.correction-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.correction-options select {
+  flex: 1;
+  min-width: 180px;
+  padding: 10px;
+  border: 1px solid var(--sheet-line);
+  border-radius: 10px;
+  background: var(--sheet);
+  color: inherit;
+  font: inherit;
+}
+
+.correction-comparison {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.correction-comparison .field {
+  min-width: 0;
+}
+
+.prototype-label {
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+
+@media (max-width: 640px) {
+  .correction-comparison {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .correction-comparison textarea {
+    min-height: 125px;
+    height: 150px;
+  }
+}

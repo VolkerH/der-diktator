@@ -1,0 +1,38 @@
+[
+  {
+    "mode": "spelling",
+    "input": "i recieved the report yesterday it has three erors please send the corrected version to Alice by friday",
+    "terminal": {
+      "type": "done",
+      "text": "i recieved the report yesterday it has three erors please send the corrected version to alice by friday",
+      "mode": "spelling",
+      "model": "smollm2-360m-instruct"
+    },
+    "first_visible_seconds": 0.2687024950282648,
+    "total_seconds": 0.5336482020793483
+  },
+  {
+    "mode": "paragraphs",
+    "input": "we discussed two topics today first the delivery schedule the parts should arrive on monday second the budget we have 2400 euros left do not order the expensive sensor",
+    "terminal": {
+      "type": "done",
+      "text": "\"we discussed two topics today first the delivery schedule the parts should arrive on monday second the budget we have 2400 euros left do not order the expensive sensor\"",
+      "mode": "paragraphs",
+      "model": "smollm2-360m-instruct"
+    },
+    "first_visible_seconds": 0.19630551803857088,
+    "total_seconds": 0.6282959380187094
+  },
+  {
+    "mode": "headings",
+    "input": "we discussed two topics today first the delivery schedule the parts should arrive on monday second the budget we have 2400 euros left do not order the expensive sensor",
+    "terminal": {
+      "type": "done",
+      "text": "\"Today, we discussed two topics: the delivery schedule, which should arrive on Monday, and the budget, which we have 2400 euros left. We need to avoid ordering the expensive sensor.\"",
+      "mode": "headings",
+      "model": "smollm2-360m-instruct"
+    },
+    "first_visible_seconds": 0.20995654305443168,
+    "total_seconds": 0.7027187690837309
+  }
+]
