@@ -20,6 +20,7 @@
   --icon-pause: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 4h4.5v16H6zM13.5 4H18v16h-4.5z'/%3E%3C/svg%3E");
   --icon-retry: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4'/%3E%3C/svg%3E");
   --icon-trash: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12'/%3E%3C/svg%3E");
+  --icon-close: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M6 6l12 12M18 6 6 18'/%3E%3C/svg%3E");
   --icon-pencil: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4'/%3E%3C/svg%3E");
   color: var(--ink);
   background: var(--page);
@@ -1170,5 +1171,108 @@ textarea:read-only {
     order: 1;
     flex-basis: 100%;
     margin-right: 0;
+  }
+}
+
+/* Chat search: one full-width field with a leading icon and an inline clear button. */
+.chat-filter {
+  position: relative;
+}
+.chat-filter-icon {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  margin-top: -8px;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+.chat-filter input {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 40px 8px 36px;
+  border: 1px solid var(--sheet-line);
+  border-radius: 12px;
+  background: var(--sheet);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.chat-filter input::placeholder {
+  color: var(--muted);
+}
+.chat-filter input::-webkit-search-cancel-button {
+  appearance: none;
+}
+.chat-filter input:focus-visible {
+  outline: none;
+  border-color: var(--violet);
+  box-shadow: 0 0 0 4px #7c3aed1f;
+}
+.chat-filter-clear {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  margin-top: -14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  font-size: 0;
+  cursor: pointer;
+}
+.chat-filter-clear::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  background: currentColor;
+  mask: var(--icon-close) center / contain no-repeat;
+}
+.chat-filter-clear:hover {
+  background: var(--chip);
+  color: var(--ink);
+}
+.chat-filter-clear:disabled {
+  visibility: hidden;
+}
+.chat-filter-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 0 14px;
+}
+.chat-filter-feedback:not(:has(> :not([hidden]))) {
+  display: none;
+}
+.chat-filter-feedback p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.chat-filter-feedback .chip {
+  min-height: 32px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+}
+@media (max-width: 860px) {
+  /* 16px keeps iOS Safari from zooming into the field on focus. */
+  .chat-filter input {
+    min-height: 44px;
+    font-size: 16px;
   }
 }

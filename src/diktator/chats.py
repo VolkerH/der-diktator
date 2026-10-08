@@ -14,12 +14,14 @@ from threading import Lock
 
 from pydantic import BaseModel, ConfigDict, PrivateAttr, computed_field, field_validator
 from sqlalchemy import Engine, func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from diktator.db import session_scope
 from diktator.db.rows import ChatMemberRow, ChatRow, RecordingRow
 from diktator.durability import sync_directory
 from diktator.errors import ApiFailure
+from diktator.search import parse_query
 
 IDENTIFIER = re.compile(r"[0-9a-f]{32}")
 TITLE_LENGTH = 48
@@ -269,32 +271,40 @@ class ChatService:
     def _recording_model(row: RecordingRow) -> Recording:
         return Recording(id=row.id, created=row.created, duration_seconds=row.duration_seconds)
 
-    def list(self, actor_id: str) -> list[ChatSummary]:
-        """Most recently updated accessible chats first, ordered stably on ties."""
-        with session_scope(self.engine) as session:
-            count = (
-                select(func.count(RecordingRow.id))
-                .where(RecordingRow.chat_id == ChatRow.id)
-                .correlate(ChatRow)
-                .scalar_subquery()
-            )
-            rows = session.execute(
-                select(ChatRow, count)
-                .join(ChatMemberRow, ChatMemberRow.chat_id == ChatRow.id)
-                .where(ChatMemberRow.user_id == actor_id)
-                .order_by(ChatRow.updated.desc(), ChatRow.id)
-            )
-            return [
-                ChatSummary(
-                    id=row.id,
-                    title=title_for(row.text, row.custom_title),
-                    custom_title=row.custom_title,
-                    updated=row.updated,
-                    recording_count=recording_count,
-                    etag=chat_etag(row),
+    def list(self, actor_id: str, query: str | None = None) -> list[ChatSummary]:
+        """Search accessible current text/titles, preserving recency and stable ties."""
+        search = parse_query(query)
+        try:
+            with session_scope(self.engine) as session:
+                count = (
+                    select(func.count(RecordingRow.id))
+                    .where(RecordingRow.chat_id == ChatRow.id)
+                    .correlate(ChatRow)
+                    .scalar_subquery()
                 )
-                for row, recording_count in rows
-            ]
+                rows = session.execute(
+                    select(ChatRow, count)
+                    .join(ChatMemberRow, ChatMemberRow.chat_id == ChatRow.id)
+                    .where(ChatMemberRow.user_id == actor_id)
+                    .order_by(ChatRow.updated.desc(), ChatRow.id)
+                )
+                return [
+                    ChatSummary(
+                        id=row.id,
+                        title=title_for(row.text, row.custom_title),
+                        custom_title=row.custom_title,
+                        updated=row.updated,
+                        recording_count=recording_count,
+                        etag=chat_etag(row),
+                    )
+                    for row, recording_count in rows
+                    if search.matches(row.text, row.custom_title or "")
+                ]
+        except SQLAlchemyError as error:
+            log.exception("Chat listing failed")
+            raise ApiFailure(
+                "Saved chats could not be loaded. Try again.", "storage_error", 500
+            ) from error
 
     def create(self, actor_id: str) -> Chat:
         return self.create_with_id(actor_id, uuid.uuid4().hex)[0]

@@ -13,6 +13,7 @@ from fastapi import (
     Header,
     HTTPException,
     Path,
+    Query,
     Request,
     WebSocket,
     WebSocketDisconnect,
@@ -189,10 +190,19 @@ def create_app(
     @app.get(
         "/api/chats",
         description="List accessible chats with a server-issued opaque `etag` per entry. "
-        "Use that value in `If-Match` for conditional deletion without reading the full chat.",
+        "Use that value in `If-Match` for conditional deletion without reading the full chat. "
+        "Optional `q` filters words in custom names or full transcripts; matching rules and "
+        "limits are documented in docs/chat-api.md.",
+        responses=error_responses(422, 500),
     )
-    def list_chats(actor_id: Actor) -> list[ChatSummary]:
-        return store().list(actor_id)
+    def list_chats(
+        actor_id: Actor,
+        q: Annotated[
+            str | None,
+            Query(description="Optional words to match in custom names or full transcripts."),
+        ] = None,
+    ) -> list[ChatSummary]:
+        return store().list(actor_id, q)
 
     validator_headers = {
         "ETag": {

@@ -30,6 +30,23 @@ const copyVersionButton = /** @type {HTMLButtonElement} */ (
   document.getElementById("copy-version")
 );
 const liveMode = /** @type {HTMLInputElement} */ (document.getElementById("live-mode"));
+const searchInput = /** @type {HTMLInputElement} */ (document.getElementById("chat-filter-input"));
+const searchClear = /** @type {HTMLButtonElement} */ (document.getElementById("chat-filter-clear"));
+const searchRetry = /** @type {HTMLButtonElement} */ (document.getElementById("chat-filter-retry"));
+const searchState = /** @type {HTMLElement} */ (document.getElementById("chat-filter-state"));
+let searchQuery = "";
+let listGeneration = 0;
+/** @type {string | null} */
+let shownQuery = null;
+let listRetryable = true;
+let startupPending = true;
+let startupGeneration = 0;
+const STARTUP_ERROR = "Saved chats could not be loaded. Use Retry chat search in the chat list.";
+let listLoading = false;
+/** @type {string | null} */
+let listError = null;
+/** @type {ReturnType<typeof setTimeout> | undefined} */
+let searchTimer;
 const chatList = /** @type {HTMLElement} */ (document.getElementById("chat-list"));
 const chatTitle = /** @type {HTMLButtonElement} */ (document.getElementById("chat-title"));
 const titleDialog = /** @type {HTMLDialogElement} */ (document.getElementById("title-editor"));
@@ -276,8 +293,20 @@ function renderChats() {
       `${formatWhen(summary.updated)} · ${summary.recording_count} ${summary.recording_count === 1 ? "clip" : "clips"}`,
     ),
   );
-  if (!chat) items.unshift(chatItem(null, "New chat", "Not saved yet"));
+  if (!chat && !searchQuery.trim()) items.unshift(chatItem(null, "New chat", "Not saved yet"));
   chatList.replaceChildren(...items);
+  chatList.hidden = shownQuery !== searchQuery;
+  chatList.setAttribute("aria-busy", String(listLoading));
+  searchClear.disabled = !searchQuery;
+  searchRetry.hidden = listError === null || !listRetryable;
+  searchState.textContent =
+    listError ??
+    (listLoading
+      ? "Loading chats…"
+      : searchQuery.trim() && !items.length
+        ? "No matching chats."
+        : "");
+  searchState.hidden = !searchState.textContent;
 }
 
 /**
@@ -388,17 +417,19 @@ async function ensureChat() {
     .then((created) => {
       if (generation === navigationGeneration) {
         chat = created;
-        chats = [
-          {
-            id: created.id,
-            title: created.title,
-            custom_title: created.custom_title,
-            updated: created.updated,
-            recording_count: 0,
-            etag: created.etag ?? "",
-          },
-          ...chats.filter((item) => item.id !== created.id),
-        ];
+        if (!searchQuery.trim())
+          chats = [
+            {
+              id: created.id,
+              title: created.title,
+              custom_title: created.custom_title,
+              updated: created.updated,
+              recording_count: 0,
+              etag: created.etag ?? "",
+            },
+            ...chats.filter((item) => item.id !== created.id),
+          ];
+        else void refreshChats();
         renderChats();
       }
       return created;
@@ -409,17 +440,55 @@ async function ensureChat() {
   return await creating;
 }
 
+/** Search only affects the list; editor, selection and recording stay untouched. */
 async function refreshChats() {
+  clearTimeout(searchTimer);
   const generation = navigationGeneration;
+  const requestGeneration = ++listGeneration;
+  const query = searchQuery;
+  listLoading = shownQuery !== query;
+  listError = null;
+  listRetryable = true;
+  renderChats();
   try {
-    const latest = await chatApi.list();
-    if (generation !== navigationGeneration) return;
+    const latest = await chatApi.list(query);
+    if (generation !== navigationGeneration || requestGeneration !== listGeneration) return;
     chats = latest;
-  } catch {
-    // The list is refreshed again after the next save.
+    shownQuery = query;
+    if (errorMessage.textContent === STARTUP_ERROR) hideError();
+  } catch (error) {
+    if (generation !== navigationGeneration || requestGeneration !== listGeneration) return;
+    listError = error instanceof Error ? error.message : "Saved chats could not be loaded.";
+    listRetryable = !(error instanceof ApiRequestError && error.code === "invalid_search_query");
   }
+  if (generation !== navigationGeneration || requestGeneration !== listGeneration) return;
+  listLoading = false;
   renderChats();
 }
+
+/** @param {string} query @param {boolean} [immediate] */
+function changeSearch(query, immediate = false) {
+  searchQuery = query;
+  // Invalidate old responses when the user types, before the debounce fires.
+  listGeneration++;
+  clearTimeout(searchTimer);
+  listLoading = true;
+  listError = null;
+  renderChats();
+  if (immediate) void refreshChats();
+  else searchTimer = setTimeout(() => void refreshChats(), 200);
+}
+
+searchInput.addEventListener("input", () => changeSearch(searchInput.value));
+searchClear.addEventListener("click", () => {
+  searchInput.value = "";
+  changeSearch("", true);
+  searchInput.focus();
+});
+searchRetry.addEventListener("click", async () => {
+  await refreshChats();
+  await finishStartup();
+});
 
 /** @param {number} generation */
 async function writeText(generation) {
@@ -493,6 +562,8 @@ function scheduleSave() {
 
 /** @param {Chat | null} next */
 function setChat(next) {
+  const refreshPending = listLoading;
+  listGeneration++;
   navigationGeneration++;
   titleDialog.close();
   titleTarget = null;
@@ -514,6 +585,7 @@ function setChat(next) {
   renderChats();
   renderClips();
   updateControls();
+  if (refreshPending) void refreshChats();
 }
 
 function canLeaveChat() {
@@ -997,6 +1069,7 @@ scrim.addEventListener("click", closeDrawer);
 modelSettingsButton.addEventListener("click", () => modelDialog.showModal());
 modelSettingsClose.addEventListener("click", () => modelDialog.close());
 transcript.addEventListener("input", () => {
+  startupPending = false;
   scheduleSave();
   updateControls();
   renderChats();
@@ -1044,20 +1117,39 @@ window.addEventListener("keydown", (event) => {
 });
 window.addEventListener("resize", drawMeter);
 
-/** Reopen the most recently used chat, or start a new one. */
-async function loadChats() {
-  busy = true;
-  updateControls();
-  try {
-    chats = await chatApi.list();
-  } catch {
-    showError(new Error("Saved chats could not be loaded. Check that the app is running."));
-  } finally {
-    busy = false;
+/** Retry startup navigation only while the initial blank editor is untouched. */
+async function finishStartup() {
+  if (!startupPending) return;
+  if (
+    navigationGeneration !== startupGeneration ||
+    chat ||
+    textDirty ||
+    transcript.value ||
+    recording
+  ) {
+    startupPending = false;
+    return;
   }
+  if (listError) {
+    showError(new Error(STARTUP_ERROR));
+    return;
+  }
+  if (shownQuery !== "" || searchQuery !== "") return;
+  startupPending = false;
+  hideError();
   const latest = chats[0];
   if (latest) await openChat(latest.id);
-  else setChat(null);
+}
+
+/** Reopen the most recently used chat, or start a new one. */
+async function loadChats() {
+  startupGeneration = navigationGeneration;
+  busy = true;
+  updateControls();
+  await refreshChats();
+  busy = false;
+  updateControls();
+  await finishStartup();
   // Keep the splash up briefly so it does not flash on a fast load.
   setTimeout(
     () => splash.classList.toggle("done", true),

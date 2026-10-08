@@ -100,3 +100,19 @@ test("title API uses only the server's canonical name and preserves scoped valid
   assert.equal(calls[1][1].body, '{"custom_title":null}');
   assert.equal(saved.titleEtag, '"title-write"');
 });
+
+test("search requests encode the query and clearing issues the ordinary list request", async (t) => {
+  const urls = [];
+  t.mock.method(globalThis, "fetch", async (url) => {
+    urls.push(url);
+    return Response.json([]);
+  });
+  await chatApi.list("Straße & café?");
+  await chatApi.list("");
+  await chatApi.list();
+  assert.deepEqual(urls, [
+    "/api/chats?q=Stra%C3%9Fe%20%26%20caf%C3%A9%3F",
+    "/api/chats",
+    "/api/chats",
+  ]);
+});
