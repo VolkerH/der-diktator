@@ -91,14 +91,18 @@ def import_legacy(engine: Engine, root: Path) -> None:
 
 
 def sweep_orphans(engine: Engine, root: Path) -> None:
-    """Remove abandoned files only where import status proves they are unreferenced."""
+    """Remove abandoned files only in folders known to the database or import ledger."""
     removed = 0
     try:
         with session_scope(engine) as session:
             imported = set(session.scalars(select(LegacyImportRow.chat_id)))
+            managed = imported | set(session.scalars(select(ChatRow.id)))
             referenced = set(session.scalars(select(RecordingRow.audio_path)))
         for folder in root.iterdir():
             if not IDENTIFIER.fullmatch(folder.name) or folder.is_symlink() or not folder.is_dir():
+                continue
+            if folder.name not in managed:
+                log.warning("Preserving unknown chat folder %s; ownership is unconfirmed", folder)
                 continue
             if (folder / "chat.json").exists() and folder.name not in imported:
                 continue

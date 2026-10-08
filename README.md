@@ -270,7 +270,11 @@ chat. A deleted imported chat is never imported again. Unreadable chats are
 logged and left untouched. Missing WAVs retain their metadata and return
 `recording_not_found`; restoring the original WAV makes it available again.
 Startup removes abandoned temporary and unreferenced WAV files only where import
-status establishes that cleanup is safe.
+status establishes that cleanup is safe. Folders absent from both `chats` and
+`legacy_imports` are logged and preserved, including WAVs and temporary files.
+This also preserves leftovers when cleanup fails after deleting a newly created
+chat; without a durable deletion tombstone, startup cannot prove ownership.
+Deleted imported chats remain known through the import ledger and can be swept.
 
 Before a schema upgrade, startup writes a consistent database snapshot using
 `VACUUM INTO` under `backups/`. The initial schema also gets a pre-upgrade snapshot.

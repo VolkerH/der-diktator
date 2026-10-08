@@ -314,7 +314,7 @@ def test_commit_failure_removes_finalized_audio_and_rolls_back(service: ChatServ
     assert list((service.root / chat.id).iterdir()) == []
 
 
-def test_failed_delete_cleanup_is_logged_then_swept(
+def test_failed_new_chat_delete_cleanup_is_logged_and_preserved(
     service: ChatService, caplog: pytest.LogCaptureFixture
 ) -> None:
     chat = service.create(LOCAL_USER_ID)
@@ -323,6 +323,40 @@ def test_failed_delete_cleanup_is_logged_then_swept(
     with patch("diktator.chats.shutil.rmtree", side_effect=OSError("unlink failed")):
         service.delete(LOCAL_USER_ID, chat.id)
     assert "cleanup failed" in caplog.text
+    assert path.exists()
+    sweep_orphans(service.engine, service.root)
+    assert path.exists()
+    assert "Preserving unknown chat folder" in caplog.text
+    assert service.list(LOCAL_USER_ID) == []
+
+
+def test_unknown_wav_only_folder_survives_startup(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    folder = tmp_path / ("c" * 32)
+    folder.mkdir()
+    audio = folder / "recoverable.wav"
+    temporary = folder / "recoverable.wav.tmp"
+    audio.write_bytes(b"original audio")
+    temporary.write_bytes(b"partial audio")
+    engine = open_engine(tmp_path / DATABASE_NAME)
+    try:
+        upgrade_schema(engine, tmp_path)
+        import_legacy(engine, tmp_path)
+        sweep_orphans(engine, tmp_path)
+        assert audio.read_bytes() == b"original audio"
+        assert temporary.read_bytes() == b"partial audio"
+    finally:
+        engine.dispose()
+    assert "Preserving unknown chat folder" in caplog.text
+
+
+def test_failed_imported_chat_delete_cleanup_is_swept(service: ChatService) -> None:
+    chat = legacy_chat(service.root)
+    import_legacy(service.engine, service.root)
+    path = service.root / chat.id / f"{chat.recordings[0].id}.wav"
+    with patch("diktator.chats.shutil.rmtree", side_effect=OSError("unlink failed")):
+        service.delete(LOCAL_USER_ID, chat.id)
     assert path.exists()
     sweep_orphans(service.engine, service.root)
     assert not path.exists()
