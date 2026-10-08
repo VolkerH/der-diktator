@@ -9,6 +9,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, ValidationError
 
+from diktator.errors import ApiFailure
+
 IDENTIFIER = re.compile(r"[0-9a-f]{32}")
 TITLE_LENGTH = 48
 
@@ -40,8 +42,18 @@ class ChatSummary(BaseModel):
     recording_count: int
 
 
-class ChatNotFound(Exception):
-    """The chat or recording does not exist, or the identifier is malformed."""
+class ChatNotFound(ApiFailure):
+    """The chat does not exist, or its identifier is malformed."""
+
+    def __init__(self, chat_id: str) -> None:
+        super().__init__("This chat no longer exists.", "chat_not_found", 404)
+
+
+class RecordingNotFound(ApiFailure):
+    """A recording or its audio is absent within an existing chat."""
+
+    def __init__(self, recording_id: str) -> None:
+        super().__init__("This recording no longer exists.", "recording_not_found", 404)
 
 
 def title_for(text: str) -> str:
@@ -141,8 +153,8 @@ class ChatStore:
     def recording_audio(self, chat_id: str, recording_id: str) -> bytes:
         chat = self.get(chat_id)
         if not any(recording.id == recording_id for recording in chat.recordings):
-            raise ChatNotFound(recording_id)
+            raise RecordingNotFound(recording_id)
         try:
             return (self._folder(chat_id) / f"{recording_id}.wav").read_bytes()
         except OSError as error:
-            raise ChatNotFound(recording_id) from error
+            raise RecordingNotFound(recording_id) from error

@@ -1,3 +1,5 @@
+import { ApiRequestError } from "./errors.js";
+
 /** @typedef {{ id: string, created: string, duration_seconds: number }} Recording */
 /** @typedef {{ id: string, created: string, updated: string, text: string, recordings: Recording[] }} Chat */
 /** @typedef {{ id: string, title: string, updated: string, recording_count: number }} ChatSummary */
@@ -8,9 +10,7 @@ async function request(path, options = {}) {
   if (response.status === 204) return null;
   const result = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(
-      typeof result?.detail === "string" ? result.detail : "The request failed. Try again.",
-    );
+    throw new ApiRequestError(result, "The request failed. Try again.");
   }
   return result;
 }

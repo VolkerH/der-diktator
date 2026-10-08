@@ -7,15 +7,23 @@ from typing import Annotated
 
 import httpx
 from fastapi import FastAPI, HTTPException, Path, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from starlette.websockets import WebSocketState
 from websockets.exceptions import WebSocketException
 
 from diktator.audio import RecordingInfo, validate_recording
-from diktator.chats import Chat, ChatNotFound, ChatStore, ChatSummary, Recording
+from diktator.chats import Chat, ChatStore, ChatSummary, Recording
 from diktator.config import Settings
-from diktator.engine import EngineClient, EngineUnavailable, Transcription
+from diktator.engine import EngineClient, Transcription
+from diktator.errors import (
+    ENGINE_ERROR_STATUSES,
+    ApiFailure,
+    StreamErrorEvent,
+    engine_failure,
+    error_responses,
+    install_error_handlers,
+)
 from diktator.models import ModelId, ModelsStatus
 from diktator.streaming import (
     StreamConnector,
@@ -64,6 +72,7 @@ def create_app(
             yield
 
     app = FastAPI(title="Der Diktator", lifespan=lifespan)
+    install_error_handlers(app)
 
     @app.get("/", include_in_schema=False)
     async def index() -> Response:
@@ -83,56 +92,61 @@ def create_app(
             "max_duration_seconds": settings.max_duration_seconds,
         }
 
-    @app.exception_handler(EngineUnavailable)
-    async def engine_error(_request: Request, error: EngineUnavailable) -> Response:
-        return JSONResponse({"detail": str(error)}, status_code=error.status_code)
-
-    @app.get("/api/models")
+    @app.get("/api/models", responses=error_responses(*ENGINE_ERROR_STATUSES))
     async def models() -> ModelsStatus:
         return await engine.models()
 
-    @app.post("/api/models/{model}/download", status_code=202)
+    @app.post(
+        "/api/models/{model}/download",
+        status_code=202,
+        responses=error_responses(*ENGINE_ERROR_STATUSES),
+    )
     async def download_model(model: ModelId) -> ModelsStatus:
         return await engine.models(model, "download")
 
-    @app.post("/api/models/{model}/activate", status_code=202)
+    @app.post(
+        "/api/models/{model}/activate",
+        status_code=202,
+        responses=error_responses(*ENGINE_ERROR_STATUSES),
+    )
     async def activate_model(model: ModelId) -> ModelsStatus:
         return await engine.models(model, "activate")
 
-    @app.post("/api/models/{model}/delete", status_code=202)
+    @app.post(
+        "/api/models/{model}/delete",
+        status_code=202,
+        responses=error_responses(*ENGINE_ERROR_STATUSES),
+    )
     async def delete_model(model: ModelId) -> ModelsStatus:
         return await engine.models(model, "delete")
 
     async def read_recording(request: Request) -> tuple[bytes, RecordingInfo]:
         content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
         if content_type not in {"audio/wav", "audio/x-wav"}:
-            raise HTTPException(415, "Send the recording as PCM WAV audio.")
+            raise ApiFailure("Send the recording as PCM WAV audio.", "unsupported_audio", 415)
         audio = bytearray()
         async for chunk in request.stream():
             if len(audio) + len(chunk) > settings.max_audio_bytes:
-                raise HTTPException(413, "The recording is too large. Keep it under ten minutes.")
+                raise ApiFailure(
+                    f"The recording is too large. The limit is {settings.max_audio_bytes} bytes.",
+                    "audio_too_large",
+                    413,
+                )
             audio.extend(chunk)
         recording = bytes(audio)
         try:
             info = validate_recording(recording, max_duration_seconds=settings.max_duration_seconds)
         except ValueError as error:
-            raise HTTPException(400, str(error)) from error
+            raise ApiFailure(str(error), "invalid_audio", 400) from error
         return recording, info
 
     async def transcribe_audio(audio: bytes, model: ModelId) -> Transcription:
-        try:
-            return await engine.transcribe(audio, model)
-        except EngineUnavailable as error:
-            raise HTTPException(error.status_code, str(error)) from error
+        return await engine.transcribe(audio, model)
 
-    @app.post("/api/transcribe")
+    @app.post("/api/transcribe", responses=error_responses(400, 409, 413, 415, 422, 502, 503, 504))
     async def transcribe(request: Request, model: ModelId = "phonon-2") -> Transcription:
         recording, _info = await read_recording(request)
         return await transcribe_audio(recording, model)
-
-    @app.exception_handler(ChatNotFound)
-    async def chat_not_found(_request: Request, _error: ChatNotFound) -> Response:
-        return JSONResponse({"detail": "This chat no longer exists."}, status_code=404)
 
     @app.get("/api/chats")
     async def list_chats() -> list[ChatSummary]:
@@ -142,29 +156,36 @@ def create_app(
     async def create_chat() -> Chat:
         return store.create()
 
-    @app.get("/api/chats/{chat_id}")
+    @app.get("/api/chats/{chat_id}", responses=error_responses(404, 422))
     async def get_chat(chat_id: ChatId) -> Chat:
         return store.get(chat_id)
 
-    @app.put("/api/chats/{chat_id}/text")
+    @app.put("/api/chats/{chat_id}/text", responses=error_responses(404, 422))
     async def update_text(chat_id: ChatId, update: TextUpdate) -> Chat:
         return store.update_text(chat_id, update.text)
 
-    @app.delete("/api/chats/{chat_id}", status_code=204)
+    @app.delete("/api/chats/{chat_id}", status_code=204, responses=error_responses(404, 422))
     async def delete_chat(chat_id: ChatId) -> None:
         store.delete(chat_id)
 
-    @app.post("/api/chats/{chat_id}/recordings", status_code=201)
+    @app.post(
+        "/api/chats/{chat_id}/recordings",
+        status_code=201,
+        responses=error_responses(400, 404, 413, 415, 422),
+    )
     async def add_recording(chat_id: ChatId, request: Request) -> Recording:
         store.get(chat_id)
         audio, info = await read_recording(request)
         return store.add_recording(chat_id, audio, info.duration_seconds)
 
-    @app.get("/api/chats/{chat_id}/recordings/{recording_id}")
+    @app.get("/api/chats/{chat_id}/recordings/{recording_id}", responses=error_responses(404, 422))
     async def recording_audio(chat_id: ChatId, recording_id: ChatId) -> Response:
         return Response(store.recording_audio(chat_id, recording_id), media_type="audio/wav")
 
-    @app.post("/api/chats/{chat_id}/recordings/{recording_id}/transcribe")
+    @app.post(
+        "/api/chats/{chat_id}/recordings/{recording_id}/transcribe",
+        responses=error_responses(400, 404, 409, 413, 415, 422, 502, 503, 504),
+    )
     async def transcribe_recording(
         chat_id: ChatId, recording_id: ChatId, model: ModelId = "phonon-2"
     ) -> Transcription:
@@ -181,17 +202,25 @@ def create_app(
         except WebSocketDisconnect:
             pass
         except (OSError, TimeoutError, WebSocketException, StreamError, ValueError) as error:
-            message = (
-                str(error)
+            failure = (
+                error
                 if isinstance(error, StreamError)
-                else "Live transcription is unavailable. Stop recording and retry transcription."
+                else engine_failure(
+                    "engine_timeout"
+                    if isinstance(error, TimeoutError)
+                    else "engine_unavailable"
+                    if isinstance(error, (OSError, WebSocketException))
+                    else "engine_error"
+                )
             )
             if (
                 browser.client_state == WebSocketState.CONNECTED
                 and browser.application_state == WebSocketState.CONNECTED
             ):
                 with suppress(WebSocketDisconnect):
-                    await browser.send_json({"type": "error", "message": message})
+                    await browser.send_json(
+                        StreamErrorEvent(message=str(failure), code=failure.code).model_dump()
+                    )
         finally:
             if (
                 browser.client_state == WebSocketState.CONNECTED

@@ -4,14 +4,20 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 from websockets.exceptions import WebSocketException
 
 from diktator.audio import validate_recording
 from diktator.config import Settings
 from diktator.engine import Transcription
+from diktator.errors import (
+    ApiFailure,
+    StreamErrorEvent,
+    engine_failure,
+    error_responses,
+    install_error_handlers,
+)
 from diktator.inference.manager import ModelConflict, ModelManager
 from diktator.inference.store import ModelStore, exclusive_lock, models_directory
 from diktator.models import ModelId, ModelsStatus
@@ -36,10 +42,7 @@ def create_engine(manager: ModelManager | None = None) -> FastAPI:
                 await manager.close()
 
     app = FastAPI(title="Diktator model service", lifespan=lifespan)
-
-    @app.exception_handler(ModelConflict)
-    async def conflict(_request: Request, error: ModelConflict) -> JSONResponse:
-        return JSONResponse({"detail": str(error)}, status_code=409)
+    install_error_handlers(app)
 
     @app.get("/models")
     async def models() -> ModelsStatus:
@@ -51,40 +54,44 @@ def create_engine(manager: ModelManager | None = None) -> FastAPI:
         ready = any(model.state == "ready" for model in state.models)
         return {"status": "ok" if ready else "waiting", "model": state.active}
 
-    @app.post("/models/{model_id}/download", status_code=202)
+    @app.post("/models/{model_id}/download", status_code=202, responses=error_responses(409, 422))
     async def download(model_id: ModelId) -> ModelsStatus:
         manager.download(model_id)
         return manager.status()
 
-    @app.post("/models/{model_id}/activate", status_code=202)
+    @app.post("/models/{model_id}/activate", status_code=202, responses=error_responses(409, 422))
     async def activate(model_id: ModelId) -> ModelsStatus:
         manager.activate(model_id)
         return manager.status()
 
-    @app.post("/models/{model_id}/delete", status_code=202)
+    @app.post("/models/{model_id}/delete", status_code=202, responses=error_responses(409, 422))
     async def delete(model_id: ModelId) -> ModelsStatus:
         manager.delete(model_id)
         return manager.status()
 
-    @app.post("/transcribe")
+    @app.post("/transcribe", responses=error_responses(400, 409, 413, 422, 502))
     async def transcribe(request: Request, model: ModelId) -> Transcription:
         audio = bytearray()
         async for chunk in request.stream():
             audio.extend(chunk)
             if len(audio) > settings.max_audio_bytes:
-                raise HTTPException(413, "The recording is too large.")
+                raise ApiFailure(
+                    f"The recording is too large. The limit is {settings.max_audio_bytes} bytes.",
+                    "audio_too_large",
+                    413,
+                )
         try:
             validate_recording(bytes(audio), max_duration_seconds=settings.max_duration_seconds)
         except ValueError as error:
-            raise HTTPException(400, str(error)) from error
+            raise ApiFailure(str(error), "invalid_audio", 400) from error
         try:
             return Transcription(text=await manager.transcribe(model, bytes(audio)))
         except ModelConflict:
             raise
         except Exception as error:
             logger.exception("Transcription failed")
-            raise HTTPException(
-                502, "Transcription failed. The recording can be retried."
+            raise ApiFailure(
+                "Transcription failed. The recording can be retried.", "engine_error", 502
             ) from error
 
     @app.websocket("/v1/audio/stream")
@@ -98,7 +105,7 @@ def create_engine(manager: ModelManager | None = None) -> FastAPI:
                 # The web service already sent this one fixed configuration.
                 config = await browser.receive_json()
                 if config != {"sample_rate": 16000, "format": "pcm_s16le"}:
-                    raise StreamError("Unsupported live audio format.")
+                    raise StreamError("Unsupported live audio format.", "unsupported_audio", 415)
                 await upstream.send('{"sample_rate":16000,"format":"pcm_s16le"}')
                 await relay_stream(browser, upstream, settings)
         except WebSocketDisconnect:
@@ -111,13 +118,21 @@ def create_engine(manager: ModelManager | None = None) -> FastAPI:
             ValueError,
             WebSocketException,
         ) as error:
-            message = (
-                str(error)
+            failure = (
+                error
                 if isinstance(error, (ModelConflict, StreamError))
-                else "Live engine disconnected."
+                else engine_failure(
+                    "engine_timeout"
+                    if isinstance(error, TimeoutError)
+                    else "engine_unavailable"
+                    if isinstance(error, (OSError, WebSocketException))
+                    else "engine_error"
+                )
             )
             with suppress(WebSocketDisconnect, RuntimeError):
-                await browser.send_json({"type": "error", "message": message})
+                await browser.send_json(
+                    StreamErrorEvent(message=str(failure), code=failure.code).model_dump()
+                )
         finally:
             if browser.application_state == WebSocketState.CONNECTED:
                 with suppress(WebSocketDisconnect, RuntimeError):

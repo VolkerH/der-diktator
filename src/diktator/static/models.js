@@ -1,3 +1,5 @@
+import { ApiRequestError } from "./errors.js";
+
 /** @typedef {{ id: string, name: string, languages: string, language_labels?: string[], download_mb: number, live: boolean, installed: boolean, state: string, message: string }} ModelStatus */
 /** @typedef {{ active: string | null, preferred?: string, busy: boolean, models: ModelStatus[] }} ModelsStatus */
 
@@ -231,8 +233,8 @@ export function modelPicker(onChange) {
     const requestGeneration = generation;
     try {
       const response = await fetch("/api/models", { signal: AbortSignal.timeout(5000) });
-      if (!response.ok) throw new Error("Model service unavailable.");
-      const result = await response.json();
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new ApiRequestError(result, "Model service unavailable.");
       if (requestGeneration === generation) accept(result);
     } catch {
       if (requestGeneration === generation) {
@@ -255,8 +257,8 @@ export function modelPicker(onChange) {
         method: "POST",
         signal: AbortSignal.timeout(10_000),
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.detail || "The model operation failed. Retry.");
+      const result = await response.json().catch(() => null);
+      if (!response.ok) throw new ApiRequestError(result, "The model operation failed. Retry.");
       accept(result);
     } catch (error) {
       errorMessage.textContent =
