@@ -71,7 +71,15 @@ class EngineClient:
                 envelope = ApiError.model_validate(payload)
             except ValidationError as error:
                 raise engine_failure("engine_error") from error
-            raise engine_failure(envelope.code, response.status_code)
+            failure = engine_failure(envelope.code, response.status_code)
+            # Only transcription accepts audio; these codes cannot describe a model request.
+            if audio is None and failure.code in {
+                "invalid_audio",
+                "audio_too_large",
+                "unsupported_audio",
+            }:
+                failure = engine_failure("engine_error")
+            raise failure
         if response.status_code == 409:
             raise engine_failure("model_conflict")
         if response.status_code == 503:

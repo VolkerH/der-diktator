@@ -67,8 +67,10 @@ user can explicitly retry the retained recording.
 
 ## Model route responses
 
-The web model listing (`GET /api/models`) declares 502, 503 and 504 for invalid engine responses,
-unavailable engine connections and timeouts. Model actions (`POST /api/models/{model}/download`,
-`activate` and `delete`) additionally declare 409 for refused admission and 422 for invalid model IDs.
-Audio validation and upload-limit statuses belong to audio routes. The engine model listing has no
-operational error response declaration; its model actions declare 409 and 422.
+The web model listing (`GET /api/models`) and model actions
+(`POST /api/models/{model}/download`, `activate` and `delete`) declare 409 for engine conflicts,
+422 for rejected request fields, 502 for invalid engine responses, 503 for unavailable connections
+and 504 for timeouts. This includes coded upstream conflicts and validation errors on listing.
+Audio validation and upload-limit codes are invalid for these routes and map to sanitized
+502 `engine_error`; transcription routes retain their audio-specific errors. The engine model listing
+has no operational error response declaration; its model actions declare 409 and 422.

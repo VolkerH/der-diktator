@@ -762,7 +762,20 @@ async def test_engine_http_classifies_model_admission(tmp_path: Path, code: str)
         "/api/models/phonon-2/delete",
     ],
 )
-@pytest.mark.parametrize("failure", ["timeout", "transport", "invalid", "unknown", "busy"])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "timeout",
+        "transport",
+        "invalid",
+        "unknown",
+        "busy",
+        "validation",
+        "invalid_audio",
+        "audio_too_large",
+        "unsupported_audio",
+    ],
+)
 async def test_model_proxy_uses_the_same_failure_mapping(path: str, failure: str) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if failure == "timeout":
@@ -771,6 +784,15 @@ async def test_model_proxy_uses_the_same_failure_mapping(path: str, failure: str
             raise httpx.ConnectError("private", request=request)
         if failure == "invalid":
             return httpx.Response(200, json=[])
+        if failure in {"validation", "invalid_audio", "audio_too_large", "unsupported_audio"}:
+            code = "validation_error" if failure == "validation" else failure
+            status = {
+                "validation_error": 422,
+                "invalid_audio": 400,
+                "audio_too_large": 413,
+                "unsupported_audio": 415,
+            }[code]
+            return httpx.Response(status, json={"detail": "private", "code": code})
         return httpx.Response(
             409,
             json={"detail": "private", "code": "model_busy" if failure == "busy" else "unknown"},
@@ -784,6 +806,10 @@ async def test_model_proxy_uses_the_same_failure_mapping(path: str, failure: str
         "invalid": (502, "engine_error"),
         "unknown": (502, "engine_error"),
         "busy": (409, "model_busy"),
+        "validation": (422, "validation_error"),
+        "invalid_audio": (502, "engine_error"),
+        "audio_too_large": (502, "engine_error"),
+        "unsupported_audio": (502, "engine_error"),
     }[failure]
     assert response.status_code == status
     assert response.json()["code"] == code

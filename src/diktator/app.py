@@ -91,7 +91,7 @@ def create_app(
             "max_duration_seconds": settings.max_duration_seconds,
         }
 
-    @app.get("/api/models", responses=error_responses(502, 503, 504))
+    @app.get("/api/models", responses=error_responses(409, 422, 502, 503, 504))
     async def models() -> ModelsStatus:
         return await engine.models()
 

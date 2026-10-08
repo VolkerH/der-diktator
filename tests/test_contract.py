@@ -44,6 +44,8 @@ def test_openapi_matches_snapshot_and_all_errors_use_api_error(
         assert {"415", "503", "504"} <= statuses
         assert set(schema["paths"]["/api/models"]["get"]["responses"]) == {
             "200",
+            "409",
+            "422",
             "502",
             "503",
             "504",
