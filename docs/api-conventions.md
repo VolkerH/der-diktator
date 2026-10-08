@@ -157,7 +157,7 @@ implementation, not choices for individual clients.
 ## Chat recency
 
 Creation sets `created` and `updated` to the same UTC timestamp. Text replacement
-sets `updated` during its database mutation. Uploads update recency after audio
+sets `updated` during its database mutation; saving identical text changes nothing. Uploads update recency after audio
 finalization to the later of the database mutation time and the stored `updated`,
 so a text save during finalization cannot be overwritten by an earlier timestamp.
 The recording keeps its upload-start `created` timestamp. Reading and listing
