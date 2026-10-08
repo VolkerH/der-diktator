@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import httpx
 import pytest
@@ -120,6 +121,7 @@ async def test_invalid_audio_never_reaches_the_engine(
             "/api/transcribe", content=body, headers={"Content-Type": content_type}
         )
     assert response.status_code == status
+    assert response.json()["code"] == ("unsupported_audio" if status == 415 else "invalid_audio")
     assert calls == []
 
 
@@ -141,6 +143,9 @@ async def test_upload_limit_applies_to_streamed_bodies_without_content_length() 
             headers={"Content-Type": "audio/wav"},
         )
     assert response.status_code == 413
+    assert response.json()["code"] == "audio_too_large"
+    assert "50 bytes" in response.json()["detail"]
+    assert "ten minutes" not in response.text
     assert calls == []
 
 
@@ -159,6 +164,9 @@ async def test_engine_failures_have_actionable_http_statuses(
     expected_status = 504 if exception is httpx.ReadTimeout else 503
     assert response.status_code == expected_status
     assert isinstance(response.json()["detail"], str)
+    assert response.json()["code"] == (
+        "engine_timeout" if expected_status == 504 else "engine_unavailable"
+    )
 
 
 @pytest.mark.parametrize("payload", [{"text": 42}, {"unexpected": "text"}, []])
@@ -168,6 +176,7 @@ async def test_malformed_engine_transcription_is_rejected(payload: object) -> No
             "/api/transcribe", content=make_wav(), headers={"Content-Type": "audio/wav"}
         )
     assert response.status_code == 502
+    assert response.json()["code"] == "engine_error"
 
 
 @pytest.mark.parametrize(
@@ -184,3 +193,120 @@ async def test_upstream_error_does_not_leak_internal_response(
         )
     assert response.status_code == expected_status
     assert "private engine details" not in response.text
+    assert response.json()["code"] == (
+        "engine_unavailable" if expected_status == 503 else "engine_error"
+    )
+
+
+@pytest.mark.parametrize(
+    ("code", "status"),
+    [
+        ("model_busy", 409),
+        ("model_loading", 409),
+        ("model_deleting", 409),
+        ("model_not_active", 409),
+        ("model_not_installed", 409),
+        ("live_transcription_unsupported", 409),
+        ("model_conflict", 409),
+        ("audio_too_large", 413),
+        ("unsupported_audio", 415),
+        ("invalid_audio", 400),
+        ("validation_error", 422),
+        ("engine_unavailable", 503),
+        ("engine_timeout", 504),
+        ("engine_error", 502),
+    ],
+)
+async def test_engine_error_codes_survive_both_transcription_routes(
+    tmp_path: Path, code: str, status: int
+) -> None:
+    async with client_for(
+        lambda _: httpx.Response(
+            status, json={"detail": "private engine diagnostics", "code": code}
+        ),
+        Settings(data_directory=tmp_path),
+    ) as client:
+        chat_id = (await client.post("/api/chats")).json()["id"]
+        recording_id = (
+            await client.post(
+                f"/api/chats/{chat_id}/recordings",
+                content=make_wav(),
+                headers={"Content-Type": "audio/wav"},
+            )
+        ).json()["id"]
+        for path in (
+            "/api/transcribe",
+            f"/api/chats/{chat_id}/recordings/{recording_id}/transcribe",
+        ):
+            response = await client.post(
+                path, content=make_wav(), headers={"Content-Type": "audio/wav"}
+            )
+            assert response.status_code == status
+            assert response.json()["code"] == code
+            assert isinstance(response.json()["detail"], str)
+            assert "private" not in response.text
+
+
+@pytest.mark.parametrize(
+    ("status", "payload"),
+    [
+        (409, {"code": "private_code", "detail": "private"}),
+        (409, {"code": "engine_timeout", "detail": "private"}),
+        (409, {"code": ["model_busy"], "detail": "private"}),
+        (409, {"code": "model_busy", "detail": ["private"]}),
+        (503, {"code": "private_code", "detail": "private"}),
+    ],
+)
+async def test_unknown_or_invalid_engine_envelope_is_a_sanitized_bad_gateway(
+    status: int, payload: object
+) -> None:
+    async with client_for(lambda _: httpx.Response(status, json=payload)) as client:
+        response = await client.post(
+            "/api/transcribe", content=make_wav(), headers={"Content-Type": "audio/wav"}
+        )
+    assert response.status_code == 502
+    assert response.json()["code"] == "engine_error"
+    assert "private" not in response.text
+
+
+@pytest.mark.parametrize("payload", [None, [], {"detail": "private model diagnostics"}])
+async def test_legacy_engine_409_is_a_model_conflict(payload: object) -> None:
+    async with client_for(lambda _: httpx.Response(409, json=payload)) as client:
+        response = await client.post(
+            "/api/transcribe", content=make_wav(), headers={"Content-Type": "audio/wav"}
+        )
+    assert response.status_code == 409
+    assert response.json()["code"] == "model_conflict"
+    assert "private" not in response.text
+
+
+async def test_validation_context_has_field_diagnostics_without_submitted_values(
+    tmp_path: Path,
+) -> None:
+    async with client_for(
+        healthy_engine, Settings(data_directory=tmp_path, max_text_characters=3)
+    ) as client:
+        chat_id = (await client.post("/api/chats")).json()["id"]
+        response = await client.put(
+            f"/api/chats/{chat_id}/text", json={"text": "private transcript"}
+        )
+    assert response.status_code == 422
+    payload = response.json()
+    assert isinstance(payload["detail"], str)
+    assert payload["code"] == "validation_error"
+    assert payload["context"]["errors"][0]["loc"] == ["body", "text"]
+    assert "private transcript" not in response.text
+    assert "input" not in payload["context"]["errors"][0]
+
+
+async def test_routing_and_asset_errors_use_the_envelope_and_preserve_headers() -> None:
+    async with client_for(healthy_engine) as client:
+        for path in ("/missing", "/assets/missing.js"):
+            response = await client.get(path)
+            assert response.status_code == 404
+            assert response.json()["code"] == "not_found"
+            assert isinstance(response.json()["detail"], str)
+        response = await client.put("/api/health")
+        assert response.status_code == 405
+        assert response.json()["code"] == "method_not_allowed"
+        assert "GET" in response.headers["allow"]

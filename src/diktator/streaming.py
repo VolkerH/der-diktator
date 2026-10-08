@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Protocol
@@ -9,9 +10,13 @@ from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import WebSocket, WebSocketDisconnect
 from websockets.asyncio.client import connect
+from websockets.exceptions import WebSocketException
 
 from diktator.config import Settings
+from diktator.errors import ApiFailure, StreamErrorEvent, engine_failure
 from diktator.models import ModelId
+
+logger = logging.getLogger(__name__)
 
 
 class EngineStream(Protocol):
@@ -25,8 +30,24 @@ class EngineStream(Protocol):
 StreamConnector = Callable[[str], AbstractAsyncContextManager[EngineStream]]
 
 
-class StreamError(Exception):
+class StreamError(ApiFailure):
     """A refused audio frame or malformed engine response."""
+
+    def __init__(self, message: str, code: str = "engine_error", status_code: int = 502) -> None:
+        # Retain the HTTP classification for shared failures. StreamErrorEvent sends
+        # only message/code; no HTTP status is sent after the WebSocket is accepted.
+        super().__init__(message, code, status_code)
+
+
+def stream_failure(error: Exception) -> ApiFailure:
+    """Keep local coded failures; sanitize transport and protocol diagnostics."""
+    if isinstance(error, ApiFailure):
+        return error
+    if isinstance(error, TimeoutError):
+        return engine_failure("engine_timeout")
+    if isinstance(error, (OSError, WebSocketException)):
+        return engine_failure("engine_unavailable")
+    return engine_failure("engine_error")
 
 
 def stream_url(engine_url: str, model: ModelId | None = None) -> str:
@@ -70,18 +91,28 @@ async def relay_stream(browser: WebSocket, engine: EngineStream, settings: Setti
             audio = frame.get("bytes")
             if audio is not None:
                 if len(audio) > settings.max_stream_frame_bytes:
-                    raise StreamError("An audio frame was too large. Stop recording and retry.")
+                    raise StreamError(
+                        "An audio frame was too large. Stop recording and retry.",
+                        "audio_too_large",
+                        413,
+                    )
                 received_bytes += len(audio)
                 if received_bytes > max_bytes:
-                    raise StreamError("The recording exceeds the allowed duration limit.")
+                    raise StreamError(
+                        "The recording exceeds the allowed duration limit.", "invalid_audio", 400
+                    )
                 await engine.send(audio)
                 continue
             try:
                 control = json.loads(frame.get("text") or "")
             except ValueError as error:
-                raise StreamError("Invalid live transcription control message.") from error
+                raise StreamError(
+                    "Invalid live transcription control message.", "validation_error", 422
+                ) from error
             if control != {"type": "end"}:
-                raise StreamError("Only an end message is accepted during recording.")
+                raise StreamError(
+                    "Only an end message is accepted during recording.", "validation_error", 422
+                )
             await engine.send(json.dumps(control))
             return
 
@@ -102,6 +133,12 @@ async def relay_stream(browser: WebSocket, engine: EngineStream, settings: Setti
             field = "message" if event["type"] == "error" else "text"
             if not isinstance(event.get(field), str):
                 raise StreamError("The engine returned an invalid live transcript.")
+            if event["type"] == "error":
+                logger.warning(
+                    "Upstream live error (code=%r): %r", event.get("code"), event["message"]
+                )
+                failure = engine_failure(event.get("code"))
+                event = StreamErrorEvent(message=str(failure), code=failure.code).model_dump()
             await browser.send_json(event)
             if event["type"] in {"done", "error"}:
                 return

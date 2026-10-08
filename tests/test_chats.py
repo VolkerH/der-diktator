@@ -135,3 +135,49 @@ def test_legacy_folder_with_other_files_is_kept(tmp_path: Path) -> None:
     (tmp_path / ".phonon" / "notes.txt").write_text("keep me")
     assert migrate_chats(legacy, tmp_path / "data" / "chats")
     assert (tmp_path / ".phonon" / "notes.txt").read_text() == "keep me"
+
+
+async def test_missing_chat_and_recording_have_distinct_errors_and_restored_audio_works(
+    tmp_path: Path,
+) -> None:
+    missing = "0" * 32
+    async with client_for(transcribing_engine, Settings(data_directory=tmp_path)) as client:
+        for suffix in ("", "/transcribe"):
+            response = await client.request(
+                "POST" if suffix else "GET", f"/api/chats/{missing}/recordings/{missing}{suffix}"
+            )
+            assert response.status_code == 404
+            assert response.json() == {
+                "detail": "This chat no longer exists.",
+                "code": "chat_not_found",
+            }
+        chat_id = (await client.post("/api/chats")).json()["id"]
+        for suffix in ("", "/transcribe"):
+            response = await client.request(
+                "POST" if suffix else "GET", f"/api/chats/{chat_id}/recordings/{missing}{suffix}"
+            )
+            assert response.status_code == 404
+            assert response.json() == {
+                "detail": "This recording no longer exists.",
+                "code": "recording_not_found",
+            }
+        recording_id = (
+            await client.post(
+                f"/api/chats/{chat_id}/recordings",
+                content=make_wav(),
+                headers={"Content-Type": "audio/wav"},
+            )
+        ).json()["id"]
+        audio_path = tmp_path / chat_id / f"{recording_id}.wav"
+        audio_path.unlink()
+        for suffix in ("", "/transcribe"):
+            response = await client.request(
+                "POST" if suffix else "GET",
+                f"/api/chats/{chat_id}/recordings/{recording_id}{suffix}",
+            )
+            assert response.status_code == 404
+            assert response.json()["code"] == "recording_not_found"
+        audio_path.write_bytes(make_wav())
+        assert (
+            await client.get(f"/api/chats/{chat_id}/recordings/{recording_id}")
+        ).content == make_wav()

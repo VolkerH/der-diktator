@@ -1,0 +1,30 @@
+{
+  "description": "Terminal live failure. Clients retain captured audio for an explicit retry.",
+  "properties": {
+    "type": {
+      "const": "error",
+      "default": "error",
+      "title": "Type",
+      "type": "string"
+    },
+    "message": {
+      "title": "Message",
+      "type": "string"
+    },
+    "code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Code"
+    }
+  },
+  "required": ["message"],
+  "title": "StreamErrorEvent",
+  "type": "object"
+}

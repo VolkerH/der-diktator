@@ -9,6 +9,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, ValidationError
 
+from diktator.errors import ApiFailure
+
 IDENTIFIER = re.compile(r"[0-9a-f]{32}")
 TITLE_LENGTH = 48
 
@@ -40,8 +42,18 @@ class ChatSummary(BaseModel):
     recording_count: int
 
 
-class ChatNotFound(Exception):
-    """The chat or recording does not exist, or the identifier is malformed."""
+class ChatNotFound(ApiFailure):
+    """The chat does not exist, or its identifier is malformed."""
+
+    def __init__(self) -> None:
+        super().__init__("This chat no longer exists.", "chat_not_found", 404)
+
+
+class RecordingNotFound(ApiFailure):
+    """A recording or its audio is absent within an existing chat."""
+
+    def __init__(self) -> None:
+        super().__init__("This recording no longer exists.", "recording_not_found", 404)
 
 
 def title_for(text: str) -> str:
@@ -72,7 +84,7 @@ class ChatStore:
 
     def _folder(self, chat_id: str) -> Path:
         if not IDENTIFIER.fullmatch(chat_id):
-            raise ChatNotFound(chat_id)
+            raise ChatNotFound()
         return self.root / chat_id
 
     def _save(self, chat: Chat) -> None:
@@ -112,7 +124,7 @@ class ChatStore:
         try:
             return Chat.model_validate_json((self._folder(chat_id) / "chat.json").read_bytes())
         except (OSError, ValidationError) as error:
-            raise ChatNotFound(chat_id) from error
+            raise ChatNotFound() from error
 
     def update_text(self, chat_id: str, text: str) -> Chat:
         chat = self.get(chat_id)
@@ -124,7 +136,7 @@ class ChatStore:
     def delete(self, chat_id: str) -> None:
         folder = self._folder(chat_id)
         if not (folder / "chat.json").is_file():
-            raise ChatNotFound(chat_id)
+            raise ChatNotFound()
         shutil.rmtree(folder)
 
     def add_recording(self, chat_id: str, audio: bytes, duration_seconds: float) -> Recording:
@@ -141,8 +153,8 @@ class ChatStore:
     def recording_audio(self, chat_id: str, recording_id: str) -> bytes:
         chat = self.get(chat_id)
         if not any(recording.id == recording_id for recording in chat.recordings):
-            raise ChatNotFound(recording_id)
+            raise RecordingNotFound()
         try:
             return (self._folder(chat_id) / f"{recording_id}.wav").read_bytes()
         except OSError as error:
-            raise ChatNotFound(recording_id) from error
+            raise RecordingNotFound() from error

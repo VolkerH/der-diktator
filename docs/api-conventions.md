@@ -1,7 +1,8 @@
 # API conventions
 
-Status: initial design contract from [ADR 0002](adr/0002-api-conventions.md), not a description of
-implemented behavior. Each feature documents and tests adoption, compatibility and its additions.
+Status: shared design contract from [ADR 0002](adr/0002-api-conventions.md). The existing-error
+envelope and live error codes are implemented; conditional writes and safe-create retries below
+remain design contracts. Each feature documents and tests adoption, compatibility and its additions.
 Browser, TUI and other clients share this contract; responsibilities follow [AGENTS.md](../AGENTS.md).
 
 ## Schemas and errors
@@ -23,7 +24,8 @@ Clients use status/code, not message text. Map FastAPI validation and HTTP error
 validation details belong in context, not an array-valued `detail`. Keep context free of inaccessible
 information and internal diagnostics. Clients must also tolerate legacy/intermediary error formats.
 
-Adopt codes for existing errors first. This registry specifies target mappings, not current codes:
+The existing-error codes below are implemented. `revision_conflict` and `idempotency_conflict`
+remain reserved for conditional writes and safe retries; this error-contract change adds neither:
 
 | Code                                       | HTTP | Meaning / client action                                                           |
 | ------------------------------------------ | ---- | --------------------------------------------------------------------------------- |
@@ -47,17 +49,31 @@ Adopt codes for existing errors first. This registry specifies target mappings, 
 For authenticated chat access, missing and inaccessible resources have the same public 404 status
 and body, without distinguishing context. Apply this to chat-scoped audio, history and subscriptions
 as well: a recording request for a missing or inaccessible chat returns `chat_not_found`, and
-`recording_not_found` only applies within an accessible chat. Today both cases return the chat
-message through `ChatNotFound`. A viewer's forbidden write to an otherwise visible chat is a separate
-authorization case.
+`recording_not_found` only applies within an accessible chat. Check chat access before recording
+access. A viewer's forbidden write to an otherwise visible chat is a separate authorization case.
 
-The internal engine API adopts the same envelope with structured codes. The web application's
-`EngineClient` validates and maps known codes into this public registry; it does not parse messages or
-label every 409 `model_busy`. During migration, a code-less engine 409 maps to `model_conflict`.
-Transport/unavailable, timeout and invalid-response failures map to 503/504/502 respectively. Unknown
-upstream failures become a sanitized `engine_error`; they are not passed through unchecked.
-`EngineUnavailable` currently covers several of these cases, so its class name alone cannot select a
-code. Register further feature errors with their statuses and recovery guidance.
+The internal engine API uses the same envelope and code registry. Registered codes must match their
+HTTP status. Keep upstream diagnostics in server logs; use authored public messages at the client
+boundary. Register further feature errors with their statuses and recovery guidance. Implemented
+route behavior and compatibility details are documented in [API errors](api-errors.md).
+
+### Terminal live errors
+
+Finite audio streams use a terminal error event with a human-readable string `message` and an
+optional `code` for compatibility with older peers:
+
+```json
+{
+  "type": "error",
+  "message": "The model is loading. Wait for it to become ready.",
+  "code": "model_loading"
+}
+```
+
+The typed schema is published in [schemas/stream-error.json](schemas/stream-error.json). Only `done`
+means successful completion. An error or disconnect does not confirm native inference cancellation.
+Clients retain captured audio through finalization and warn on live failure so the user can retry
+explicitly. See [API errors](api-errors.md) for the existing routes and transport behavior.
 
 ## Conditional writes
 
