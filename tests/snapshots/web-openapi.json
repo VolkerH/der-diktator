@@ -965,12 +965,6 @@
                 "schema": {
                   "type": "string"
                 }
-              },
-              "Chat-Revision": {
-                "description": "Parent snapshot revision for ordering title observations; not a complete Chat acknowledgement or a conditional-write validator.",
-                "schema": {
-                  "type": "integer"
-                }
               }
             }
           },

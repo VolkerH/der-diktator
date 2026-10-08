@@ -79,7 +79,7 @@ async def test_manual_titles_survive_text_audio_and_restart_then_reset(tmp_path:
             key: reset.json()[key] for key in ("custom_title", "title_revision")
         }
         assert title.headers["etag"] == reset.headers["title-etag"]
-        assert int(title.headers["chat-revision"]) == reset.json()["revision"]
+        assert "chat-revision" not in title.headers
 
 
 @pytest.mark.parametrize(

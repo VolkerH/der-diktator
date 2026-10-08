@@ -1562,7 +1562,7 @@ test("successful title save restores focus after a delayed sidebar refresh", asy
   await app.element("chat-title").emit("click");
   await submitTitle(app, "Renamed");
   assert.equal(app.element("title-editor").open, false);
-  assert.equal(app.element("chat-title").disabled, true);
+  assert.equal(app.element("chat-title").disabled, false);
   finishRefresh();
   await settle();
   assert.equal(app.element("chat-title").disabled, false);
@@ -1590,4 +1590,26 @@ test("a failed rename after cancellation reports its error outside the closed di
   assert.match(app.element("error").textContent, /Network unavailable/);
   assert.equal(app.element("error").hidden, false);
   assert.equal(app.element("chat-title").textContent, "Original");
+});
+
+test("a dismissed slow rename preserves focus moved into the transcript", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  const fetch = globalThis.fetch;
+  let finishRename;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url).endsWith("/title") && options?.method === "PUT") {
+      await new Promise((resolve) => {
+        finishRename = resolve;
+      });
+    }
+    return fetch(url, options);
+  });
+  await app.element("chat-title").emit("click");
+  await submitTitle(app, "Renamed");
+  await app.element("title-cancel").emit("click");
+  app.element("transcript").focus();
+  finishRename();
+  await settle();
+  assert.equal(app.element("chat-title").textContent, "Renamed");
+  assert.equal(globalThis.document.activeElement, app.element("transcript"));
 });

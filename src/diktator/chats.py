@@ -66,7 +66,7 @@ class Chat(BaseModel):
     @property
     def title_etag(self) -> str:
         """Validate writable title metadata independently of transcript edits."""
-        return f'"title-{self.id}-{self._incarnation}-{self.title_revision}"'
+        return title_etag(self.id, self._incarnation, self.title_revision)
 
 
 class ChatTitle(BaseModel):
@@ -144,9 +144,9 @@ def text_etag(row: ChatRow) -> str:
     return f'"text-{row.id}-{row.incarnation}-{row.text_revision}"'
 
 
-def title_etag(row: ChatRow) -> str:
-    """Compute the independently writable title validator without loading recordings."""
-    return f'"title-{row.id}-{row.incarnation}-{row.title_revision}"'
+def title_etag(chat_id: str, incarnation: str, revision: int) -> str:
+    """Compute a title validator from either a row or a public snapshot."""
+    return f'"title-{chat_id}-{incarnation}-{revision}"'
 
 
 class ChatNotFound(ApiFailure):
@@ -340,7 +340,7 @@ class ChatService:
         custom_title = TitleUpdate(custom_title=custom_title).custom_title
         with session_scope(self.engine, write=True) as session:
             row = self._chat(session, actor_id, chat_id)
-            check_precondition(if_match, title_etag(row))
+            check_precondition(if_match, title_etag(row.id, row.incarnation, row.title_revision))
             if row.custom_title != custom_title:
                 row.custom_title = custom_title
                 row.title_revision += 1

@@ -172,8 +172,7 @@ function updateControls() {
   const words = wordCount(transcript.value);
   count.textContent = `${words} ${words === 1 ? "word" : "words"}`;
   chatTitle.textContent = chat?.title ?? "New chat";
-  chatTitle.setAttribute("aria-label", `Rename “${chatTitle.textContent}”`);
-  chatTitle.disabled = active || titleSaving;
+  chatTitle.disabled = active;
   stage.classList.toggle("recording", recording);
   stage.classList.toggle("busy", busy && !recording);
   sidebar.classList.toggle("locked", active);
@@ -726,7 +725,6 @@ async function commitTitle(customTitle) {
     titleSave.disabled = false;
     titleReset.disabled = !chat?.custom_title;
     updateControls();
-    if (!titleDialog.open && editing.generation === navigationGeneration) chatTitle.focus();
   }
 }
 

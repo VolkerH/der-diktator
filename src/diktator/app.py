@@ -300,11 +300,6 @@ def create_app(
             200: {
                 "headers": {
                     "ETag": validator_headers["Title-ETag"],
-                    "Chat-Revision": {
-                        "description": "Parent snapshot revision for ordering title observations; "
-                        "not a complete Chat acknowledgement or a conditional-write validator.",
-                        "schema": {"type": "integer"},
-                    },
                 }
             },
         },
@@ -312,7 +307,6 @@ def create_app(
     def get_title(chat_id: ChatId, actor_id: Actor, response: Response) -> ChatTitle:
         chat = store().get(actor_id, chat_id)
         response.headers["ETag"] = chat.title_etag
-        response.headers["Chat-Revision"] = str(chat.revision)
         return ChatTitle(custom_title=chat.custom_title, title_revision=chat.title_revision)
 
     @app.put(

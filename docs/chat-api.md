@@ -101,7 +101,7 @@ is shared among members. Existing chats start with no override.
 The revision starts at 1 and advances only when the override changes. The same
 validator appears as `Title-ETag` on complete-chat responses. Transcript edits
 and recording uploads do not invalidate it. Read a complete `Chat` for its
-effective title. `Chat-Revision` on the title read reports parent snapshot ordering.
+effective title.
 
 `PUT /api/chats/{id}/title` accepts `{"custom_title": "My notes"}` or
 `{"custom_title": null}` to restore automatic naming. Strings are trimmed and

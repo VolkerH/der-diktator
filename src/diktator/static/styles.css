@@ -20,6 +20,7 @@
   --icon-pause: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 4h4.5v16H6zM13.5 4H18v16h-4.5z'/%3E%3C/svg%3E");
   --icon-retry: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4'/%3E%3C/svg%3E");
   --icon-trash: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12'/%3E%3C/svg%3E");
+  --icon-pencil: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4'/%3E%3C/svg%3E");
   color: var(--ink);
   background: var(--page);
 }
@@ -73,25 +74,54 @@ main {
   flex: 1;
   min-width: 0;
   margin: 0;
+  font-size: inherit;
 }
+/* The heading is the rename affordance: quiet until hovered, with a pencil hint. */
 .chat-title {
-  display: block;
+  position: relative;
+  display: inline-block;
   max-width: 100%;
-  color: inherit;
-  text-align: left;
-  background: transparent;
+  margin-left: -8px;
+  padding: 6px 34px 6px 8px;
   border: 0;
-  padding: 0;
-  cursor: pointer;
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
   font-size: 18px;
   font-weight: 750;
   letter-spacing: -0.015em;
+  text-align: left;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.chat-title::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  background: var(--muted);
+  mask: var(--icon-pencil) center / contain no-repeat;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.chat-title:hover {
+  background: var(--chip);
+}
+.chat-title:hover::after,
+.chat-title:focus-visible::after {
+  opacity: 1;
+}
+@media (hover: none) {
+  .chat-title::after {
+    opacity: 0.7;
+  }
 }
 .menu-button {
   display: none;
@@ -1075,32 +1105,70 @@ textarea:read-only {
   display: none;
 }
 
-.title-editor {
-  width: min(32rem, calc(100vw - 2rem));
-  color: var(--text, #f8f5ff);
-  background: #211936;
-  border: 1px solid #655379;
-  border-radius: 1rem;
-  padding: 1.5rem;
+/* Rename dialog: reuses the .model-settings surface and .chip buttons. */
+.title-editor form {
+  display: grid;
+  gap: 8px;
 }
-.title-editor::backdrop {
-  background: #100a22aa;
+.title-editor h2 {
+  margin: 0 0 12px;
+  font-size: 21px;
+}
+.title-editor label {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
 }
 .title-editor input {
   width: 100%;
-  margin-top: 0.5rem;
-  padding: 0.7rem;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid var(--sheet-line);
+  border-radius: 12px;
+  background: var(--page);
+  color: var(--ink);
   font: inherit;
+  font-size: 16px;
+}
+.title-editor input:focus-visible {
+  outline: none;
+  border-color: var(--violet);
+  box-shadow: 0 0 0 4px #7c3aed1f;
 }
 .title-editor p {
-  font-size: 0.9rem;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.title-editor p.error {
+  color: var(--danger);
 }
 .title-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.6rem;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
 }
-.title-actions button {
-  padding: 0.6rem 0.8rem;
-  cursor: pointer;
+.title-actions .quiet {
+  margin-right: auto;
+}
+.chip.quiet {
+  background: transparent;
+}
+.chip.quiet:not(:disabled):hover {
+  background: var(--chip);
+  filter: none;
+}
+@media (max-width: 540px) {
+  .title-actions .chip {
+    flex: 1;
+    justify-content: center;
+  }
+  .title-actions .quiet {
+    order: 1;
+    flex-basis: 100%;
+    margin-right: 0;
+  }
 }
