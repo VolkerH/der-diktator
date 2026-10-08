@@ -83,6 +83,8 @@ const id = (number) => String(number).padStart(32, "0");
 function chatServer() {
   const server = {
     chats: new Map(),
+    searchResults: new Map(),
+    listQueries: [],
     nextId: 1,
     failRecordings: false,
     failTranscription: false,
@@ -194,15 +196,21 @@ function chatServer() {
         : json({ text: "Complete recording." });
     }
     if (url === "/api/chats" && method === "GET") {
+      const query = parsed.searchParams.get("q") ?? "";
+      server.listQueries.push(query);
+      // Fixtures select matching IDs; the client must never implement matching.
+      const matches = query ? (server.searchResults.get(query) ?? []) : [...server.chats.keys()];
       return json(
-        [...server.chats.values()].map((chat) => ({
-          id: chat.id,
-          title: chat.title,
-          custom_title: chat.custom_title,
-          updated: chat.updated,
-          recording_count: chat.recordings.length,
-          etag: `"chat-${chat.id}-${chat.revision}"`,
-        })),
+        [...server.chats.values()]
+          .filter((chat) => matches.includes(chat.id))
+          .map((chat) => ({
+            id: chat.id,
+            title: chat.title,
+            custom_title: chat.custom_title,
+            updated: chat.updated,
+            recording_count: chat.recordings.length,
+            etag: `"chat-${chat.id}-${chat.revision}"`,
+          })),
       );
     }
     if (url === "/api/chats" && method === "POST") return json(server.add(""), 201);
@@ -1547,6 +1555,201 @@ test("an older autosave cannot replace newer title metadata read after a conflic
   assert.equal(app.server.chats.size, 1, "metadata-only reads do not acknowledge deletion");
 });
 
+async function filterChats(t, app, query) {
+  app.element("chat-filter-input").value = query;
+  await app.element("chat-filter-input").emit("input");
+  t.mock.timers.tick(200);
+  await settle();
+}
+
+test("search debounces server requests and preserves the editor and selection", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => {
+    server.add("First transcript");
+    server.add("Second transcript");
+    server.searchResults.set("server query", [id(2)]);
+  });
+  const transcript = app.element("transcript");
+  transcript.value = "Unsaved draft";
+  setCursor(app, 3, 6);
+  await transcript.emit("input");
+  const initialQueries = app.server.listQueries.length;
+  app.element("chat-filter-input").value = "server";
+  await app.element("chat-filter-input").emit("input");
+  t.mock.timers.tick(100);
+  app.element("chat-filter-input").value = "server query";
+  await app.element("chat-filter-input").emit("input");
+  t.mock.timers.tick(199);
+  assert.equal(app.server.listQueries.length, initialQueries);
+  assert.equal(app.element("chat-list").hidden, true);
+  t.mock.timers.tick(1);
+  await settle();
+  assert.deepEqual(app.server.listQueries.slice(initialQueries), ["server query"]);
+  assert.deepEqual(chatRows(app), [["Second transcript", false]]);
+  assert.equal(app.element("chat-list").hidden, false);
+  assert.equal(transcript.value, "Unsaved draft");
+  assert.deepEqual([transcript.selectionStart, transcript.selectionEnd], [3, 6]);
+  assert.equal(
+    app.server.chats.get(id(1)).text,
+    "First transcript",
+    "search does not save the draft",
+  );
+});
+
+test("Clear requests the complete archive again and supersedes an old search response", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => {
+    server.add("First");
+    server.add("Second");
+    server.searchResults.set("slow", [id(2)]);
+  });
+  const fetch = globalThis.fetch;
+  let release;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (url === "/api/chats?q=slow")
+      await new Promise((resolve) => {
+        release = resolve;
+      });
+    return response;
+  });
+  await filterChats(t, app, "slow");
+  app.server.add("Added elsewhere");
+  await app.element("chat-filter-clear").emit("click");
+  await settle();
+  assert.deepEqual(chatRows(app), [
+    ["First", true],
+    ["Second", false],
+    ["Added elsewhere", false],
+  ]);
+  assert.equal(app.server.listQueries.at(-1), "");
+  release();
+  await settle();
+  assert.equal(app.element("chat-list").children.length, 3);
+  assert.equal(app.element("chat-filter-input").value, "");
+  assert.equal(app.element("transcript").value, "First");
+});
+
+test("typing invalidates an old response before the next debounce fires", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => {
+    server.add("First");
+    server.add("Second");
+    server.searchResults.set("old", [id(1)]);
+    server.searchResults.set("new", [id(2)]);
+  });
+  const fetch = globalThis.fetch;
+  let release;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (url === "/api/chats?q=old")
+      await new Promise((resolve) => {
+        release = resolve;
+      });
+    return response;
+  });
+  await filterChats(t, app, "old");
+  app.element("chat-filter-input").value = "new";
+  await app.element("chat-filter-input").emit("input");
+  release();
+  await settle();
+  assert.equal(
+    app.element("chat-list").hidden,
+    true,
+    "obsolete results stay hidden while the new query waits",
+  );
+  t.mock.timers.tick(200);
+  await settle();
+  assert.deepEqual(chatRows(app), [["Second", false]]);
+});
+
+test("search errors hide stale matches and retry retains the query and editor", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => {
+    server.add("First");
+    server.searchResults.set("query", [id(1)]);
+  });
+  const fetch = globalThis.fetch;
+  let fail = true;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url).includes("?q=") && fail)
+      return Response.json(
+        { detail: "Storage unavailable", code: "storage_error" },
+        { status: 500 },
+      );
+    return fetch(url, options);
+  });
+  await filterChats(t, app, "query");
+  assert.equal(app.element("chat-list").hidden, true);
+  assert.equal(app.element("chat-filter-state").textContent, "Storage unavailable");
+  assert.equal(app.element("chat-filter-retry").hidden, false);
+  fail = false;
+  await app.element("chat-filter-retry").emit("click");
+  await settle();
+  assert.equal(app.element("chat-list").hidden, false);
+  assert.equal(app.element("chat-filter-state").hidden, true);
+  assert.equal(app.element("chat-filter-input").value, "query");
+  assert.equal(app.element("transcript").value, "First");
+});
+
+test("no matches are distinct and an unmatched new chat is not injected", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t);
+  await filterChats(t, app, "unmatched");
+  assert.deepEqual(chatRows(app), []);
+  assert.equal(app.element("chat-filter-state").textContent, "No matching chats.");
+  await app.element("new-chat").emit("click");
+  await waitForIdle(app);
+  assert.deepEqual(chatRows(app), []);
+  assert.equal(app.element("chat-filter-input").value, "unmatched");
+  assert.equal(app.server.chats.size, 0);
+  await app.element("chat-filter-clear").emit("click");
+  await settle();
+  assert.deepEqual(chatRows(app), [["New chat", true]]);
+});
+
+test("filter changes and clearing leave a live recording running", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  const socket = await startLive(app);
+  socket.event({ type: "partial", text: "Spoken words" });
+  const draft = app.element("transcript").value;
+  await filterChats(t, app, "unmatched");
+  assert.equal(app.state.stops, 0);
+  assert.equal(socket.closeCount, 0);
+  assert.equal(app.element("stop").hidden, false);
+  assert.equal(app.element("transcript").value, draft);
+  await app.element("chat-filter-clear").emit("click");
+  await settle();
+  assert.equal(app.state.stops, 0);
+  assert.equal(app.element("transcript").value, draft);
+});
+
+test("mutation refreshes retain the active filter across save, rename and deletion", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => {
+    server.add("Original");
+    server.searchResults.set("topic", []);
+  });
+  await filterChats(t, app, "topic");
+  const fetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (String(url).endsWith("/text")) app.server.searchResults.set("topic", [id(1)]);
+    return response;
+  });
+  await editAndSave(t, app, "Saved topic");
+  assert.deepEqual(chatRows(app), [["Saved topic", true]]);
+  await app.element("chat-title").emit("click");
+  await submitTitle(app, "Custom topic");
+  assert.deepEqual(chatRows(app), [["Custom topic", true]]);
+  await deleteRow(app, 0);
+  assert.deepEqual(chatRows(app), []);
+  assert.equal(app.element("chat-filter-input").value, "topic");
+  assert.equal(app.element("chat-filter-state").textContent, "No matching chats.");
+  assert.equal(app.server.listQueries.at(-1), "topic");
+});
+
 test("successful title save restores focus after a delayed sidebar refresh", async (t) => {
   const app = await appEnvironment(t, (server) => server.add("Original"));
   const fetch = globalThis.fetch;
@@ -1613,3 +1816,108 @@ test("a dismissed slow rename preserves focus moved into the transcript", async 
   assert.equal(app.element("chat-title").textContent, "Renamed");
   assert.equal(globalThis.document.activeElement, app.element("transcript"));
 });
+
+test("autosave keeps same-query rows visible during refresh and after a failure", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => {
+    server.add("First");
+    server.add("Second");
+  });
+  const fetch = globalThis.fetch;
+  let failRefresh;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (url === "/api/chats")
+      await new Promise((resolve, reject) => {
+        failRefresh = reject;
+      });
+    return fetch(url, options);
+  });
+  await editAndSave(t, app, "Edited first");
+  assert.equal(app.element("chat-list").hidden, false);
+  assert.equal(app.element("chat-list").children.length, 2);
+  failRefresh(new TypeError("Offline"));
+  await settle();
+  assert.equal(app.element("chat-list").hidden, false);
+  assert.equal(app.element("chat-list").children.length, 2);
+  assert.equal(app.element("chat-filter-state").textContent, "Offline");
+  assert.equal(app.element("chat-filter-retry").hidden, false);
+});
+
+for (const edit of [false, true]) {
+  test(`startup failure shows a banner and retry ${edit ? "preserves edits" : "opens the latest chat"}`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    let fail = true;
+    const app = await appEnvironment(t, (server) => {
+      server.add("Latest saved transcript");
+      const fetch = server.fetch;
+      server.fetch = async (url, options) => {
+        if (url === "/api/chats" && fail) throw new TypeError("Offline");
+        return fetch(url, options);
+      };
+    });
+    assert.equal(app.element("error").hidden, false);
+    assert.match(app.element("error").textContent, /Saved chats could not be loaded/);
+    if (edit) {
+      app.element("transcript").value = "My draft";
+      await app.element("transcript").emit("input");
+      setCursor(app, 2, 4);
+    }
+    fail = false;
+    await app.element("chat-filter-retry").emit("click");
+    await settle();
+    assert.equal(app.element("transcript").value, edit ? "My draft" : "Latest saved transcript");
+    assert.equal(app.element("error").hidden, true);
+    if (edit)
+      assert.deepEqual(
+        [app.element("transcript").selectionStart, app.element("transcript").selectionEnd],
+        [2, 4],
+      );
+  });
+}
+
+test("invalid search queries show validation feedback without an ineffective retry", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t);
+  const fetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", async (url, options) =>
+    String(url).includes("?q=")
+      ? Response.json(
+          { code: "invalid_search_query", detail: "Search accepts up to 16 different words." },
+          { status: 422 },
+        )
+      : fetch(url, options),
+  );
+  await filterChats(t, app, Array.from({ length: 17 }, (_, i) => `word${i}`).join(" "));
+  assert.match(app.element("chat-filter-state").textContent, /16 different words/);
+  assert.equal(app.element("chat-filter-retry").hidden, true);
+  await app.element("chat-filter-clear").emit("click");
+  await settle();
+  assert.equal(app.element("chat-list").hidden, false);
+});
+
+for (const recovery of ["search and clear", "autosave"]) {
+  test(`startup warning clears when ${recovery} recovers the chat list`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    let fail = true;
+    const app = await appEnvironment(t, (server) => {
+      server.add("Saved transcript");
+      const fetch = server.fetch;
+      server.fetch = async (url, options) => {
+        if (url === "/api/chats" && fail) throw new TypeError("Offline");
+        return fetch(url, options);
+      };
+    });
+    assert.equal(app.element("error").hidden, false);
+    fail = false;
+    if (recovery === "autosave") await editAndSave(t, app, "Local draft");
+    else {
+      await filterChats(t, app, "Saved");
+      assert.equal(app.element("error").hidden, true);
+      await app.element("chat-filter-clear").emit("click");
+      await settle();
+    }
+    assert.equal(app.element("error").hidden, true);
+    assert.equal(app.element("chat-filter-retry").hidden, true);
+    assert.equal(app.element("transcript").value, recovery === "autosave" ? "Local draft" : "");
+  });
+}

@@ -55,6 +55,37 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
           New chat
         </button>
+        <div class="chat-filter" role="search">
+          <label class="visually-hidden" for="chat-filter-input">Search chats</label>
+          <svg class="chat-filter-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="11" cy="11" r="6.5" />
+            <path d="m16 16 4 4" />
+          </svg>
+          <input
+            id="chat-filter-input"
+            type="search"
+            maxlength="256"
+            placeholder="Search chats"
+            aria-controls="chat-list"
+            autocomplete="off"
+          />
+          <button
+            id="chat-filter-clear"
+            class="chat-filter-clear"
+            type="button"
+            aria-label="Clear chat search"
+            title="Clear search"
+            disabled
+          >
+            Clear
+          </button>
+        </div>
+        <div class="chat-filter-feedback">
+          <p id="chat-filter-state" role="status" aria-live="polite" hidden></p>
+          <button id="chat-filter-retry" class="chip" type="button" hidden>
+            Retry chat search
+          </button>
+        </div>
         <ul id="chat-list" class="chat-list"></ul>
         <button
           id="model-settings-open"

@@ -39,8 +39,9 @@ function transcriptText(result) {
 
 /** The server's chat storage and transcription endpoints. */
 export const chatApi = {
-  /** @returns {Promise<ChatSummary[]>} */
-  list: async () => (await request("/api/chats")).body,
+  /** @param {string} [query] @returns {Promise<ChatSummary[]>} */
+  list: async (query = "") =>
+    (await request(query ? `/api/chats?q=${encodeURIComponent(query)}` : "/api/chats")).body,
   /** @param {string} id @returns {Promise<Chat>} */
   create: (id) => chatRequest(`/api/chats/${id}`, { method: "PUT" }),
   /** @param {string} id @returns {Promise<Chat>} */

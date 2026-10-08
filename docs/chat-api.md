@@ -122,3 +122,52 @@ Clients must preserve drafts and retained audio when applying metadata responses
 ignore older observations, and refresh text/deletion validators only when the
 corresponding content has been acknowledged. The browser keeps entered names on
 conflict and requires an explicit retry.
+
+## Search accessible chats
+
+`GET /api/chats?q=meeting` filters the ordinary typed `list[ChatSummary]` over the
+actor's accessible SQLite chats. Matching reads the full current transcript and
+any custom name; derived names and the “New chat” placeholder are not searched. Names and opaque summary validators are returned
+unchanged. The response keeps `updated` descending and chat ID ascending on
+ties; search does not rank, alter recency or mutate a chat. Omitted `q`, empty
+strings, whitespace and queries containing no letter/number tokens return the
+ordinary unfiltered list. No separate index or browser matcher is used.
+
+The deterministic backend rules are:
+
+- Apply Unicode NFKC normalization and case folding. Letters and numbers form
+  tokens, keeping attached combining marks; whitespace, punctuation and
+  underscores separate them. Distinct normalized query terms use OR semantics.
+- A query term matches an exact transcript/custom-name token or the beginning of a
+  token. For example, `meet` matches `meeting`.
+- Query terms of at least four normalized code points also allow one insertion,
+  deletion, substitution or adjacent transposition against a complete token.
+  `meting`, `meetting`, `metting` and `meeitng` match `meeting`; `metign` does not.
+  Shorter terms use exact/prefix matching. `STRASSE` matches `Straße` after
+  normalization; `für` does not match `fur`. Queries are never regular expressions.
+
+Raw queries accept up to 256 Unicode code points, before normalization, and up
+to 16 distinct normalized terms. Repeated/case-equivalent words count once.
+Violations return 422 `invalid_search_query` with the shared string-detail
+error envelope, without silently truncating. SQLite failures return 500
+`storage_error`, preserving the distinction from a successful empty result.
+Existing unreadable legacy folders remain startup-import recovery material and
+are not searchable until imported; SQLite search does not scan those folders.
+
+Search is read-only and retryable. Cancellation/disconnection changes no state.
+Each response reads a consistent SQLite snapshot; subsequent requests see newly
+committed saves, renames and deletions. Large archives require scanning their
+current transcripts, so latency grows with their size. Matching runs in the
+list route's worker thread, outside the event loop.
+
+The browser debounces input for 200 ms, immediately invalidates earlier
+responses, and clears with a fresh ordinary list request. Loading and failed
+requests hide results from different queries. Refreshes for the same query keep
+existing rows visible, including on failure. Transient errors offer Retry; query
+validation errors ask the user to shorten the query. Startup failures also show a
+banner outside the mobile drawer. Retry opens the latest chat only while the
+initial blank editor is untouched. Filtering never navigates or saves the editor, changes
+its selection, or stops recording. An open chat remains open if its row is
+excluded. Persisted mutations refresh the active query, and filtered results
+never inject an unmatched local new-chat row. Unsaved draft words become
+searchable after autosave succeeds. Search text is tab-local display state.

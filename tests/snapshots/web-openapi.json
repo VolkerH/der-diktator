@@ -456,22 +456,62 @@
     "/api/chats": {
       "get": {
         "summary": "List Chats",
-        "description": "List accessible chats with a server-issued opaque `etag` per entry. Use that value in `If-Match` for conditional deletion without reading the full chat.",
+        "description": "List accessible chats with a server-issued opaque `etag` per entry. Use that value in `If-Match` for conditional deletion without reading the full chat. Optional `q` filters words in custom names or full transcripts; matching rules and limits are documented in docs/chat-api.md.",
         "operationId": "list_chats_api_chats_get",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional words to match in custom names or full transcripts.",
+              "title": "Q"
+            },
+            "description": "Optional words to match in custom names or full transcripts."
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
+                  "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/ChatSummary"
                   },
-                  "type": "array",
                   "title": "Response List Chats Api Chats Get"
                 }
               }
             }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         }
       },
@@ -482,6 +522,13 @@
         "responses": {
           "201": {
             "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Chat"
+                }
+              }
+            },
             "headers": {
               "ETag": {
                 "description": "Opaque quoted strong validator for the complete Chat.",
@@ -499,13 +546,6 @@
                 "description": "Opaque quoted strong validator for the text subresource.",
                 "schema": {
                   "type": "string"
-                }
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Chat"
                 }
               }
             }
