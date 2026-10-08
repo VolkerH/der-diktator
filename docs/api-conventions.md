@@ -28,6 +28,7 @@ Adopt codes for existing errors first. This registry specifies target mappings, 
 | Code                                       | HTTP | Meaning / client action                                                           |
 | ------------------------------------------ | ---- | --------------------------------------------------------------------------------- |
 | `chat_not_found`                           | 404  | Missing or inaccessible chat; show the same message for both.                     |
+| `recording_not_found`                      | 404  | Recording missing from an accessible chat, or its audio file is missing.          |
 | `audio_too_large`                          | 413  | Upload exceeds the byte limit; reduce it.                                         |
 | `unsupported_audio`                        | 415  | Unsupported media type; use the documented audio format.                          |
 | `invalid_audio`                            | 400  | Invalid audio or violated audio constraints; correct the input.                   |
@@ -45,7 +46,10 @@ Adopt codes for existing errors first. This registry specifies target mappings, 
 
 For authenticated chat access, missing and inaccessible resources have the same public 404 status
 and body, without distinguishing context. Apply this to chat-scoped audio, history and subscriptions
-as well. A viewer's forbidden write to an otherwise visible chat is a separate authorization case.
+as well: a recording request for a missing or inaccessible chat returns `chat_not_found`, and
+`recording_not_found` only applies within an accessible chat. Today both cases return the chat
+message through `ChatNotFound`. A viewer's forbidden write to an otherwise visible chat is a separate
+authorization case.
 
 The internal engine API adopts the same envelope with structured codes. The web application's
 `EngineClient` validates and maps known codes into this public registry; it does not parse messages or
