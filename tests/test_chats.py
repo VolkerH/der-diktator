@@ -6,8 +6,11 @@ import httpx
 import pytest
 from platformdirs import user_data_path
 
-from diktator.chats import ChatNotFound, ChatStore, title_for
+from diktator.chats import ChatNotFound, ChatService, title_for
 from diktator.config import Settings, default_data_directory, migrate_chats
+from diktator.db import open_engine, upgrade_schema
+from diktator.db.legacy import import_legacy
+from diktator.db.rows import LOCAL_USER_ID
 from tests.test_app import client_for
 from tests.test_audio import make_wav
 
@@ -94,13 +97,17 @@ async def test_invalid_requests_do_not_touch_storage(tmp_path: Path) -> None:
 
 
 def test_unreadable_chats_are_skipped_and_identifiers_are_strict(tmp_path: Path) -> None:
-    store = ChatStore(tmp_path)
-    chat = store.create()
+    engine = open_engine(tmp_path / "diktator.sqlite3")
+    upgrade_schema(engine, tmp_path)
+    store = ChatService(tmp_path, engine)
+    chat = store.create(LOCAL_USER_ID)
     (tmp_path / ("a" * 32)).mkdir()
     (tmp_path / ("a" * 32) / "chat.json").write_text("{broken")
-    assert [summary.id for summary in store.list()] == [chat.id]
+    import_legacy(engine, tmp_path)
+    assert [summary.id for summary in store.list(LOCAL_USER_ID)] == [chat.id]
     with pytest.raises(ChatNotFound):
-        store.get("../" + chat.id)
+        store.get(LOCAL_USER_ID, "../" + chat.id)
+    engine.dispose()
 
 
 def test_titles_and_default_location() -> None:

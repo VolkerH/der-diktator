@@ -9,6 +9,7 @@ import pytest
 
 from diktator.app import create_app
 from diktator.config import Settings
+from tests.helpers import isolated_settings
 from tests.test_audio import make_wav
 
 pytestmark = pytest.mark.anyio
@@ -25,14 +26,15 @@ async def client_for(
     handler: Callable[[httpx.Request], httpx.Response],
     settings: Settings | None = None,
 ) -> AsyncIterator[httpx.AsyncClient]:
-    app = create_app(settings, transport=httpx.MockTransport(handler))
-    async with (
-        app.router.lifespan_context(app),
-        httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
-        ) as client,
-    ):
-        yield client
+    with isolated_settings(settings) as settings:
+        app = create_app(settings, transport=httpx.MockTransport(handler))
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+            ) as client,
+        ):
+            yield client
 
 
 def healthy_engine(_request: httpx.Request) -> httpx.Response:

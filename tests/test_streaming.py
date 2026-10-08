@@ -14,6 +14,7 @@ from starlette.types import Message, Scope
 from diktator.app import create_app
 from diktator.config import Settings
 from diktator.streaming import EngineStream, StreamConnector, stream_url
+from tests.helpers import isolated_settings
 
 pytestmark = pytest.mark.anyio
 
@@ -88,42 +89,43 @@ async def browser_for(
         finally:
             engine.closed = True
 
-    app = create_app(settings, stream_connector=connector or connect)
-    incoming: asyncio.Queue[Message] = asyncio.Queue()
-    outgoing: asyncio.Queue[Message] = asyncio.Queue()
+    with isolated_settings(settings) as settings:
+        app = create_app(settings, stream_connector=connector or connect)
+        incoming: asyncio.Queue[Message] = asyncio.Queue()
+        outgoing: asyncio.Queue[Message] = asyncio.Queue()
 
-    async def send(message: Message) -> None:
-        if (
-            dropped_event
-            and message["type"] == "websocket.send"
-            and json.loads(message["text"])["type"] == dropped_event
-        ):
-            raise OSError("browser went away")
-        await outgoing.put(message)
+        async def send(message: Message) -> None:
+            if (
+                dropped_event
+                and message["type"] == "websocket.send"
+                and json.loads(message["text"])["type"] == dropped_event
+            ):
+                raise OSError("browser went away")
+            await outgoing.put(message)
 
-    scope: Scope = {
-        "type": "websocket",
-        "asgi": {"version": "3.0"},
-        "scheme": "ws",
-        "path": "/api/stream",
-        "raw_path": b"/api/stream",
-        "query_string": f"model={model}".encode(),
-        "headers": [],
-        "client": ("127.0.0.1", 1234),
-        "server": ("127.0.0.1", 8080),
-        "subprotocols": [],
-    }
-    async with app.router.lifespan_context(app):
-        await incoming.put({"type": "websocket.connect"})
-        task = asyncio.create_task(app(scope, incoming.get, send))
-        browser = BrowserSession(engine, incoming, outgoing, task, urls)
-        try:
-            assert (await browser.receive())["type"] == "websocket.accept"
-            yield browser
-        finally:
-            if not task.done():
-                await incoming.put({"type": "websocket.disconnect", "code": 1000})
-            await asyncio.wait_for(task, timeout=2)
+        scope: Scope = {
+            "type": "websocket",
+            "asgi": {"version": "3.0"},
+            "scheme": "ws",
+            "path": "/api/stream",
+            "raw_path": b"/api/stream",
+            "query_string": f"model={model}".encode(),
+            "headers": [],
+            "client": ("127.0.0.1", 1234),
+            "server": ("127.0.0.1", 8080),
+            "subprotocols": [],
+        }
+        async with app.router.lifespan_context(app):
+            await incoming.put({"type": "websocket.connect"})
+            task = asyncio.create_task(app(scope, incoming.get, send))
+            browser = BrowserSession(engine, incoming, outgoing, task, urls)
+            try:
+                assert (await browser.receive())["type"] == "websocket.accept"
+                yield browser
+            finally:
+                if not task.done():
+                    await incoming.put({"type": "websocket.disconnect", "code": 1000})
+                await asyncio.wait_for(task, timeout=2)
 
 
 async def ready(browser: BrowserSession) -> None:

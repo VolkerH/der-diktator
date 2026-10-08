@@ -209,9 +209,22 @@ with `loginctl enable-linger`.
 
 ## Storage and configuration
 
-Chats are stored as plain files, one folder per chat, containing `chat.json` (the
-transcript and the list of recordings) and one 16 kHz WAV file per recording. By
-default they live in your user data folder, as chosen by
+Chat transcripts and recording metadata live in SQLite. Audio remains in one
+folder per chat, with one 16 kHz WAV file per recording. `DIKTATOR_DATA_DIR` and
+`--data-dir` select the same chat storage directory as earlier versions:
+
+```text
+<data_dir>/
+  .diktator.lock             # held for the application's lifetime
+  diktator.sqlite3           # transcripts, membership and recording metadata
+  backups/                  # database snapshots before schema upgrades
+  <chat_id>/
+    <recording_id>.wav       # retained audio
+    chat.json               # legacy recovery material, when imported
+```
+
+SQLite may also create `diktator.sqlite3-wal` and `diktator.sqlite3-shm` while the
+application is running. By default storage lives in the user data folder chosen by
 [platformdirs](https://pypi.org/project/platformdirs/) for your operating system:
 
 | System        | Default chat folder                                         |
@@ -234,10 +247,50 @@ DIKTATOR_DATA_DIR=/mnt/c/Users/me/Documents/diktator make run
 uv run diktator --data-dir ~/dictation
 ```
 
-The web app prints the storage location when it starts, and `diktator --help`
-shows the default. Chats from earlier versions in `~/.diktator/chats` or
-`~/.phonon/chats` are moved to the default location on first start, unless that
-location already exists.
+The web app prints the storage directory and database path when it starts, and
+`diktator --help` shows the default. One web application process owns each data
+directory. Starting another instance with the same directory fails with an
+"already in use" message before migration, import or cleanup. Separate data
+directories can be used for separate instances.
+
+Use a local filesystem or a named Docker volume. Validate WSL `/mnt/c` storage
+and Docker bind mounts for your particular setup; filesystem locking, durable
+renames and SQLite WAL support are required. The WSL Linux filesystem is the
+default. Network filesystems are outside the supported placement contract.
+
+When the default location is unused, startup moves chats from earlier versions
+in `~/.diktator/chats` or `~/.phonon/chats`. The move runs under the ownership
+lock and resumes after interruption using `.legacy-migration.json`. It preserves
+the lock file and never merges another populated data directory. The marker
+identifies the selected source after a partial move has populated the target.
+Copying to a staging path and durably finalizing it before removing the source
+also protects moves across filesystems.
+
+Startup imports each legacy `chat.json` once, preserving IDs, text, timestamps
+and recording metadata. It keeps the JSON as recovery material. SQLite becomes
+the authoritative source, so editing the JSON after import does not update a
+chat. A deleted imported chat is never imported again. Unreadable chats are
+logged and left untouched. Missing WAVs retain their metadata and return
+`recording_not_found`; restoring the original WAV makes it available again.
+Startup removes abandoned temporary and unreferenced WAV files only where import
+status establishes that cleanup is safe. Folders absent from both `chats` and
+`legacy_imports` are logged and preserved, including WAVs and temporary files.
+This also preserves leftovers when cleanup fails after deleting a newly created
+chat; without a durable deletion tombstone, startup cannot prove ownership.
+Deleted imported chats remain known through the import ledger and can be swept.
+
+Before a schema upgrade, startup writes a consistent database snapshot using
+`VACUUM INTO` under `backups/`. A fresh, empty database needs no snapshot; an
+existing database is backed up even if it has no Alembic version table. One
+snapshot is retained per upgrade, with no automatic retention limit. Remove
+older snapshots manually after verifying your own complete backup.
+A database from a newer application version causes startup to refuse. These snapshots
+contain database data; a complete backup includes audio too. Stop the web app
+and copy the entire data directory when making a complete backup. Legacy JSON
+is recovery material from import time, and does not track subsequent edits.
+
+The current HTTP persistence behavior is documented in
+[Storage API behavior](docs/storage.md).
 
 ## Speech models
 

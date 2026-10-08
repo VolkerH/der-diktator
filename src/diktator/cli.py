@@ -1,17 +1,15 @@
 """Entry point for the local browser-facing service."""
 
 import argparse
+import logging
 from pathlib import Path
 
 import uvicorn
 
 from diktator.app import create_app
-from diktator.config import (
-    Settings,
-    default_data_directory,
-    legacy_data_directories,
-    migrate_chats,
-)
+from diktator.config import Settings, default_data_directory
+from diktator.db import DATABASE_NAME, StorageInUse, UnknownSchema
+from diktator.storage import open_storage
 
 
 def main() -> None:
@@ -38,16 +36,24 @@ def main() -> None:
     settings = Settings.from_environment(
         arguments.data_dir.expanduser() if arguments.data_dir else None
     )
-    if settings.data_directory == default_data_directory():
-        for legacy in legacy_data_directories():
-            if migrate_chats(legacy, settings.data_directory):
-                print(f"Moved existing chats from {legacy}", flush=True)
-                break
     print(f"Storing chats in {settings.data_directory}", flush=True)
-    uvicorn.run(
-        create_app(settings),
-        host=arguments.host,
-        port=arguments.port,
-        ssl_certfile=arguments.ssl_certfile,
-        ssl_keyfile=arguments.ssl_keyfile,
-    )
+    print(f"Database: {settings.data_directory / DATABASE_NAME}", flush=True)
+    # Open before Uvicorn's lifespan exception handler so expected refusals (a held
+    # lock, a database from a newer version) are concise CLI errors. The same owner
+    # is handed to the application's lifespan.
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    try:
+        storage = open_storage(settings)
+    except (StorageInUse, UnknownSchema) as error:
+        parser.exit(1, f"{error}\n")
+    try:
+        uvicorn.run(
+            create_app(settings, storage=storage),
+            host=arguments.host,
+            port=arguments.port,
+            ssl_certfile=arguments.ssl_certfile,
+            ssl_keyfile=arguments.ssl_keyfile,
+        )
+    finally:
+        # Also release if server setup fails before lifespan starts.
+        storage.close()
