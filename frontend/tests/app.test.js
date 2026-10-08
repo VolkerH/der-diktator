@@ -231,7 +231,7 @@ function chatServer() {
             custom_title: chat.custom_title,
             title_revision: chat.title_revision,
           },
-          { headers: { ETag: titleEtag(chat) } },
+          { headers: { ETag: titleEtag(chat), "Chat-Revision": String(chat.revision) } },
         );
       if (options.headers?.["If-Match"] !== titleEtag(chat))
         return json({ detail: "This chat changed elsewhere.", code: "revision_conflict" }, 412);
@@ -1465,4 +1465,82 @@ test("a delayed reset response cannot replace a newer title from autosave", asyn
   await settle();
   assert.equal(app.element("chat-title").textContent, "New automatic name");
   assert.equal(app.element("transcript").value, "New automatic name");
+});
+
+test("an older text response cannot undo an acknowledged rename", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => {
+    const chat = server.add("Original");
+    chat.title = chat.custom_title = "Manual";
+  });
+  const fetch = globalThis.fetch;
+  let releaseTitleRequest;
+  let releaseTextResponse;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url).endsWith("/title") && options?.method === "PUT") {
+      await new Promise((resolve) => {
+        releaseTitleRequest = resolve;
+      });
+    }
+    const response = await fetch(url, options);
+    if (String(url).endsWith("/text")) {
+      await new Promise((resolve) => {
+        releaseTextResponse = resolve;
+      });
+    }
+    return response;
+  });
+  await app.element("chat-title").emit("click");
+  await submitTitle(app, "Renamed");
+  await app.element("title-cancel").emit("click");
+  await editAndSave(t, app, "New text");
+  releaseTitleRequest();
+  await settle();
+  assert.equal(app.element("chat-title").textContent, "Renamed");
+  releaseTextResponse();
+  await settle();
+  assert.equal(app.server.chats.get(id(1)).title, "Renamed");
+  assert.equal(app.element("chat-title").textContent, "Renamed");
+});
+
+test("an older autosave cannot replace newer title metadata read after a conflict", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => {
+    const chat = server.add("Original");
+    chat.title = chat.custom_title = "Manual";
+  });
+  const fetch = globalThis.fetch;
+  let releaseTitleRequest;
+  let releaseTextResponse;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url).endsWith("/title") && options?.method === "PUT") {
+      await new Promise((resolve) => {
+        releaseTitleRequest = resolve;
+      });
+    }
+    const response = await fetch(url, options);
+    if (String(url).endsWith("/text")) {
+      await new Promise((resolve) => {
+        releaseTextResponse = resolve;
+      });
+    }
+    return response;
+  });
+  await app.element("chat-title").emit("click");
+  await submitTitle(app, "My name");
+  await app.element("title-cancel").emit("click");
+  await editAndSave(t, app, "New text");
+  const stored = app.server.chats.get(id(1));
+  stored.title = stored.custom_title = "Remote name";
+  stored.title_revision++;
+  stored.revision++;
+  releaseTitleRequest();
+  await settle();
+  assert.equal(app.element("chat-title").textContent, "Remote name");
+  releaseTextResponse();
+  await settle();
+  assert.equal(app.element("chat-title").textContent, "Remote name");
+  assert.equal(app.element("transcript").value, "New text");
+  await deleteRow(app, 0);
+  assert.equal(app.server.chats.size, 1, "metadata-only reads do not acknowledge deletion");
 });

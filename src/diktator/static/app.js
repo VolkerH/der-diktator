@@ -7,6 +7,7 @@ import { MicrophoneRecorder } from "./recorder.js";
 
 /** @typedef {import("./chats.js").Chat} Chat */
 /** @typedef {import("./chats.js").ChatSummary} ChatSummary */
+/** @typedef {import("./chats.js").ChatTitle} ChatTitle */
 /** @typedef {import("./chats.js").Recording} Recording */
 
 const recordButton = /** @type {HTMLButtonElement} */ (document.getElementById("record"));
@@ -446,17 +447,14 @@ async function writeText(generation) {
     if (generation !== navigationGeneration || chat?.id !== target.id) return;
     // Acknowledge the submitted snapshot; edits made during the request remain dirty.
     target.text = saved.text;
-    target.updated = saved.updated;
+    if (saved.revision >= target.titleChatRevision) target.updated = saved.updated;
     target.textEtag = saved.textEtag;
     target.text_revision = saved.text_revision;
     // The response is a complete Chat: show recordings added elsewhere before taking up
     // the whole-chat validator that covers them.
     addRecordings(target, saved.recordings);
+    acknowledgeTitleMetadata(target, saved);
     if (saved.revision >= target.revision) {
-      target.title = saved.title;
-      target.custom_title = saved.custom_title;
-      target.title_revision = saved.title_revision;
-      target.titleEtag = saved.titleEtag;
       target.etag = saved.etag;
       target.revision = saved.revision;
     }
@@ -639,15 +637,25 @@ titleDialog.addEventListener("close", () => {
   chatTitle.focus();
 });
 
-/** Apply a title response without acknowledging unseen text or replacing the editor draft.
- * @param {Chat} target @param {Chat} saved */
-function acknowledgeTitle(target, saved) {
-  if (saved.revision < target.revision) return;
+/** Title freshness is separate from the complete chat version acknowledged for deletion.
+ * A newer title response can contain text this tab has not acknowledged yet.
+ * @param {Chat} target
+ * @param {ChatTitle} saved */
+function acknowledgeTitleMetadata(target, saved) {
+  if (saved.titleChatRevision < target.titleChatRevision) return;
   target.title = saved.title;
   target.custom_title = saved.custom_title;
   target.title_revision = saved.title_revision;
   target.titleEtag = saved.titleEtag;
-  target.updated = saved.updated;
+  target.titleChatRevision = saved.titleChatRevision;
+}
+
+/** Apply a title response without acknowledging unseen text or replacing the editor draft.
+ * @param {Chat} target @param {Chat} saved */
+function acknowledgeTitle(target, saved) {
+  if (saved.revision < target.revision) return;
+  if (saved.revision >= target.titleChatRevision) target.updated = saved.updated;
+  acknowledgeTitleMetadata(target, saved);
   addRecordings(target, saved.recordings);
   if (saved.text_revision === target.text_revision && saved.revision >= target.revision) {
     target.revision = saved.revision;
@@ -701,10 +709,9 @@ async function commitTitle(customTitle) {
     titleError.hidden = false;
     if (error instanceof ApiRequestError && error.code === "revision_conflict" && chat) {
       try {
-        const priorTitleEtag = chat.titleEtag;
         const latest = await chatApi.getTitle(chat.id);
         if (editing.generation !== navigationGeneration) return;
-        if (chat.titleEtag === priorTitleEtag) Object.assign(chat, latest);
+        acknowledgeTitleMetadata(chat, latest);
         titleError.textContent = `The current name is “${chat.title}”. Save again to use your name.`;
         renderChats();
         updateControls();

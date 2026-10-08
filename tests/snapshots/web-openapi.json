@@ -935,7 +935,7 @@
     "/api/chats/{chat_id}/title": {
       "get": {
         "summary": "Get Title",
-        "description": "Read canonical shared title metadata. ETag covers title, custom_title and title_revision. The automatic title can change after a text edit; recordings do not change this validator. Retain the quoted validator for title PUT.",
+        "description": "Read canonical shared title metadata. ETag covers title, custom_title and title_revision. The automatic title can change after a text edit; recordings do not change this validator. Retain the quoted validator for title PUT. Chat-Revision reports the parent snapshot ordering for title freshness only; it does not acknowledge unseen text or authorize deletion.",
         "operationId": "get_title_api_chats__chat_id__title_get",
         "parameters": [
           {
@@ -964,6 +964,12 @@
                 "description": "Opaque quoted strong validator for the title subresource.",
                 "schema": {
                   "type": "string"
+                }
+              },
+              "Chat-Revision": {
+                "description": "Parent snapshot revision for ordering title observations; not a complete Chat acknowledgement or a conditional-write validator.",
+                "schema": {
+                  "type": "integer"
                 }
               }
             }

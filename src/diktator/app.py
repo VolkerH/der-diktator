@@ -296,15 +296,27 @@ def create_app(
         "/api/chats/{chat_id}/title",
         description="Read canonical shared title metadata. ETag covers title, custom_title and "
         "title_revision. The automatic title can change after a text edit; recordings do not "
-        "change this validator. Retain the quoted validator for title PUT.",
+        "change this validator. Retain the quoted validator for title PUT. Chat-Revision "
+        "reports the parent snapshot ordering for title freshness only; it does not "
+        "acknowledge unseen text or authorize deletion.",
         responses={
             **error_responses(404, 422),
-            200: {"headers": {"ETag": validator_headers["Title-ETag"]}},
+            200: {
+                "headers": {
+                    "ETag": validator_headers["Title-ETag"],
+                    "Chat-Revision": {
+                        "description": "Parent snapshot revision for ordering title observations; "
+                        "not a complete Chat acknowledgement or a conditional-write validator.",
+                        "schema": {"type": "integer"},
+                    },
+                }
+            },
         },
     )
     def get_title(chat_id: ChatId, actor_id: Actor, response: Response) -> ChatTitle:
         chat = store().get(actor_id, chat_id)
         response.headers["ETag"] = chat.title_etag
+        response.headers["Chat-Revision"] = str(chat.revision)
         return ChatTitle(
             title=chat.title, custom_title=chat.custom_title, title_revision=chat.title_revision
         )

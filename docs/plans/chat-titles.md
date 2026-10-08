@@ -29,3 +29,9 @@ Chromium checks passed on desktop and phone with demo API responses: Enter,
 Escape, focus return, rename/reset across autosave, literal labels, Unicode
 length and truncation, with zero page errors. Browser evidence is separate from
 HTTP/SQLite acceptance; no model inference or microphone claim is made here.
+
+Review correction: title observation ordering is independent of the complete-chat
+version acknowledged for deletion. A delayed autosave must not replace a newer
+rename or conflict-read title while its text version is still unacknowledged.
+The title GET exposes its parent snapshot in `Chat-Revision` for this purpose;
+regressions cover both response orders and conservative deletion acknowledgment.

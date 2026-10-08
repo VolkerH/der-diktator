@@ -101,7 +101,10 @@ chat members. Old SQLite/legacy-imported chats start with `custom_title: null`.
 `Chat` also includes `title_revision`, initially 1. Every complete-chat response
 now carries `Title-ETag`, alongside its existing whole-chat and text validators.
 `GET /api/chats/{id}/title` returns `{title, custom_title, title_revision}` with
-that title validator in `ETag`. The strong scoped validator covers exactly those
+that title validator in `ETag`. An additive `Chat-Revision` header reports the
+parent snapshot revision so clients can order title observations from this read
+and complete-chat responses. This ordering value does not acknowledge the full
+chat or refresh a text/deletion validator. The strong scoped validator covers exactly those
 fields, plus resource scope and creation incarnation. An automatic name change
 invalidates it; transcript edits under a custom name and recording uploads do
 not. The persisted metadata revision advances only when the override changes.
@@ -135,3 +138,9 @@ validator. The browser adopts a whole-chat validator from a title response only
 if that response's text version was already acknowledged; otherwise unseen text
 continues to block conditional deletion. Late responses cannot replace a newer
 acknowledged title or a different open chat.
+
+Clients track the newest parent revision from which they observed title metadata
+independently of the complete-chat revision they acknowledged for deletion. This
+includes metadata-only conflict reads. A newer title response may contain text
+still awaiting acknowledgment; a delayed older autosave response must then keep
+the newer title, override and title validator while acknowledging its own text.

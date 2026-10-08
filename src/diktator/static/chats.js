@@ -1,7 +1,9 @@
 import { ApiRequestError } from "./errors.js";
 
 /** @typedef {{ id: string, created: string, duration_seconds: number }} Recording */
-/** @typedef {{ id: string, created: string, updated: string, text: string, recordings: Recording[], revision: number, text_revision: number, title: string, custom_title: string | null, title_revision: number, titleEtag: string | null, etag: string | null, textEtag: string | null }} Chat */
+/** A title observation carries its parent ordering revision without acknowledging the whole Chat.
+ * @typedef {{ title: string, custom_title: string | null, title_revision: number, titleChatRevision: number, titleEtag: string | null }} ChatTitle */
+/** @typedef {ChatTitle & { id: string, created: string, updated: string, text: string, recordings: Recording[], revision: number, text_revision: number, etag: string | null, textEtag: string | null }} Chat */
 /** @typedef {{ id: string, title: string, custom_title: string | null, updated: string, recording_count: number, etag: string }} ChatSummary */
 /** @typedef {{ recording: Recording, chatEtag: string | null, chatRevision: number | null }} RecordingUpload */
 
@@ -24,6 +26,7 @@ async function chatRequest(path, options = {}) {
     etag: headers.get("ETag"),
     textEtag: headers.get("Text-ETag"),
     titleEtag: headers.get("Title-ETag"),
+    titleChatRevision: body.revision,
   };
 }
 
@@ -42,10 +45,14 @@ export const chatApi = {
   create: (id) => chatRequest(`/api/chats/${id}`, { method: "PUT" }),
   /** @param {string} id @returns {Promise<Chat>} */
   get: (id) => chatRequest(`/api/chats/${id}`),
-  /** @param {string} id @returns {Promise<{title: string, custom_title: string | null, title_revision: number, titleEtag: string | null}>} */
+  /** @param {string} id @returns {Promise<ChatTitle>} */
   getTitle: async (id) => {
     const { body, headers } = await request(`/api/chats/${id}/title`);
-    return { ...body, titleEtag: headers.get("ETag") };
+    return {
+      ...body,
+      titleEtag: headers.get("ETag"),
+      titleChatRevision: Number(headers.get("Chat-Revision")),
+    };
   },
   /** @param {string} id @param {string | null} customTitle @param {string} etag @returns {Promise<Chat>} */
   saveTitle: (id, customTitle, etag) =>
