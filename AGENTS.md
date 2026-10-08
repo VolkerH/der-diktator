@@ -19,6 +19,8 @@
 - Include screenshots whenever the change affects the graphical interface.
   For interface actions, also try to include a short recording in a format
   that displays in the target pull or merge request.
+- When a pull or merge request fully resolves an issue, include
+  `Closes #<issue-number>` in its description.
 
 ## Backend and frontend contract
 
