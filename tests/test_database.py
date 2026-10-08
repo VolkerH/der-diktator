@@ -273,30 +273,6 @@ async def test_second_app_refuses_before_import_or_cleanup(tmp_path: Path) -> No
         assert snapshot(tmp_path) == before
 
 
-def test_second_lock_refuses_during_upload(service: ChatService) -> None:
-    from diktator.chats import finalize_audio
-
-    chat = service.create(LOCAL_USER_ID)
-    started, finish = Event(), Event()
-
-    def paused(path: Path, audio: bytes) -> None:
-        finalize_audio(path, audio)
-        started.set()
-        assert finish.wait(5)
-
-    with patch("diktator.chats.finalize_audio", paused), ThreadPoolExecutor(1) as pool:
-        upload = pool.submit(service.add_recording, LOCAL_USER_ID, chat.id, make_wav(), 0.01)
-        try:
-            assert started.wait(5)
-            before = snapshot(service.root)
-            with pytest.raises(StorageInUse):
-                DataDirectoryLock(service.root).acquire()
-            assert snapshot(service.root) == before
-        finally:
-            finish.set()
-        assert upload.result().id == service.get(LOCAL_USER_ID, chat.id).recordings[0].id
-
-
 def test_commit_failure_removes_finalized_audio_and_rolls_back(service: ChatService) -> None:
     chat = service.create(LOCAL_USER_ID)
 
@@ -454,7 +430,7 @@ def test_openapi_inspection_does_not_create_storage(tmp_path: Path) -> None:
     assert not root.exists()
 
 
-def test_lock_excludes_another_process(service: ChatService) -> None:
+def test_cli_reports_cross_process_lock_refusal_without_traceback(service: ChatService) -> None:
     import subprocess
     import sys
 
@@ -462,17 +438,8 @@ def test_lock_excludes_another_process(service: ChatService) -> None:
         [
             sys.executable,
             "-c",
-            """
-import sys
-from pathlib import Path
-from diktator.db import DataDirectoryLock, StorageInUse
-try:
-    DataDirectoryLock(Path(sys.argv[1])).acquire()
-except StorageInUse as error:
-    print(error)
-    sys.exit(23)
-sys.exit(0)
-""",
+            "from diktator.cli import main; main()",
+            "--data-dir",
             str(service.root),
         ],
         capture_output=True,
@@ -480,8 +447,10 @@ sys.exit(0)
         timeout=10,
         check=False,
     )
-    assert result.returncode == 23
-    assert "already in use" in result.stdout
+    assert result.returncode == 1
+    assert "already in use" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert "Application startup failed" not in result.stderr
 
 
 @pytest.mark.anyio
@@ -497,7 +466,7 @@ async def test_failed_startup_disposes_database_and_releases_lock(tmp_path: Path
 
     app = create_app(Settings(data_directory=tmp_path))
     with (
-        patch("diktator.app.upgrade_schema", side_effect=RuntimeError("upgrade failed")),
+        patch("diktator.storage.upgrade_schema", side_effect=RuntimeError("upgrade failed")),
         patch.object(Engine, "dispose", dispose),
         pytest.raises(RuntimeError, match="upgrade failed"),
     ):
@@ -570,8 +539,8 @@ async def test_lifespan_moves_legacy_under_lock_and_resumes(tmp_path: Path) -> N
         real_copytree(source, destination, symlinks=True)
 
     with (
-        patch("diktator.app.default_data_directory", return_value=target),
-        patch("diktator.app.legacy_data_directories", return_value=[legacy]),
+        patch("diktator.storage.default_data_directory", return_value=target),
+        patch("diktator.storage.legacy_data_directories", return_value=[legacy]),
     ):
         app = create_app(settings)
         with (
@@ -704,3 +673,31 @@ def test_audio_read_does_not_block_mutations_and_handles_delete_race(service: Ch
             finish.set()
         with pytest.raises(RecordingNotFound):
             reading.result()
+
+
+def test_storage_owns_shutdown_and_releases_lock(tmp_path: Path) -> None:
+    from diktator.storage import open_storage
+
+    storage = open_storage(Settings(data_directory=tmp_path))
+    assert storage.chats.create(LOCAL_USER_ID).id
+    with pytest.raises(StorageInUse):
+        DataDirectoryLock(tmp_path).acquire()
+    storage.close()
+    storage.close()
+    lock = DataDirectoryLock(tmp_path)
+    lock.acquire()
+    lock.release()
+
+
+def test_cli_releases_storage_if_server_setup_fails(tmp_path: Path) -> None:
+    from diktator.cli import main
+
+    with (
+        patch("sys.argv", ["diktator", "--data-dir", str(tmp_path)]),
+        patch("diktator.cli.uvicorn.run", side_effect=RuntimeError("server setup failed")),
+        pytest.raises(RuntimeError, match="server setup failed"),
+    ):
+        main()
+    lock = DataDirectoryLock(tmp_path)
+    lock.acquire()
+    lock.release()

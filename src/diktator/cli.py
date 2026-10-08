@@ -1,13 +1,15 @@
 """Entry point for the local browser-facing service."""
 
 import argparse
+import logging
 from pathlib import Path
 
 import uvicorn
 
 from diktator.app import create_app
 from diktator.config import Settings, default_data_directory
-from diktator.db import DATABASE_NAME
+from diktator.db import DATABASE_NAME, StorageInUse
+from diktator.storage import open_storage
 
 
 def main() -> None:
@@ -36,10 +38,21 @@ def main() -> None:
     )
     print(f"Storing chats in {settings.data_directory}", flush=True)
     print(f"Database: {settings.data_directory / DATABASE_NAME}", flush=True)
-    uvicorn.run(
-        create_app(settings),
-        host=arguments.host,
-        port=arguments.port,
-        ssl_certfile=arguments.ssl_certfile,
-        ssl_keyfile=arguments.ssl_keyfile,
-    )
+    # Open before Uvicorn's lifespan exception handler so expected lock refusal
+    # is a concise CLI error. The same owner is handed to the application's lifespan.
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    try:
+        storage = open_storage(settings)
+    except StorageInUse as error:
+        parser.exit(1, f"{error}\n")
+    try:
+        uvicorn.run(
+            create_app(settings, storage=storage),
+            host=arguments.host,
+            port=arguments.port,
+            ssl_certfile=arguments.ssl_certfile,
+            ssl_keyfile=arguments.ssl_keyfile,
+        )
+    finally:
+        # Also release if server setup fails before lifespan starts.
+        storage.close()

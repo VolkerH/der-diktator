@@ -15,9 +15,7 @@ from websockets.exceptions import WebSocketException
 
 from diktator.audio import RecordingInfo, validate_recording
 from diktator.chats import Chat, ChatService, ChatSummary, Recording
-from diktator.config import Settings, default_data_directory, legacy_data_directories, migrate_chats
-from diktator.db import DATABASE_NAME, DataDirectoryLock, open_engine, upgrade_schema
-from diktator.db.legacy import import_legacy, sweep_orphans
+from diktator.config import Settings
 from diktator.db.rows import LOCAL_USER_ID
 from diktator.engine import EngineClient, Transcription
 from diktator.errors import (
@@ -27,6 +25,7 @@ from diktator.errors import (
     install_error_handlers,
 )
 from diktator.models import ModelId, ModelsStatus
+from diktator.storage import Storage, open_storage
 from diktator.streaming import (
     StreamConnector,
     StreamError,
@@ -46,6 +45,7 @@ def create_app(
     *,
     transport: httpx.AsyncBaseTransport | None = None,
     stream_connector: StreamConnector = connect_engine,
+    storage: Storage | None = None,
 ) -> FastAPI:
     """Create an application with injectable HTTP and streaming engine boundaries."""
     settings = settings or Settings.from_environment()
@@ -56,33 +56,9 @@ def create_app(
         trust_env=False,
     )
     engine = EngineClient(client)
-    ownership = DataDirectoryLock(settings.data_directory)
-    store: ChatService
 
-    def start_storage() -> ChatService:
-        ownership.acquire()
-        database = None
-        try:
-            if settings.data_directory == default_data_directory():
-                for legacy in legacy_data_directories():
-                    if migrate_chats(legacy, settings.data_directory):
-                        break
-            database = open_engine(settings.data_directory / DATABASE_NAME)
-            upgrade_schema(database, settings.data_directory)
-            import_legacy(database, settings.data_directory)
-            sweep_orphans(database, settings.data_directory)
-            return ChatService(settings.data_directory, database)
-        except BaseException:
-            if database is not None:
-                database.dispose()
-            ownership.release()
-            raise
-
-    def stop_storage() -> None:
-        try:
-            store.engine.dispose()
-        finally:
-            ownership.release()
+    def store() -> ChatService:
+        return app.state.storage.chats
 
     def local_actor() -> str:
         return LOCAL_USER_ID
@@ -102,13 +78,14 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        nonlocal store
         async with client:
-            store = await run_in_threadpool(start_storage)
+            owned = storage or await run_in_threadpool(open_storage, settings)
+            _app.state.storage = owned
             try:
                 yield
             finally:
-                await run_in_threadpool(stop_storage)
+                await run_in_threadpool(owned.close)
+                del _app.state.storage
 
     app = FastAPI(title="Der Diktator", lifespan=lifespan)
     install_error_handlers(app)
@@ -188,23 +165,23 @@ def create_app(
 
     @app.get("/api/chats")
     def list_chats(actor_id: Actor) -> list[ChatSummary]:
-        return store.list(actor_id)
+        return store().list(actor_id)
 
     @app.post("/api/chats", status_code=201)
     def create_chat(actor_id: Actor) -> Chat:
-        return store.create(actor_id)
+        return store().create(actor_id)
 
     @app.get("/api/chats/{chat_id}", responses=error_responses(404, 422))
     def get_chat(chat_id: ChatId, actor_id: Actor) -> Chat:
-        return store.get(actor_id, chat_id)
+        return store().get(actor_id, chat_id)
 
     @app.put("/api/chats/{chat_id}/text", responses=error_responses(404, 422))
     def update_text(chat_id: ChatId, update: TextUpdate, actor_id: Actor) -> Chat:
-        return store.update_text(actor_id, chat_id, update.text)
+        return store().update_text(actor_id, chat_id, update.text)
 
     @app.delete("/api/chats/{chat_id}", status_code=204, responses=error_responses(404, 422))
     def delete_chat(chat_id: ChatId, actor_id: Actor) -> None:
-        store.delete(actor_id, chat_id)
+        store().delete(actor_id, chat_id)
 
     @app.post(
         "/api/chats/{chat_id}/recordings",
@@ -212,16 +189,16 @@ def create_app(
         responses=error_responses(400, 404, 413, 415, 422),
     )
     async def add_recording(chat_id: ChatId, request: Request, actor_id: Actor) -> Recording:
-        await run_in_threadpool(store.get, actor_id, chat_id)
+        await run_in_threadpool(store().get, actor_id, chat_id)
         audio, info = await read_recording(request)
         return await run_in_threadpool(
-            store.add_recording, actor_id, chat_id, audio, info.duration_seconds
+            store().add_recording, actor_id, chat_id, audio, info.duration_seconds
         )
 
     @app.get("/api/chats/{chat_id}/recordings/{recording_id}", responses=error_responses(404, 422))
     def recording_audio(chat_id: ChatId, recording_id: ChatId, actor_id: Actor) -> Response:
         return Response(
-            store.recording_audio(actor_id, chat_id, recording_id), media_type="audio/wav"
+            store().recording_audio(actor_id, chat_id, recording_id), media_type="audio/wav"
         )
 
     @app.post(
@@ -231,7 +208,7 @@ def create_app(
     async def transcribe_recording(
         chat_id: ChatId, recording_id: ChatId, actor_id: Actor, model: ModelId = "phonon-2"
     ) -> Transcription:
-        audio = await run_in_threadpool(store.recording_audio, actor_id, chat_id, recording_id)
+        audio = await run_in_threadpool(store().recording_audio, actor_id, chat_id, recording_id)
         return await engine.transcribe(audio, model)
 
     @app.websocket("/api/stream")

@@ -11,6 +11,9 @@ from platformdirs import user_data_path
 
 from diktator.durability import sync_directory
 
+DATABASE_NAME = "diktator.sqlite3"
+LOCK_NAME = ".diktator.lock"
+
 
 def default_data_directory() -> Path:
     """The platform's per-user data folder, e.g. ~/.local/share/diktator/chats on Linux."""
@@ -29,8 +32,6 @@ def migrate_chats(legacy: Path, target: Path) -> bool:
     and pending child; arbitrary populated targets are never merged. Copies are
     staged before rename, leaving the source intact until its child is finalized.
     """
-    from diktator.db import LOCK_NAME
-
     marker = target / ".legacy-migration.json"
     staging = target / ".legacy-move.tmp"
     if marker.exists():

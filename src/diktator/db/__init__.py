@@ -16,10 +16,9 @@ from filelock import FileLock, Timeout
 from sqlalchemy import URL, Connection, Engine, create_engine, event
 from sqlalchemy.orm import Session
 
+from diktator.config import DATABASE_NAME as DATABASE_NAME
+from diktator.config import LOCK_NAME as LOCK_NAME
 from diktator.durability import sync_directory
-
-DATABASE_NAME = "diktator.sqlite3"
-LOCK_NAME = ".diktator.lock"
 
 
 class StorageInUse(RuntimeError):
@@ -31,7 +30,11 @@ class UnknownSchema(RuntimeError):
 
 
 class DataDirectoryLock:
-    """Cross-platform process lock; retain its inode until the directory is retired."""
+    """Exclusive, non-blocking lock on <data_dir>/.diktator.lock.
+
+    The file is never deleted, so two processes cannot lock different files for
+    the same directory. Ownership lasts until the storage owner closes it.
+    """
 
     def __init__(self, root: Path) -> None:
         self.root = root
