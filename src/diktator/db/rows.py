@@ -54,6 +54,16 @@ class ChatRow(Base):
     incarnation: Mapped[str] = mapped_column(String, default=lambda: uuid.uuid4().hex)
 
 
+class GroupRow(Base):
+    __tablename__ = "groups"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String)
+    incarnation: Mapped[str] = mapped_column(String, default=lambda: uuid.uuid4().hex)
+    created: Mapped[datetime] = mapped_column(UtcDateTime)
+    revision: Mapped[int] = mapped_column(default=1)
+
+
 class ChatMemberRow(Base):
     __tablename__ = "chat_members"
     chat_id: Mapped[str] = mapped_column(
@@ -61,6 +71,10 @@ class ChatMemberRow(Base):
     )
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), primary_key=True)
     role: Mapped[str] = mapped_column(String)
+    group_id: Mapped[str | None] = mapped_column(
+        ForeignKey("groups.id", ondelete="SET NULL"), nullable=True
+    )
+    placement_revision: Mapped[int] = mapped_column(default=1)
 
 
 class RecordingRow(Base):

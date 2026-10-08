@@ -83,6 +83,12 @@ const id = (number) => String(number).padStart(32, "0");
 function chatServer() {
   const server = {
     chats: new Map(),
+    groups: new Map(),
+    createInputs: [],
+    groupWrites: [],
+    placementWrites: [],
+    foldStorage: new Map(),
+    storageUnavailable: false,
     searchResults: new Map(),
     listQueries: [],
     nextId: 1,
@@ -145,9 +151,29 @@ function chatServer() {
       title_revision: 1,
       title: text || "New chat",
       custom_title: null,
+      group_id: null,
+      placement_revision: 1,
     };
     server.chats.set(chat.id, chat);
     return chat;
+  };
+  server.addGroup = (name, groupId = id(100 + server.groups.size)) => {
+    const group = {
+      id: groupId,
+      name,
+      created: "2026-10-08T10:00:00Z",
+      revision: 1,
+    };
+    server.groups.set(group.id, group);
+    return group;
+  };
+  server.deleteGroup = (groupId) => {
+    server.groups.delete(groupId);
+    for (const chat of server.chats.values())
+      if (chat.group_id === groupId) {
+        chat.group_id = null;
+        chat.placement_revision++;
+      }
   };
   server.fetch = async (url, options = {}) => {
     const parsed = new URL(url, "http://localhost");
@@ -167,6 +193,54 @@ function chatServer() {
             }
           : undefined,
       });
+    const groupEtag = (group) => `"group-${group.id}-${group.revision}"`;
+    const groupJson = (group, status = 200) =>
+      Response.json(
+        { ...group, etag: groupEtag(group) },
+        { status, headers: { ETag: groupEtag(group) } },
+      );
+    const placementEtag = (chat) => `"placement-${chat.id}-${chat.placement_revision}"`;
+    const placementJson = (chat) =>
+      Response.json(
+        {
+          chat_id: chat.id,
+          group_id: chat.group_id,
+          placement_revision: chat.placement_revision,
+          etag: placementEtag(chat),
+        },
+        { headers: { ETag: placementEtag(chat) } },
+      );
+    if (url === "/api/groups")
+      return json(
+        [...server.groups.values()].map((group) => ({ ...group, etag: groupEtag(group) })),
+      );
+    if (url.startsWith("/api/groups/")) {
+      const [, groupId, namePath] = url.match(/^\/api\/groups\/(\w+)(.*)$/);
+      const group = server.groups.get(groupId);
+      server.groupWrites.push({
+        groupId,
+        method,
+        body: options.body,
+        etag: options.headers?.["If-Match"],
+      });
+      if (!namePath && method === "PUT") {
+        const name = JSON.parse(options.body).name.trim();
+        if (!name) return json({ detail: "Enter a group name.", code: "invalid_group_name" }, 422);
+        if (group) return groupJson(group);
+        return groupJson(server.addGroup(name, groupId), 201);
+      }
+      if (!group)
+        return json({ detail: "This group no longer exists.", code: "group_not_found" }, 404);
+      if (options.headers?.["If-Match"] !== groupEtag(group))
+        return json({ detail: "This group changed elsewhere.", code: "revision_conflict" }, 412);
+      if (method === "DELETE") {
+        server.deleteGroup(groupId);
+        return new Response(null, { status: 204 });
+      }
+      group.name = JSON.parse(options.body).name.trim();
+      group.revision++;
+      return groupJson(group);
+    }
     if (url === "/api/models") return json(server.models);
     if (url.startsWith("/api/models/")) {
       server.modelRequests.push(url);
@@ -210,28 +284,56 @@ function chatServer() {
             updated: chat.updated,
             recording_count: chat.recordings.length,
             etag: `"chat-${chat.id}-${chat.revision}"`,
+            group_id: chat.group_id,
+            placement_etag: placementEtag(chat),
           })),
       );
     }
     if (url === "/api/chats" && method === "POST") return json(server.add(""), 201);
     const [, chatId, rest] = url.match(/^\/api\/chats\/(\w+)(.*)$/) ?? [];
     if (!rest && method === "PUT") {
+      const groupId = options.body ? JSON.parse(options.body).group_id : null;
+      server.createInputs.push({ id: chatId, group_id: groupId });
       let existing = server.chats.get(chatId);
       if (existing) return json(existing);
+      if (groupId && !server.groups.has(groupId))
+        return json({ detail: "This group no longer exists.", code: "group_not_found" }, 404);
       existing = server.add("");
       server.chats.delete(existing.id);
       existing.id = chatId;
+      existing.group_id = groupId;
       server.chats.set(chatId, existing);
       return json(existing, 201);
     }
     const chat = server.chats.get(chatId);
-    if (!chat) return json({ detail: "This chat no longer exists." }, 404);
+    if (!chat) return json({ detail: "This chat no longer exists.", code: "chat_not_found" }, 404);
     if (!rest && method === "GET") return json(chat);
     if (!rest && method === "DELETE") {
       if (options.headers?.["If-Match"] !== `"chat-${chat.id}-${chat.revision}"`)
         return json({ detail: "This chat changed elsewhere.", code: "revision_conflict" }, 412);
       server.chats.delete(chatId);
       return new Response(null, { status: 204 });
+    }
+    if (rest === "/group") {
+      if (method === "GET") return placementJson(chat);
+      const groupId = JSON.parse(options.body).group_id;
+      server.placementWrites.push({
+        id: chatId,
+        group_id: groupId,
+        etag: options.headers?.["If-Match"],
+      });
+      if (options.headers?.["If-Match"] !== placementEtag(chat))
+        return json(
+          { detail: "This chat's group changed elsewhere.", code: "revision_conflict" },
+          412,
+        );
+      if (groupId && !server.groups.has(groupId))
+        return json({ detail: "This group no longer exists.", code: "group_not_found" }, 404);
+      if (chat.group_id !== groupId) {
+        chat.group_id = groupId;
+        chat.placement_revision++;
+      }
+      return placementJson(chat);
     }
     if (rest === "/title") {
       if (method === "GET")
@@ -345,6 +447,16 @@ async function appEnvironment(t, setup = () => {}, waitReady = true) {
         sockets.push(this);
       }
     },
+    localStorage: {
+      getItem: (key) => {
+        if (server.storageUnavailable) throw new Error("Storage blocked");
+        return server.foldStorage.get(key) ?? null;
+      },
+      setItem: (key, value) => {
+        if (server.storageUnavailable) throw new Error("Storage blocked");
+        server.foldStorage.set(key, value);
+      },
+    },
     fetch: server.fetch,
   };
   const originals = new Map();
@@ -392,14 +504,21 @@ async function waitForIdle(app) {
   assert.fail("The app did not finish its work");
 }
 
-/** The sidebar's rendered rows as [title, active] pairs. */
-function chatRows(app) {
+/** The sidebar's visible chat rows, across the grouped sections. */
+function chatItems(app) {
   return app
     .element("chat-list")
-    .children.map((item) => [
-      item.children[0].children[0].textContent,
-      item.classList.contains("active"),
-    ]);
+    .children.flatMap((section) =>
+      section.children[1].hidden ? [] : section.children[1].children,
+    );
+}
+
+/** The sidebar's rendered rows as [title, active] pairs. */
+function chatRows(app) {
+  return chatItems(app).map((item) => [
+    item.children[0].children[0].textContent,
+    item.classList.contains("active"),
+  ]);
 }
 
 /** Place the cursor as if the user clicked into the transcript. */
@@ -522,7 +641,7 @@ test("chats can be switched, started anew, and deleted after confirming", async 
     ["First chat.", true],
     ["Second chat.", false],
   ]);
-  await app.element("chat-list").children[1].children[0].emit("click");
+  await chatItems(app)[1].children[0].emit("click");
   await waitForIdle(app);
   assert.equal(app.element("transcript").value, "Second chat.");
 
@@ -532,7 +651,7 @@ test("chats can be switched, started anew, and deleted after confirming", async 
   assert.deepEqual(chatRows(app)[0], ["New chat", true]);
   assert.equal(app.server.chats.size, 2, "an empty new chat is not stored");
 
-  const remove = app.element("chat-list").children[1].children[1];
+  const remove = chatItems(app)[1].children[1];
   await remove.emit("click");
   assert.equal(app.server.chats.size, 2, "the first click only asks for confirmation");
   assert.equal(remove.textContent, "Delete");
@@ -813,12 +932,12 @@ test("a conflict keeps the draft, drops queued saves, and confirms before switch
     confirmations.push(message);
     return false;
   });
-  await app.element("chat-list").children[1].children[0].emit("click");
+  await chatItems(app)[1].children[0].emit("click");
   await settle();
   assert.equal(app.element("transcript").value, "My latest draft");
   assert.deepEqual(confirmations, ["Discard your unsaved changes?"]);
   t.mock.method(globalThis.window, "confirm", () => true);
-  await app.element("chat-list").children[1].children[0].emit("click");
+  await chatItems(app)[1].children[0].emit("click");
   await waitForIdle(app);
   assert.equal(app.element("transcript").value, "Second");
   assert.equal(app.element("text-conflict").hidden, true);
@@ -841,8 +960,7 @@ for (const destination of ["switch", "new"]) {
     assert.equal(app.element("save-state").textContent, "Not saved");
     t.mock.method(globalThis.window, "confirm", () => false);
     const navigate = async () => {
-      if (destination === "switch")
-        await app.element("chat-list").children[1].children[0].emit("click");
+      if (destination === "switch") await chatItems(app)[1].children[0].emit("click");
       if (destination === "new") await app.element("new-chat").emit("click");
       await settle();
     };
@@ -1023,9 +1141,9 @@ test("a late list response is ignored after navigating away and back to the same
   await waitForIdle(app);
   assert.equal(typeof release, "function");
   const firstDraft = app.element("transcript").value;
-  await app.element("chat-list").children[1].children[0].emit("click");
+  await chatItems(app)[1].children[0].emit("click");
   await waitForIdle(app);
-  await app.element("chat-list").children[0].children[0].emit("click");
+  await chatItems(app)[0].children[0].emit("click");
   await waitForIdle(app);
   assert.equal(app.element("transcript").value, firstDraft);
   const beforeResponse = chatRows(app);
@@ -1036,7 +1154,7 @@ test("a late list response is ignored after navigating away and back to the same
 });
 
 async function deleteRow(app, index) {
-  const remove = app.element("chat-list").children[index].children[1];
+  const remove = chatItems(app)[index].children[1];
   await remove.emit("click");
   await remove.emit("click");
   await settle();
@@ -1269,7 +1387,7 @@ test("a late refresh cannot replace the sidebar while navigation GET is pending"
   await app.element("stop").emit("click");
   await waitForIdle(app);
   const before = chatRows(app);
-  await app.element("chat-list").children[1].children[0].emit("click");
+  await chatItems(app)[1].children[0].emit("click");
   await settle();
   assert.equal(typeof releaseChat, "function");
   releaseList();
@@ -1411,7 +1529,7 @@ test("title responses with remote text never freshen the old text validator", as
   // Fetch the manual title first, as a real reload would.
   await app.element("new-chat").emit("click");
   await waitForIdle(app);
-  await app.element("chat-list").children[1].children[0].emit("click");
+  await chatItems(app)[1].children[0].emit("click");
   await waitForIdle(app);
   stored.text = "Remote text";
   stored.text_revision++;
@@ -1442,7 +1560,7 @@ test("late title responses are ignored after navigating to another chat", async 
   await app.element("chat-title").emit("click");
   await submitTitle(app, "Renamed first");
   await app.element("title-cancel").emit("click");
-  await app.element("chat-list").children[1].children[0].emit("click");
+  await chatItems(app)[1].children[0].emit("click");
   await waitForIdle(app);
   release();
   await settle();
@@ -1625,7 +1743,7 @@ test("Clear requests the complete archive again and supersedes an old search res
   assert.equal(app.server.listQueries.at(-1), "");
   release();
   await settle();
-  assert.equal(app.element("chat-list").children.length, 3);
+  assert.equal(chatItems(app).length, 3);
   assert.equal(app.element("chat-filter-input").value, "");
   assert.equal(app.element("transcript").value, "First");
 });
@@ -1750,6 +1868,463 @@ test("mutation refreshes retain the active filter across save, rename and deleti
   assert.equal(app.server.listQueries.at(-1), "topic");
 });
 
+function groupSection(app, groupId = null) {
+  return app
+    .element("chat-list")
+    .children.find((section) => section.children[1].id === `group-chats-${groupId ?? "unsorted"}`);
+}
+
+async function submitGroupName(app, name) {
+  app.element("group-name-input").value = name;
+  await app.element("group-name-form").emit("submit", { preventDefault() {} });
+  await settle();
+}
+
+async function startGroupedDraft(app, groupId) {
+  await groupSection(app, groupId).children[0].children[1].emit("click");
+  await waitForIdle(app);
+}
+
+async function openMoveDialog(app, index = 0) {
+  await chatItems(app)[index].children[2].emit("click");
+}
+
+async function submitMove(app, groupId) {
+  app.element("group-move-select").value = groupId ?? "";
+  await app.element("group-move-form").emit("submit", { preventDefault() {} });
+  await settle();
+}
+
+test("groups retain server order, include empty groups and fold with accessible controls", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    const group = server.addGroup("Project");
+    server.addGroup("Email");
+    server.add("Unsorted text");
+    server.add("Project text").group_id = group.id;
+  });
+  assert.deepEqual(
+    app.element("chat-list").children.map((section) => section.children[0].children[0].textContent),
+    ["Unsorted", "Project", "Email"],
+  );
+  const fold = groupSection(app, id(100)).children[0].children[0];
+  assert.equal(fold.attributes.get("aria-expanded"), "true");
+  assert.equal(fold.attributes.get("aria-controls"), `group-chats-${id(100)}`);
+  await fold.emit("click");
+  assert.equal(groupSection(app, id(100)).children[1].hidden, true);
+  assert.deepEqual(JSON.parse(app.server.foldStorage.get("diktator.group-folds")), [id(100)]);
+  assert.deepEqual(chatRows(app), [["Unsorted text", true]]);
+  assert.equal(app.element("transcript").value, "Unsorted text");
+});
+
+test("folds work when storage is blocked and restore from valid saved state", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    server.addGroup("Project");
+    server.foldStorage.set("diktator.group-folds", JSON.stringify([id(100), 123]));
+  });
+  assert.equal(groupSection(app, id(100)).children[1].hidden, true);
+  app.server.storageUnavailable = true;
+  await groupSection(app, id(100)).children[0].children[0].emit("click");
+  assert.equal(groupSection(app, id(100)).children[1].hidden, false);
+});
+
+test("search temporarily reveals matching folded groups and clearing restores folds", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => {
+    const group = server.addGroup("Project");
+    server.add("Original");
+    server.add("Matching text").group_id = group.id;
+    server.searchResults.set("match", [id(2)]);
+    server.foldStorage.set("diktator.group-folds", JSON.stringify([group.id]));
+  });
+  setCursor(app, 2, 4);
+  await filterChats(t, app, "match");
+  assert.deepEqual(chatRows(app), [["Matching text", false]]);
+  assert.equal(groupSection(app, id(100)).children[1].hidden, false);
+  assert.equal(groupSection(app, id(100)).children[0].children[0].disabled, true);
+  assert.equal(groupSection(app), undefined);
+  assert.equal(app.element("transcript").value, "Original");
+  assert.deepEqual(
+    [app.element("transcript").selectionStart, app.element("transcript").selectionEnd],
+    [2, 4],
+  );
+  await app.element("chat-filter-clear").emit("click");
+  await settle();
+  assert.equal(groupSection(app, id(100)).children[1].hidden, true);
+  assert.deepEqual(chatRows(app), [["Original", true]]);
+});
+
+test("New chat in a group stays lazy and creation carries its initial private placement", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => server.addGroup("Project"));
+  await startGroupedDraft(app, id(100));
+  assert.equal(app.server.chats.size, 0);
+  assert.equal(
+    groupSection(app, id(100)).children[1].children[0].children[0].children[0].textContent,
+    "New chat",
+  );
+  await editAndSave(t, app, "Project draft");
+  const [stored] = app.server.chats.values();
+  assert.equal(stored.group_id, id(100));
+  assert.deepEqual(app.server.createInputs, [{ id: stored.id, group_id: id(100) }]);
+  await app.element("new-chat").emit("click");
+  await waitForIdle(app);
+  assert.equal(
+    groupSection(app).children[1].children[0].children[0].children[0].textContent,
+    "New chat",
+  );
+});
+
+test("a create retry reuses its chosen ID after an ambiguous commit and group deletion", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => server.addGroup("Project"));
+  await startGroupedDraft(app, id(100));
+  const fetch = globalThis.fetch;
+  let fail = true;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (/^\/api\/chats\/\w+$/u.test(String(url)) && options?.method === "PUT" && fail) {
+      fail = false;
+      app.server.deleteGroup(id(100));
+      throw new Error("Connection interrupted");
+    }
+    return response;
+  });
+  await editAndSave(t, app, "Keep my draft");
+  assert.equal(app.element("transcript").value, "Keep my draft");
+  await editAndSave(t, app, "Keep my draft and retry");
+  assert.equal(app.server.chats.size, 1);
+  assert.equal(app.server.createInputs.length, 2);
+  assert.deepEqual(app.server.createInputs[0], app.server.createInputs[1]);
+  assert.equal(app.server.createInputs[1].group_id, id(100));
+  assert.equal([...app.server.chats.values()][0].group_id, null);
+  assert.equal([...app.server.chats.values()][0].text, "Keep my draft and retry");
+});
+
+test("a missing draft group offers fresh Unsorted creation while preserving the draft", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => server.addGroup("Project"));
+  await startGroupedDraft(app, id(100));
+  app.server.deleteGroup(id(100));
+  await editAndSave(t, app, "Keep this text");
+  const first = app.server.createInputs[0];
+  assert.equal(app.server.chats.size, 0);
+  assert.equal(app.element("draft-unsorted").hidden, false);
+  assert.match(app.element("error").textContent, /text and recording are kept/);
+  assert.equal(app.element("transcript").value, "Keep this text");
+  assert.equal(groupSection(app, id(100)).children[0].children[0].textContent, "Unavailable group");
+  await app.element("draft-unsorted").emit("click");
+  await settle();
+  assert.equal(app.server.chats.size, 1);
+  assert.notEqual(app.server.createInputs[1].id, first.id);
+  assert.equal(app.server.createInputs[1].group_id, null);
+  assert.equal([...app.server.chats.values()][0].text, "Keep this text");
+});
+
+test("create and rename group use chosen IDs and independent conditional validators", async (t) => {
+  const app = await appEnvironment(t);
+  await app.element("new-group").emit("click");
+  await submitGroupName(app, "Project");
+  const [group] = app.server.groups.values();
+  assert.equal(app.server.chats.size, 0);
+  assert.equal(app.server.groupWrites[0].method, "PUT");
+  await groupSection(app, group.id).children[0].children[2].children[1].children[0].emit("click");
+  await submitGroupName(app, "Renamed project");
+  assert.equal(group.name, "Renamed project");
+  assert.equal(app.server.groupWrites[1].etag, `"group-${group.id}-1"`);
+  assert.equal(app.element("transcript").value, "");
+});
+
+test("invalid group names remain editable and ambiguous creates reconcile by chosen ID", async (t) => {
+  const app = await appEnvironment(t);
+  await app.element("new-group").emit("click");
+  await submitGroupName(app, "");
+  assert.equal(app.element("group-name-input").readOnly, false);
+  const fetch = globalThis.fetch;
+  let fail = true;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (String(url).startsWith("/api/groups/") && fail) {
+      fail = false;
+      throw new Error("Connection interrupted");
+    }
+    return response;
+  });
+  await submitGroupName(app, "Recovered group");
+  assert.equal(app.server.groups.size, 1);
+  assert.equal(app.element("group-editor").open, false);
+  assert.equal([...app.server.groups.values()][0].name, "Recovered group");
+});
+
+test("group deletion keeps chats, text, recordings and editor selection", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    const group = server.addGroup("Project");
+    server.add("Keep text", [
+      { id: id(99), created: "2026-10-07T10:00:00Z", duration_seconds: 2 },
+    ]).group_id = group.id;
+  });
+  const stored = app.server.chats.get(id(1));
+  const before = { revision: stored.revision, updated: stored.updated };
+  setCursor(app, 2, 5);
+  await groupSection(app, id(100)).children[0].children[2].children[1].children[1].emit("click");
+  await waitForIdle(app);
+  assert.equal(app.server.groups.size, 0);
+  assert.equal(stored.group_id, null);
+  assert.deepEqual({ revision: stored.revision, updated: stored.updated }, before);
+  assert.equal(stored.recordings.length, 1);
+  assert.equal(app.element("transcript").value, "Keep text");
+  assert.deepEqual(
+    [app.element("transcript").selectionStart, app.element("transcript").selectionEnd],
+    [2, 5],
+  );
+  assert.deepEqual(chatRows(app), [["Keep text", true]]);
+});
+
+test("moving a current chat preserves its unsaved draft and selection", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => {
+    server.add("Original");
+    server.addGroup("Project");
+  });
+  app.element("transcript").value = "Updated draft";
+  setCursor(app, 2, 5);
+  await app.element("transcript").emit("input");
+  await openMoveDialog(app);
+  await submitMove(app, id(100));
+  const stored = app.server.chats.get(id(1));
+  assert.equal(stored.text, "Original");
+  assert.equal(app.element("transcript").value, "Updated draft");
+  assert.equal(stored.group_id, id(100));
+  assert.equal(stored.revision, 1, "moving never saves shared text");
+  assert.equal(app.server.placementWrites[0].etag, `"placement-${id(1)}-1"`);
+  assert.deepEqual(
+    [app.element("transcript").selectionStart, app.element("transcript").selectionEnd],
+    [2, 5],
+  );
+  await deleteRow(app, 0);
+  assert.equal(app.server.chats.size, 0, "move does not replace the shared deletion validator");
+});
+
+test("stale move retains the draft and requires explicit retry with reconciled placement", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    server.add("Original");
+    server.addGroup("Project");
+    server.addGroup("Email");
+  });
+  await openMoveDialog(app);
+  const stored = app.server.chats.get(id(1));
+  stored.group_id = id(101);
+  stored.placement_revision++;
+  await submitMove(app, id(100));
+  assert.equal(stored.group_id, id(101));
+  assert.equal(app.element("group-move").open, true);
+  assert.match(app.element("group-move-error").textContent, /changed elsewhere/);
+  assert.equal(app.element("transcript").value, "Original");
+  await submitMove(app, id(100));
+  assert.equal(stored.group_id, id(100));
+  assert.equal(app.server.placementWrites[1].etag, `"placement-${id(1)}-2"`);
+  assert.equal(app.element("group-move").open, false);
+});
+
+test("a lost move response reconciles privately and a missing group retains the editor", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    server.add("Original");
+    server.addGroup("Project");
+  });
+  const fetch = globalThis.fetch;
+  let fail = true;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (String(url).endsWith("/group") && options?.method === "PUT" && fail) {
+      fail = false;
+      throw new Error("Connection interrupted");
+    }
+    return response;
+  });
+  await openMoveDialog(app);
+  await submitMove(app, id(100));
+  assert.equal(app.element("group-move").open, false);
+  assert.equal(app.server.chats.get(id(1)).group_id, id(100));
+  await openMoveDialog(app);
+  app.server.deleteGroup(id(100));
+  await submitMove(app, id(100));
+  // Deletion changed the validator, so conflict reconciliation happens first.
+  assert.match(app.element("group-move-error").textContent, /changed elsewhere/);
+  await submitMove(app, id(100));
+  assert.match(app.element("group-move-error").textContent, /no longer exists/);
+  assert.equal(app.element("transcript").value, "Original");
+  await submitMove(app, null);
+  assert.equal(app.element("group-move").open, false);
+});
+
+test("group actions respect recording guards while search keeps the recording active", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => {
+    server.add("Original");
+    server.addGroup("Project");
+  });
+  const socket = await startLive(app);
+  assert.equal(app.element("new-group").disabled, true);
+  assert.equal(groupSection(app, id(100)).children[0].children[1].disabled, true);
+  assert.equal(chatItems(app)[0].children[2].disabled, true);
+  await app.element("new-group").emit("click");
+  await chatItems(app)[0].children[2].emit("click");
+  assert.equal(app.element("group-editor").open, undefined);
+  assert.equal(app.element("group-move").open, undefined);
+  await filterChats(t, app, "unmatched");
+  assert.equal(app.state.stops, 0);
+  await app.element("stop").emit("click");
+  await waitForEnd(socket);
+  socket.event({ type: "done", text: "" });
+  await waitForIdle(app);
+});
+
+test("a missing draft group retains captured audio through fresh Unsorted creation", async (t) => {
+  const app = await appEnvironment(t, (server) => server.addGroup("Project"));
+  await startGroupedDraft(app, id(100));
+  app.server.deleteGroup(id(100));
+  app.element("live-mode").checked = false;
+  await app.element("record").emit("click");
+  await app.element("stop").emit("click");
+  await waitForIdle(app);
+  assert.equal(app.element("draft-unsorted").hidden, false);
+  assert.equal(app.element("clips").children.length, 1);
+  assert.equal(app.server.batchPosts[0], app.wav);
+  assert.equal(app.element("transcript").value, "Complete recording.");
+  await app.element("draft-unsorted").emit("click");
+  await settle();
+  assert.equal(
+    app.element("clips").children.length,
+    1,
+    "the captured WAV remains available for retry",
+  );
+  await app.element("clips").children[0].children[1].emit("click");
+  await waitForIdle(app);
+  const [stored] = app.server.chats.values();
+  assert.equal(stored.group_id, null);
+  assert.equal(stored.recordings.length, 1);
+  assert.equal(stored.text, "Complete recording. Stored recording.");
+});
+
+test("a delayed move acknowledgement keeps newer editor text and selection", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => {
+    server.add("Original");
+    server.addGroup("Project");
+  });
+  const fetch = globalThis.fetch;
+  let release;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (String(url).endsWith("/group") && options?.method === "PUT")
+      await new Promise((resolve) => {
+        release = resolve;
+      });
+    return response;
+  });
+  await openMoveDialog(app);
+  await submitMove(app, id(100));
+  app.element("transcript").value = "Newer local draft";
+  setCursor(app, 2, 7);
+  await app.element("transcript").emit("input");
+  await app.element("new-chat").emit("click");
+  release();
+  await waitForIdle(app);
+  assert.equal(app.element("transcript").value, "Newer local draft");
+  assert.deepEqual(
+    [app.element("transcript").selectionStart, app.element("transcript").selectionEnd],
+    [2, 7],
+  );
+  assert.equal(app.server.chats.get(id(1)).text, "Original");
+  assert.equal(app.server.chats.get(id(1)).group_id, id(100));
+});
+
+test("independent group/chat snapshots keep unknown placements visible without rewriting them", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    server.add("Visible in Unsorted");
+    server.add("Placed in a newer group").group_id = id(100);
+  });
+  assert.deepEqual(chatRows(app), [
+    ["Visible in Unsorted", true],
+    ["Placed in a newer group", false],
+  ]);
+  assert.equal(groupSection(app, id(100)).children[0].children[0].textContent, "Unavailable group");
+  assert.deepEqual(app.server.placementWrites, []);
+  assert.equal(app.server.chats.get(id(2)).group_id, id(100));
+  app.server.addGroup("Project");
+  await app.element("chat-filter-retry").emit("click");
+  await settle();
+  assert.equal(groupSection(app, id(100)).children[0].children[0].textContent, "Project");
+  assert.deepEqual(app.server.placementWrites, []);
+});
+
+test("unavailable text saves do not block an independent placement move", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  await openMoveDialog(app);
+  app.element("transcript").value = "Retained draft";
+  await app.element("transcript").emit("input");
+  const fetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url).endsWith("/text")) throw new Error("Save unavailable");
+    return fetch(url, options);
+  });
+  await submitMove(app, null);
+  assert.equal(app.element("group-move").open, false);
+  assert.equal(app.server.placementWrites.length, 1);
+  assert.equal(app.element("transcript").value, "Retained draft");
+});
+
+test("private placement reads cannot block opening or saving a chat", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  const fetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url).endsWith("/group") && !options?.method)
+      throw new Error("Private placement unavailable");
+    return fetch(url, options);
+  });
+  await app.element("new-chat").emit("click");
+  await settle();
+  await editAndSave(t, app, "New draft");
+  assert.equal(
+    [...app.server.chats.values()].find((chat) => chat.text === "New draft")?.text,
+    "New draft",
+  );
+  await app.element("new-chat").emit("click");
+  await settle();
+  const original = chatItems(app).find(
+    (row) => row.children[0].children[0].textContent === "Original",
+  );
+  await original.children[0].emit("click");
+  await settle();
+  assert.equal(app.element("transcript").value, "Original");
+});
+
+test("group registry failures preserve chats and search reuses known groups", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  const fetch = globalThis.fetch;
+  let groupReads = 0;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url) === "/api/groups") {
+      groupReads++;
+      throw new Error("Registry unavailable");
+    }
+    return fetch(url, options);
+  });
+  await app.element("chat-filter-retry").emit("click");
+  await settle();
+  assert.equal(groupReads, 1);
+  assert.deepEqual(chatRows(app), [["Original", true]]);
+  app.server.searchResults.set("Original", [id(1)]);
+  app.element("chat-filter-input").value = "Original";
+  await app.element("chat-filter-input").emit("input");
+  t.mock.timers.tick(201);
+  await settle();
+  assert.equal(groupReads, 1);
+  assert.deepEqual(chatRows(app), [["Original", true]]);
+});
+
 test("successful title save restores focus after a delayed sidebar refresh", async (t) => {
   const app = await appEnvironment(t, (server) => server.add("Original"));
   const fetch = globalThis.fetch;
@@ -1834,11 +2409,11 @@ test("autosave keeps same-query rows visible during refresh and after a failure"
   });
   await editAndSave(t, app, "Edited first");
   assert.equal(app.element("chat-list").hidden, false);
-  assert.equal(app.element("chat-list").children.length, 2);
+  assert.equal(chatRows(app).length, 2);
   failRefresh(new TypeError("Offline"));
   await settle();
   assert.equal(app.element("chat-list").hidden, false);
-  assert.equal(app.element("chat-list").children.length, 2);
+  assert.equal(chatRows(app).length, 2);
   assert.equal(app.element("chat-filter-state").textContent, "Offline");
   assert.equal(app.element("chat-filter-retry").hidden, false);
 });
@@ -1921,3 +2496,33 @@ for (const recovery of ["search and clear", "autosave"]) {
     assert.equal(app.element("transcript").value, recovery === "autosave" ? "Local draft" : "");
   });
 }
+
+test("autosaves and uploads reuse the group registry without surfacing unrelated read failures", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  const fetch = globalThis.fetch;
+  let groupReads = 0;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url) === "/api/groups") {
+      groupReads++;
+      throw new Error("Registry unavailable");
+    }
+    return fetch(url, options);
+  });
+  await editAndSave(t, app, "First edit");
+  await editAndSave(t, app, "Second edit");
+  assert.equal(groupReads, 0);
+  assert.equal(app.element("error").hidden, true);
+  assert.equal(app.server.chats.get(id(1)).text, "Second edit");
+  app.element("live-mode").checked = false;
+  await app.element("record").emit("click");
+  await app.element("stop").emit("click");
+  await waitForIdle(app);
+  assert.equal(app.server.chats.get(id(1)).recordings.length, 1);
+  assert.equal(groupReads, 0);
+  assert.equal(app.element("error").hidden, true);
+  await app.element("chat-filter-retry").emit("click");
+  await settle();
+  assert.equal(groupReads, 1);
+  assert.equal(app.element("error").hidden, false);
+});

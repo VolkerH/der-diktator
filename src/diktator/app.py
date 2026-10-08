@@ -19,7 +19,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.responses import Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocketState
 from websockets.exceptions import WebSocketException
@@ -43,6 +43,8 @@ from diktator.errors import (
     error_responses,
     install_error_handlers,
 )
+from diktator.group_models import ChatCreate, ChatPlacement, Group, GroupName, PlacementUpdate
+from diktator.groups import GroupService
 from diktator.models import ModelId, ModelsStatus
 from diktator.storage import Storage, open_storage
 from diktator.streaming import (
@@ -79,6 +81,9 @@ def create_app(
     def store() -> ChatService:
         return app.state.storage.chats
 
+    def groups() -> GroupService:
+        return GroupService(store().engine)
+
     def local_actor() -> str:
         return LOCAL_USER_ID
 
@@ -86,11 +91,6 @@ def create_app(
 
     class TextUpdate(BaseModel):
         text: str = Field(max_length=settings.max_text_characters)
-
-    class ChatCreate(BaseModel):
-        """Creation has no options; reject ignored inputs on retryable requests."""
-
-        model_config = ConfigDict(extra="forbid")
 
     # The bundled interface is small: load once rather than reading files per request.
     html = (STATIC_DIRECTORY / "index.html").read_bytes()
@@ -187,10 +187,129 @@ def create_app(
         recording, _info = await read_recording(request)
         return await engine.transcribe(recording, model)
 
+    group_headers = {
+        "ETag": {
+            "description": "Opaque strong validator for this private resource.",
+            "schema": {"type": "string"},
+        }
+    }
+
+    def group_response(response: Response, group: Group) -> Group:
+        response.headers["ETag"] = group.etag
+        return group
+
+    @app.get(
+        "/api/groups",
+        responses=error_responses(500),
+        description="List only the current actor's groups in creation order. "
+        "Duplicate names are allowed.",
+    )
+    def list_groups(actor_id: Actor) -> list[Group]:
+        return groups().list(actor_id)
+
+    @app.post(
+        "/api/groups",
+        status_code=201,
+        responses={**error_responses(422, 500), 201: {"headers": group_headers}},
+    )
+    def create_group(name: GroupName, actor_id: Actor, response: Response) -> Group:
+        return group_response(response, groups().create(actor_id, name.name)[0])
+
+    @app.put(
+        "/api/groups/{group_id}",
+        description="Create a private group with a client-chosen lowercase 32-hex ID and name. "
+        "An existing own ID returns the current group without changing its name. "
+        "Returns 201 for creation, 200 for an existing own ID, or 409 idempotency_conflict for "
+        "an ID owned by another actor. Reuse the same ID after an unknown outcome. "
+        "Deleted IDs can create a new incarnation.",
+        responses={
+            **error_responses(409, 422, 500),
+            200: {"headers": group_headers},
+            201: {"model": Group, "headers": group_headers},
+        },
+    )
+    def create_group_with_id(
+        group_id: ChatId, name: GroupName, actor_id: Actor, response: Response
+    ) -> Group:
+        group, created = groups().create(actor_id, name.name, group_id)
+        response.status_code = 201 if created else 200
+        return group_response(response, group)
+
+    @app.get(
+        "/api/groups/{group_id}",
+        responses={**error_responses(404, 422, 500), 200: {"headers": group_headers}},
+    )
+    def get_group(group_id: ChatId, actor_id: Actor, response: Response) -> Group:
+        return group_response(response, groups().get(actor_id, group_id))
+
+    @app.put(
+        "/api/groups/{group_id}/name",
+        description="Rename only this actor's group. Trim 1-80 Unicode code points, excluding "
+        "controls/line breaks. Invalid names return invalid_group_name. Optional If-Match "
+        "uses the group ETag; stale/weak values return 412 revision_conflict. Identical names "
+        "change nothing. Renames do not modify any chats, titles, recordings or recency.",
+        responses={**error_responses(404, 412, 422, 500), 200: {"headers": group_headers}},
+    )
+    def rename_group(
+        group_id: ChatId,
+        name: GroupName,
+        actor_id: Actor,
+        response: Response,
+        if_match: Annotated[str | None, Header()] = None,
+    ) -> Group:
+        return group_response(response, groups().rename(actor_id, group_id, name.name, if_match))
+
+    @app.delete(
+        "/api/groups/{group_id}",
+        status_code=204,
+        description="Delete this actor's group and atomically move its placements to "
+        "Unsorted (null), advancing each private placement revision. Keep every shared "
+        "chat, title, text, recording and recency unchanged. Optional If-Match uses the "
+        "group validator; stale values write nothing. "
+        "The deleted ID can be reused with a fresh validator.",
+        responses=error_responses(404, 412, 422, 500),
+    )
+    def delete_group(
+        group_id: ChatId, actor_id: Actor, if_match: Annotated[str | None, Header()] = None
+    ) -> None:
+        groups().delete(actor_id, group_id, if_match)
+
+    @app.get(
+        "/api/chats/{chat_id}/group",
+        description="Read the actor-private placement. Its ETag covers placement only, scoped "
+        "to actor and chat incarnation. It never validates the shared Chat or its text/title.",
+        responses={**error_responses(404, 422, 500), 200: {"headers": group_headers}},
+    )
+    def get_placement(chat_id: ChatId, actor_id: Actor, response: Response) -> ChatPlacement:
+        result = groups().placement(actor_id, chat_id)
+        response.headers["ETag"] = result.etag
+        return result
+
+    @app.put(
+        "/api/chats/{chat_id}/group",
+        description="Set this actor's one private group, or null for Unsorted. Require chat "
+        "membership and ownership of the destination. Optional If-Match checks the placement "
+        "validator atomically; stale values write nothing. An identical placement is a no-op. "
+        "Moves leave shared Chat/text/title validators, recency and recordings unchanged.",
+        responses={**error_responses(404, 412, 422, 500), 200: {"headers": group_headers}},
+    )
+    def move_chat(
+        chat_id: ChatId,
+        placement: PlacementUpdate,
+        actor_id: Actor,
+        response: Response,
+        if_match: Annotated[str | None, Header()] = None,
+    ) -> ChatPlacement:
+        result = groups().move(actor_id, chat_id, placement.group_id, if_match)
+        response.headers["ETag"] = result.etag
+        return result
+
     @app.get(
         "/api/chats",
         description="List accessible chats with a server-issued opaque `etag` per entry. "
         "Use that value in `If-Match` for conditional deletion without reading the full chat. "
+        "Each summary also includes actor-private group_id and placement_etag; these are "
+        "independent of the shared Chat validator. "
         "Optional `q` filters words in custom names or full transcripts; matching rules and "
         "limits are documented in docs/chat-api.md.",
         responses=error_responses(422, 500),
@@ -228,22 +347,33 @@ def create_app(
     @app.post(
         "/api/chats",
         status_code=201,
-        responses={201: {"headers": validator_headers}},
-        description="Create an empty chat with a server-chosen ID. Returns the complete Chat "
+        responses={**error_responses(404, 422, 500), 201: {"headers": validator_headers}},
+        description="Create an empty chat with a server-chosen ID. Optional group_id places it "
+        "in an actor-owned group; omitted/null options default to Unsorted. "
+        "Returns the shared Chat "
         "with its `ETag` and independent `Text-ETag` for subsequent text saves.",
     )
-    def create_chat(actor_id: Actor, response: Response) -> Chat:
-        return chat_headers(response, store().create(actor_id))
+    def create_chat(
+        actor_id: Actor,
+        response: Response,
+        options: Annotated[ChatCreate | None, Body()] = None,
+    ) -> Chat:
+        return chat_headers(
+            response, store().create(actor_id, options.group_id if options else None)
+        )
 
     @app.put(
         "/api/chats/{chat_id}",
-        description="Create an empty chat using a lowercase 32-hex client ID. Accepts no body, "
-        "null or an empty object; unknown options return 422. Returns 201 for creation, "
-        "200 for an accessible existing chat without resetting its edits, or 409 "
-        "`idempotency_conflict` for an inaccessible ID. Reuse the ID after a lost response. "
-        "No tombstones: deletion permits a new incarnation with fresh validators.",
+        description="Create an empty chat using a lowercase 32-hex client ID. Optional group_id "
+        "is an actor-owned group or null (Unsorted); omitted bodies/options default to null. "
+        "An accessible existing ID ignores creation options and "
+        "returns 200 with the current shared Chat after later moves or group deletion. An "
+        "inaccessible ID returns 409 idempotency_conflict; "
+        "a missing destination for a new ID returns 404 group_not_found. Return 201 for new chats. "
+        "Reuse the same ID after a lost response. Deletion permits a fresh "
+        "chat incarnation; group placement has its own subresource and validator.",
         responses={
-            **error_responses(409, 422),
+            **error_responses(404, 409, 422, 500),
             200: {"headers": validator_headers},
             201: {"model": Chat, "headers": validator_headers},
         },
@@ -252,9 +382,11 @@ def create_app(
         chat_id: ChatId,
         actor_id: Actor,
         response: Response,
-        _input: Annotated[ChatCreate | None, Body()] = None,
+        options: Annotated[ChatCreate | None, Body()] = None,
     ) -> Chat:
-        result, created = store().create_with_id(actor_id, chat_id)
+        result, created = store().create_with_id(
+            actor_id, chat_id, options.group_id if options else None
+        )
         response.status_code = 201 if created else 200
         return chat_headers(response, result)
 

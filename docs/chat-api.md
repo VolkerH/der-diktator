@@ -46,11 +46,16 @@ Drafts and retained recording buffers are tab-local; closing the tab does not pe
 
 ## Create and upload retries
 
-`PUT /api/chats/{id}` accepts a client-chosen lowercase 32-hex ID and no creation options
-(no body, `null`, or `{}`); unknown fields return 422. It creates an empty chat with 201, or
-returns the accessible existing chat with 200 without resetting later edits. An ID held by an
-inaccessible chat returns 409 `idempotency_conflict`. Bodyless `POST /api/chats` still generates
-an ID and returns 201. Clients choose an ID once and keep it after a lost response or failed attempt.
+`PUT /api/chats/{id}` accepts a client-chosen lowercase 32-hex ID and an optional
+`{"group_id": "32-hex-id"}` body. No body, `null`, `{}` or null group defaults to Unsorted;
+unknown fields return 422. A new ID requires an actor-owned destination and returns 201.
+An accessible existing ID returns the current shared Chat with 200, ignoring creation
+options and preserving edits and private moves. An inaccessible ID returns 409
+`idempotency_conflict`; a missing destination for a new ID returns 404 `group_not_found`.
+`POST /api/chats` accepts the same body, generates an ID and returns 201. Retain the
+chosen ID after a lost response; current placement is an independent subresource.
+Failed database creation
+returns 500 `storage_error` and rolls back the chat and initial membership together.
 
 `PUT /api/chats/{id}/recordings/{recording_id}` accepts validated PCM WAV with `audio/wav`
 (or `audio/x-wav`), using the same limits as the existing POST upload. It returns `Recording`
@@ -171,3 +176,64 @@ its selection, or stops recording. An open chat remains open if its row is
 excluded. Persisted mutations refresh the active query, and filtered results
 never inject an unmatched local new-chat row. Unsaved draft words become
 searchable after autosave succeeds. Search text is tab-local display state.
+
+## Private groups and placement
+
+`GET /api/groups` lists the current actor's groups by creation time, then ID. Each group
+is `{id, name, created, revision, etag}`; individual reads and writes also return its
+quoted `ETag` header. Groups belong to one actor. Missing and inaccessible groups both
+return 404 `group_not_found`. Duplicate names are valid. Names are trimmed and must
+contain 1–80 Unicode code points, with controls, surrogates and line separators rejected
+before trimming (422 `invalid_group_name`). Missing/wrong/unknown fields use 422
+`validation_error`. Names and placement never become storage paths.
+
+`POST /api/groups` with `{"name": "Project"}` chooses an ID and returns 201.
+`PUT /api/groups/{id}` creates with a lowercase 32-hex client ID. An existing own ID
+returns the current group with 200, ignoring the supplied name and preserving renames.
+An ID owned by another actor returns 409 `idempotency_conflict` without exposing metadata.
+Reuse the same ID after an unknown creation outcome. Deleted IDs may create a fresh
+incarnation with new validators; no tombstones or original inputs are stored.
+
+`GET /api/groups/{id}` reads a group. `PUT /api/groups/{id}/name` takes the same name
+body and checks optional `If-Match` against the group validator. Changed names increment
+only the group's revision; identical names are no-ops. `DELETE /api/groups/{id}` checks
+the same validator and returns 204. It atomically clears that actor's placements to
+Unsorted and increments each affected placement revision before deleting the group.
+It keeps chat IDs, text, shared titles, recordings, file locations, revisions and recency
+unchanged. Repeated deletion returns the same scoped 404 as a missing group. Unsorted
+is implicit `null`, has no group resource, and cannot be renamed/deleted. SQLite write
+transactions serialize lifecycle and placement changes; cleanup is never deferred.
+
+`GET /api/chats/{id}/group` returns `{chat_id, group_id, placement_revision, etag}` and
+its own quoted `ETag`. `PUT` requires `{"group_id": "32-hex-id"}` or
+`{"group_id": null}`. It requires chat membership and ownership of the destination.
+Missing/inaccessible chats return 404 `chat_not_found`; missing/inaccessible targets
+return 404 `group_not_found`. Optional `If-Match` checks this **placement** validator,
+scoped to actor and chat incarnation. A changed destination increments only the private
+placement revision; identical placement changes nothing. Group rename does not change
+placement. Weak/stale or wrong-scope validators return 412 `revision_conflict`; strong
+lists and `*` follow the existing rules. Missing headers retain serialized unconditional
+writes. Group storage failures return 500 `storage_error`, never successful empty
+registries or reset placement. Transactions roll back all affected rows on failure.
+
+A `ChatSummary` adds actor-private `group_id` and `placement_etag`; its existing `etag`
+still validates the shared **Chat**, for deletion. Shared `Chat` JSON deliberately omits
+placement, keeping Chat/Text/Title/upload validators independent of private filing.
+Two members can file the same chat differently. After a move, clients update only
+placement metadata and never acknowledge unseen shared text/title/audio. Search spans
+all accessible chats, independent of group, and keeps existing global recency order;
+clients group those summaries for display without reimplementing the matcher.
+
+The browser stores only fold state locally by stable group ID, tolerating unavailable
+storage. Search temporarily expands matching groups without changing saved folds or
+editor selection. Because chat/group lists are separate snapshots, a listed chat whose
+group is not yet in the observed registry remains visible under a temporary “Unavailable
+group” label until refresh; this never changes its stored placement. Global New chat starts in Unsorted; a group's New chat selects that
+pending destination and remains lazy until saving text/audio or a title. Keep the chosen
+chat ID across retries; an existing ID ignores creation options. After an
+ambiguous write, refetch and compare before an explicit retry. If a draft's destination
+was deleted, `group_not_found` proves the chosen chat ID is absent, so offer a fresh
+Unsorted identity directly. Preserve its text/audio while resolving the error.
+
+Group moves preserve unsaved or conflicted editor text. Search, autosave and uploads reuse the last group
+registry; a registry load failure keeps accessible chats visible with their last known labels.

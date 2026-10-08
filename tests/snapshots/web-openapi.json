@@ -453,10 +453,615 @@
         }
       }
     },
+    "/api/groups": {
+      "get": {
+        "summary": "List Groups",
+        "description": "List only the current actor's groups in creation order. Duplicate names are allowed.",
+        "operationId": "list_groups_api_groups_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Group"
+                  },
+                  "type": "array",
+                  "title": "Response List Groups Api Groups Get"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Group",
+        "operationId": "create_group_api_groups_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupName"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Opaque strong validator for this private resource.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Group"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/groups/{group_id}": {
+      "put": {
+        "summary": "Create Group With Id",
+        "description": "Create a private group with a client-chosen lowercase 32-hex ID and name. An existing own ID returns the current group without changing its name. Returns 201 for creation, 200 for an existing own ID, or 409 idempotency_conflict for an ID owned by another actor. Reuse the same ID after an unknown outcome. Deleted IDs can create a new incarnation.",
+        "operationId": "create_group_with_id_api_groups__group_id__put",
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$",
+              "title": "Group Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupName"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Group"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "Opaque strong validator for this private resource.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "201": {
+            "headers": {
+              "ETag": {
+                "description": "Opaque strong validator for this private resource.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Group"
+                }
+              }
+            },
+            "description": "Created"
+          }
+        }
+      },
+      "get": {
+        "summary": "Get Group",
+        "operationId": "get_group_api_groups__group_id__get",
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$",
+              "title": "Group Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Group"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "Opaque strong validator for this private resource.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete Group",
+        "description": "Delete this actor's group and atomically move its placements to Unsorted (null), advancing each private placement revision. Keep every shared chat, title, text, recording and recency unchanged. Optional If-Match uses the group validator; stale values write nothing. The deleted ID can be reused with a fresh validator.",
+        "operationId": "delete_group_api_groups__group_id__delete",
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$",
+              "title": "Group Id"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "412": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Precondition Failed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/groups/{group_id}/name": {
+      "put": {
+        "summary": "Rename Group",
+        "description": "Rename only this actor's group. Trim 1-80 Unicode code points, excluding controls/line breaks. Invalid names return invalid_group_name. Optional If-Match uses the group ETag; stale/weak values return 412 revision_conflict. Identical names change nothing. Renames do not modify any chats, titles, recordings or recency.",
+        "operationId": "rename_group_api_groups__group_id__name_put",
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$",
+              "title": "Group Id"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupName"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Group"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "Opaque strong validator for this private resource.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "412": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Precondition Failed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/chats/{chat_id}/group": {
+      "get": {
+        "summary": "Get Placement",
+        "description": "Read the actor-private placement. Its ETag covers placement only, scoped to actor and chat incarnation. It never validates the shared Chat or its text/title.",
+        "operationId": "get_placement_api_chats__chat_id__group_get",
+        "parameters": [
+          {
+            "name": "chat_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$",
+              "title": "Chat Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatPlacement"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "Opaque strong validator for this private resource.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        }
+      },
+      "put": {
+        "summary": "Move Chat",
+        "description": "Set this actor's one private group, or null for Unsorted. Require chat membership and ownership of the destination. Optional If-Match checks the placement validator atomically; stale values write nothing. An identical placement is a no-op. Moves leave shared Chat/text/title validators, recency and recordings unchanged.",
+        "operationId": "move_chat_api_chats__chat_id__group_put",
+        "parameters": [
+          {
+            "name": "chat_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$",
+              "title": "Chat Id"
+            }
+          },
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlacementUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatPlacement"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "Opaque strong validator for this private resource.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "412": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Precondition Failed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
     "/api/chats": {
       "get": {
         "summary": "List Chats",
-        "description": "List accessible chats with a server-issued opaque `etag` per entry. Use that value in `If-Match` for conditional deletion without reading the full chat. Optional `q` filters words in custom names or full transcripts; matching rules and limits are documented in docs/chat-api.md.",
+        "description": "List accessible chats with a server-issued opaque `etag` per entry. Use that value in `If-Match` for conditional deletion without reading the full chat. Each summary also includes actor-private group_id and placement_etag; these are independent of the shared Chat validator. Optional `q` filters words in custom names or full transcripts; matching rules and limits are documented in docs/chat-api.md.",
         "operationId": "list_chats_api_chats_get",
         "parameters": [
           {
@@ -517,8 +1122,25 @@
       },
       "post": {
         "summary": "Create Chat",
-        "description": "Create an empty chat with a server-chosen ID. Returns the complete Chat with its `ETag` and independent `Text-ETag` for subsequent text saves.",
+        "description": "Create an empty chat with a server-chosen ID. Optional group_id places it in an actor-owned group; omitted/null options default to Unsorted. Returns the shared Chat with its `ETag` and independent `Text-ETag` for subsequent text saves.",
         "operationId": "create_chat_api_chats_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ChatCreate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Options"
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
             "description": "Successful Response",
@@ -549,6 +1171,36 @@
                 }
               }
             }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         }
       }
@@ -556,7 +1208,7 @@
     "/api/chats/{chat_id}": {
       "put": {
         "summary": "Create Chat With Id",
-        "description": "Create an empty chat using a lowercase 32-hex client ID. Accepts no body, null or an empty object; unknown options return 422. Returns 201 for creation, 200 for an accessible existing chat without resetting its edits, or 409 `idempotency_conflict` for an inaccessible ID. Reuse the ID after a lost response. No tombstones: deletion permits a new incarnation with fresh validators.",
+        "description": "Create an empty chat using a lowercase 32-hex client ID. Optional group_id is an actor-owned group or null (Unsorted); omitted bodies/options default to null. An accessible existing ID ignores creation options and returns 200 with the current shared Chat after later moves or group deletion. An inaccessible ID returns 409 idempotency_conflict; a missing destination for a new ID returns 404 group_not_found. Return 201 for new chats. Reuse the same ID after a lost response. Deletion permits a fresh chat incarnation; group placement has its own subresource and validator.",
         "operationId": "create_chat_with_id_api_chats__chat_id__put",
         "parameters": [
           {
@@ -582,7 +1234,7 @@
                     "type": "null"
                   }
                 ],
-                "title": " Input"
+                "title": "Options"
               }
             }
           }
@@ -618,6 +1270,16 @@
               }
             }
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -637,6 +1299,16 @@
               }
             },
             "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           },
           "201": {
             "headers": {
@@ -1666,11 +2338,55 @@
         "description": "One editable transcript and every recording made for it."
       },
       "ChatCreate": {
-        "properties": {},
+        "properties": {
+          "group_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9a-f]{32}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Id"
+          }
+        },
         "additionalProperties": false,
         "type": "object",
         "title": "ChatCreate",
-        "description": "Creation has no options; reject ignored inputs on retryable requests."
+        "description": "Initial private placement; ignored when the chosen chat ID already exists."
+      },
+      "ChatPlacement": {
+        "properties": {
+          "chat_id": {
+            "type": "string",
+            "title": "Chat Id"
+          },
+          "group_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Id"
+          },
+          "placement_revision": {
+            "type": "integer",
+            "title": "Placement Revision"
+          },
+          "etag": {
+            "type": "string",
+            "title": "Etag",
+            "readOnly": true
+          }
+        },
+        "type": "object",
+        "required": ["chat_id", "group_id", "placement_revision", "etag"],
+        "title": "ChatPlacement"
       },
       "ChatSummary": {
         "properties": {
@@ -1693,6 +2409,21 @@
             ],
             "title": "Custom Title"
           },
+          "group_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Id"
+          },
+          "placement_etag": {
+            "type": "string",
+            "title": "Placement Etag"
+          },
           "updated": {
             "type": "string",
             "format": "date-time",
@@ -1708,7 +2439,16 @@
           }
         },
         "type": "object",
-        "required": ["id", "title", "custom_title", "updated", "recording_count", "etag"],
+        "required": [
+          "id",
+          "title",
+          "custom_title",
+          "group_id",
+          "placement_etag",
+          "updated",
+          "recording_count",
+          "etag"
+        ],
         "title": "ChatSummary",
         "description": "What the chat list needs, without transcripts or recordings."
       },
@@ -1750,6 +2490,48 @@
         "required": ["custom_title", "title_revision"],
         "title": "ChatTitle",
         "description": "Shared title metadata, independently writable from transcript and audio."
+      },
+      "Group": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "created": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "etag": {
+            "type": "string",
+            "title": "Etag",
+            "readOnly": true
+          }
+        },
+        "type": "object",
+        "required": ["id", "name", "created", "revision", "etag"],
+        "title": "Group",
+        "description": "One actor's private group, with its validator available in lists."
+      },
+      "GroupName": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["name"],
+        "title": "GroupName"
       },
       "ModelStatus": {
         "properties": {
@@ -1862,6 +2644,26 @@
         "type": "object",
         "required": ["active", "busy", "models"],
         "title": "ModelsStatus"
+      },
+      "PlacementUpdate": {
+        "properties": {
+          "group_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9a-f]{32}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["group_id"],
+        "title": "PlacementUpdate"
       },
       "Recording": {
         "properties": {

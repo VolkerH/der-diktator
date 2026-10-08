@@ -42,8 +42,10 @@ The error codes below are implemented:
 | `engine_error`                             | 502  | Upstream failure or invalid response; outcome may be uncertain.                   |
 | `engine_timeout`                           | 504  | Timed out waiting for the engine; work may still be running.                      |
 | `invalid_search_query`                     | 422  | Search exceeds 256 code points or 16 distinct terms; shorten it.                  |
+| `group_not_found`                          | 404  | Missing or inaccessible group; retain the draft and choose an owned destination.  |
+| `invalid_group_name`                       | 422  | Use 1–80 Unicode characters without controls or line breaks.                      |
 | `invalid_title`                            | 422  | Invalid title string; use 1–120 characters without controls or line breaks.       |
-| `storage_error`                            | 500  | Chat listing failed; retry the read without discarding local drafts.              |
+| `storage_error`                            | 500  | Chat creation/listing or private group storage failed; retain drafts and retry.   |
 | `validation_error`                         | 422  | Invalid request fields; correct them.                                             |
 | `revision_conflict`                        | 412  | Preserve the draft, fetch current state and reconcile.                            |
 | `idempotency_conflict`                     | 409  | Same key, different input; reconcile the original operation.                      |

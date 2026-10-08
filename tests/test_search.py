@@ -142,6 +142,8 @@ async def test_http_search_full_text_custom_names_order_and_unchanged_representa
             "custom_title",
             "updated",
             "recording_count",
+            "group_id",
+            "placement_etag",
             "etag",
         }
         for chat_id in before:

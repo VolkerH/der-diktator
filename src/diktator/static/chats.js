@@ -4,11 +4,11 @@ import { ApiRequestError } from "./errors.js";
 /** A title observation carries its parent ordering revision without acknowledging the whole Chat.
  * @typedef {{ title: string, custom_title: string | null, title_revision: number, titleChatRevision: number, titleEtag: string | null }} ChatTitle */
 /** @typedef {ChatTitle & { id: string, created: string, updated: string, text: string, recordings: Recording[], revision: number, text_revision: number, etag: string | null, textEtag: string | null }} Chat */
-/** @typedef {{ id: string, title: string, custom_title: string | null, updated: string, recording_count: number, etag: string }} ChatSummary */
+/** @typedef {{ id: string, title: string, custom_title: string | null, updated: string, recording_count: number, etag: string, group_id: string | null, placement_etag: string }} ChatSummary */
 /** @typedef {{ recording: Recording, chatEtag: string | null, chatRevision: number | null }} RecordingUpload */
 
 /** @param {string} path @param {RequestInit} [options] */
-async function request(path, options = {}) {
+export async function request(path, options = {}) {
   const response = await fetch(path, { signal: AbortSignal.timeout(190_000), ...options });
   const result = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) {
@@ -42,8 +42,14 @@ export const chatApi = {
   /** @param {string} [query] @returns {Promise<ChatSummary[]>} */
   list: async (query = "") =>
     (await request(query ? `/api/chats?q=${encodeURIComponent(query)}` : "/api/chats")).body,
-  /** @param {string} id @returns {Promise<Chat>} */
-  create: (id) => chatRequest(`/api/chats/${id}`, { method: "PUT" }),
+  /** The initial group is ignored when the chosen ID already exists.
+   * @param {string} id @param {string | null} [groupId] @returns {Promise<Chat>} */
+  create: (id, groupId = null) =>
+    chatRequest(`/api/chats/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ group_id: groupId }),
+    }),
   /** @param {string} id @returns {Promise<Chat>} */
   get: (id) => chatRequest(`/api/chats/${id}`),
   /** @param {string} id @returns {Promise<{ custom_title: string | null, title_revision: number, titleEtag: string | null }>} */

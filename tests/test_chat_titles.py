@@ -310,12 +310,17 @@ def test_title_downgrade_preserves_memberships_recordings_and_audio(service: Cha
     )
     with service.engine.connect().execution_options(write=True) as connection:
         assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar() == 1
-        members = connection.exec_driver_sql("SELECT * FROM chat_members").all()
+        members = connection.exec_driver_sql(
+            "SELECT chat_id, user_id, role FROM chat_members"
+        ).all()
         recordings = connection.exec_driver_sql("SELECT * FROM recordings").all()
         connection.commit()
         config.attributes["connection"] = connection
         command.downgrade(config, "0002")
-        assert connection.exec_driver_sql("SELECT * FROM chat_members").all() == members
+        assert (
+            connection.exec_driver_sql("SELECT chat_id, user_id, role FROM chat_members").all()
+            == members
+        )
         assert connection.exec_driver_sql("SELECT * FROM recordings").all() == recordings
         assert (
             connection.exec_driver_sql("SELECT text FROM chats").scalar() == "Retained transcript"
