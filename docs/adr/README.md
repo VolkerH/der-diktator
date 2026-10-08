@@ -21,3 +21,6 @@ The discussion behind 0001–0005 is in
 [#15](https://github.com/VolkerH/der-diktator/issues/15) and
 [#16](https://github.com/VolkerH/der-diktator/issues/16). Client/backend responsibilities are
 defined in [AGENTS.md](../../AGENTS.md).
+
+[API conventions](../api-conventions.md) defines the shared implementation contract from ADR 0002,
+including the decisions still required for individual features.

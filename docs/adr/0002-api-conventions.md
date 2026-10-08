@@ -15,8 +15,8 @@ had started to disagree (for example 412 versus 409 for the same `revision_confl
 
 ## Decision
 
-Write `docs/api-conventions.md` and keep it current. Feature plans refer to it and describe only
-their additions. It covers:
+Maintain [API conventions](../api-conventions.md) as the shared contract. Feature plans refer to it
+and describe only their additions. It covers:
 
 - **Errors:** one JSON envelope with a human-readable `detail` string (compatible with existing
   clients), a stable machine-readable `code`, and optional context. FastAPI validation and HTTP
