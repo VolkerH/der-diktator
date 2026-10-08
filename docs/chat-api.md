@@ -52,7 +52,7 @@ an ID and returns 201. Clients choose an ID once and keep it after a lost respon
 
 `PUT /api/chats/{id}/recordings/{recording_id}` accepts validated PCM WAV with `audio/wav`
 (or `audio/x-wav`), using the same limits as the existing POST upload. It returns `Recording`
-with 200 for both creation and a matching retry. Identity compares SHA-256 of the exact WAV
+with 201 on creation and 200 for a matching retry. Identity compares SHA-256 of the exact WAV
 bytes, not normalized samples. The same recording ID and different bytes, including an ID held
 by another chat, return 409 `idempotency_conflict` without changing the winning file or chat.
 Missing/inaccessible chats return 404 `chat_not_found`. The existing POST upload still chooses

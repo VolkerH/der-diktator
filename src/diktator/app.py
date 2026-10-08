@@ -327,9 +327,10 @@ def create_app(
         responses={
             **error_responses(400, 404, 409, 413, 415, 422),
             200: {"headers": upload_headers},
+            201: {"model": Recording, "headers": upload_headers},
         },
         description="Store validated PCM WAV once with a client-chosen lowercase 32-hex ID. "
-        "Returns 200 with the Recording for both creation and an exact-byte SHA-256 matching "
+        "Returns 201 with the Recording on creation and 200 for an exact-byte SHA-256 matching "
         "retry. Different bytes or an ID owned by another chat return 409 `idempotency_conflict` "
         "without overwriting winner audio. `Chat-ETag` is the parent validator captured with "
         "the mutation; it does not validate the Recording body or acknowledge the client's "
@@ -346,6 +347,7 @@ def create_app(
         result = await run_in_threadpool(
             store().upload_recording, actor_id, chat_id, audio, info.duration_seconds, recording_id
         )
+        response.status_code = 201 if result.created else 200
         response.headers["Chat-ETag"] = result.chat_etag
         return result.recording
 

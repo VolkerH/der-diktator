@@ -78,6 +78,7 @@ class RecordingUpload:
 
     recording: Recording
     chat_etag: str
+    created: bool
 
 
 def chat_etag(row: ChatRow) -> str:
@@ -337,7 +338,7 @@ class ChatService:
                         row.audio_sha256 = stored_hash
                 if stored_hash != digest:
                     raise idempotency_conflict()
-                return RecordingUpload(recording=recording, chat_etag=parent_etag)
+                return RecordingUpload(recording=recording, chat_etag=parent_etag, created=False)
             recording = Recording(
                 id=recording_id, created=_now(), duration_seconds=duration_seconds
             )
@@ -371,7 +372,7 @@ class ChatService:
                 except OSError:
                     log.exception("Uncommitted recording cleanup failed: %s", path)
                 raise
-            return RecordingUpload(recording=recording, chat_etag=parent_etag)
+            return RecordingUpload(recording=recording, chat_etag=parent_etag, created=True)
 
     def recording_audio(self, actor_id: str, chat_id: str, recording_id: str) -> bytes:
         if not IDENTIFIER.fullmatch(recording_id):

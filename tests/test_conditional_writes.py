@@ -139,7 +139,7 @@ async def test_concurrent_retryable_creates_and_uploads(tmp_path: Path) -> None:
                 for _ in range(5)
             )
         )
-        assert all(response.status_code == 200 for response in responses)
+        assert sorted(response.status_code for response in responses) == [200, 200, 200, 200, 201]
         assert all(response.json() == responses[0].json() for response in responses)
         chat = await client.get(f"/api/chats/{CHAT_ID}")
         assert len(chat.json()["recordings"]) == 1
@@ -170,9 +170,9 @@ async def test_concurrent_different_uploads_preserve_winner_audio(tmp_path: Path
                 for audio in payloads
             )
         )
-        assert sorted(response.status_code for response in responses) == [200, 409]
+        assert sorted(response.status_code for response in responses) == [201, 409]
         winner = next(
-            index for index, response in enumerate(responses) if response.status_code == 200
+            index for index, response in enumerate(responses) if response.status_code == 201
         )
         loser = responses[1 - winner]
         assert loser.json()["code"] == "idempotency_conflict"
@@ -480,7 +480,7 @@ async def test_upload_parent_validator_is_an_atomic_snapshot(tmp_path: Path, met
             response = await client.request(
                 method, route, content=make_wav(), headers=AUDIO_HEADERS
             )
-            assert response.status_code == (201 if method == "POST" else 200)
+            assert response.status_code == 201
             assert response.json()["id"] == captured[0].recording.id
             assert response.headers["chat-etag"] == captured[0].chat_etag
             assert response.headers["chat-etag"] != created.headers["etag"]

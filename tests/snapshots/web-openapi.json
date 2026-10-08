@@ -994,7 +994,7 @@
     "/api/chats/{chat_id}/recordings/{recording_id}": {
       "put": {
         "summary": "Put Recording",
-        "description": "Store validated PCM WAV once with a client-chosen lowercase 32-hex ID. Returns 200 with the Recording for both creation and an exact-byte SHA-256 matching retry. Different bytes or an ID owned by another chat return 409 `idempotency_conflict` without overwriting winner audio. `Chat-ETag` is the parent validator captured with the mutation; it does not validate the Recording body or acknowledge the client's text. A retry changes no revision or recency. Legacy rows recover identity from their original audio; missing/unreadable audio returns 404 `recording_not_found` until restored. Reuse the chosen ID after a lost response and retain capture buffers until storage is acknowledged. No tombstones are retained.",
+        "description": "Store validated PCM WAV once with a client-chosen lowercase 32-hex ID. Returns 201 with the Recording on creation and 200 for an exact-byte SHA-256 matching retry. Different bytes or an ID owned by another chat return 409 `idempotency_conflict` without overwriting winner audio. `Chat-ETag` is the parent validator captured with the mutation; it does not validate the Recording body or acknowledge the client's text. A retry changes no revision or recency. Legacy rows recover identity from their original audio; missing/unreadable audio returns 404 `recording_not_found` until restored. Reuse the chosen ID after a lost response and retain capture buffers until storage is acknowledged. No tombstones are retained.",
         "operationId": "put_recording_api_chats__chat_id__recordings__recording_id__put",
         "parameters": [
           {
@@ -1096,6 +1096,24 @@
               }
             },
             "description": "Unprocessable Entity"
+          },
+          "201": {
+            "headers": {
+              "Chat-ETag": {
+                "description": "Opaque whole-chat validator captured atomically with the upload. This header validates the parent Chat, not the Recording response body.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Recording"
+                }
+              }
+            },
+            "description": "Created"
           }
         }
       },
