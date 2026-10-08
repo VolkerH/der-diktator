@@ -132,7 +132,7 @@ async def ready(browser: BrowserSession) -> None:
 async def test_audio_and_transcripts_flow_before_and_after_end() -> None:
     async with browser_for() as browser:
         await ready(browser)
-        assert browser.urls == ["ws://127.0.0.1:8010/v1/audio/stream"]
+        assert browser.urls == ["ws://127.0.0.1:8010/v1/audio/stream?model=phonon-2"]
         pcm = b"\x00\x00\xff\x7f"
         await browser.audio(pcm)
         assert await asyncio.wait_for(browser.engine.sent.get(), timeout=2) == pcm

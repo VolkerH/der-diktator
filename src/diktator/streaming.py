@@ -11,6 +11,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from websockets.asyncio.client import connect
 
 from diktator.config import Settings
+from diktator.models import ModelId
 
 
 class EngineStream(Protocol):
@@ -28,13 +29,15 @@ class StreamError(Exception):
     """A refused audio frame or malformed engine response."""
 
 
-def stream_url(engine_url: str) -> str:
+def stream_url(engine_url: str, model: ModelId | None = None) -> str:
     """Use the configured inference host for its matching WebSocket endpoint."""
     parts = urlsplit(engine_url)
     if parts.scheme not in {"http", "https"} or not parts.netloc:
         raise ValueError("The inference endpoint must be an HTTP or HTTPS URL.")
     scheme = "wss" if parts.scheme == "https" else "ws"
-    return urlunsplit((scheme, parts.netloc, "/v1/audio/stream", "", ""))
+    return urlunsplit(
+        (scheme, parts.netloc, "/v1/audio/stream", f"model={model}" if model else "", "")
+    )
 
 
 @asynccontextmanager

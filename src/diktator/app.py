@@ -16,6 +16,7 @@ from diktator.audio import RecordingInfo, validate_recording
 from diktator.chats import Chat, ChatNotFound, ChatStore, ChatSummary, Recording
 from diktator.config import Settings
 from diktator.engine import EngineClient, EngineUnavailable, Transcription
+from diktator.models import ModelId, ModelsStatus
 from diktator.streaming import (
     StreamConnector,
     StreamError,
@@ -82,6 +83,22 @@ def create_app(
             "max_duration_seconds": settings.max_duration_seconds,
         }
 
+    @app.exception_handler(EngineUnavailable)
+    async def engine_error(_request: Request, error: EngineUnavailable) -> Response:
+        return JSONResponse({"detail": str(error)}, status_code=error.status_code)
+
+    @app.get("/api/models")
+    async def models() -> ModelsStatus:
+        return await engine.models()
+
+    @app.post("/api/models/{model}/download", status_code=202)
+    async def download_model(model: ModelId) -> ModelsStatus:
+        return await engine.models(model, "download")
+
+    @app.post("/api/models/{model}/activate", status_code=202)
+    async def activate_model(model: ModelId) -> ModelsStatus:
+        return await engine.models(model, "activate")
+
     async def read_recording(request: Request) -> tuple[bytes, RecordingInfo]:
         content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
         if content_type not in {"audio/wav", "audio/x-wav"}:
@@ -98,16 +115,16 @@ def create_app(
             raise HTTPException(400, str(error)) from error
         return recording, info
 
-    async def transcribe_audio(audio: bytes) -> Transcription:
+    async def transcribe_audio(audio: bytes, model: ModelId) -> Transcription:
         try:
-            return await engine.transcribe(audio)
+            return await engine.transcribe(audio, model)
         except EngineUnavailable as error:
             raise HTTPException(error.status_code, str(error)) from error
 
     @app.post("/api/transcribe")
-    async def transcribe(request: Request) -> Transcription:
+    async def transcribe(request: Request, model: ModelId = "phonon-2") -> Transcription:
         recording, _info = await read_recording(request)
-        return await transcribe_audio(recording)
+        return await transcribe_audio(recording, model)
 
     @app.exception_handler(ChatNotFound)
     async def chat_not_found(_request: Request, _error: ChatNotFound) -> Response:
@@ -144,14 +161,16 @@ def create_app(
         return Response(store.recording_audio(chat_id, recording_id), media_type="audio/wav")
 
     @app.post("/api/chats/{chat_id}/recordings/{recording_id}/transcribe")
-    async def transcribe_recording(chat_id: ChatId, recording_id: ChatId) -> Transcription:
-        return await transcribe_audio(store.recording_audio(chat_id, recording_id))
+    async def transcribe_recording(
+        chat_id: ChatId, recording_id: ChatId, model: ModelId = "phonon-2"
+    ) -> Transcription:
+        return await transcribe_audio(store.recording_audio(chat_id, recording_id), model)
 
     @app.websocket("/api/stream")
-    async def live_transcription(browser: WebSocket) -> None:
+    async def live_transcription(browser: WebSocket, model: ModelId = "phonon-2") -> None:
         await browser.accept()
         try:
-            async with stream_connector(stream_url(settings.engine_url)) as upstream:
+            async with stream_connector(stream_url(settings.engine_url, model)) as upstream:
                 await upstream.send('{"sample_rate":16000,"format":"pcm_s16le"}')
                 await browser.send_json({"type": "ready"})
                 await relay_stream(browser, upstream, settings)

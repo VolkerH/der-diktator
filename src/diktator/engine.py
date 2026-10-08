@@ -1,7 +1,11 @@
 """Typed boundary to Fermion's persistent HTTP inference server."""
 
+from typing import Literal
+
 import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
+
+from diktator.models import ModelId, ModelsStatus
 
 
 class Transcription(BaseModel):
@@ -26,7 +30,7 @@ class EngineClient:
         self.client = client
 
     async def is_ready(self) -> bool:
-        """Check that the healthy server actually serves Phonon-2."""
+        """Check that the healthy service serves a supported speech model."""
         try:
             response = await self.client.get("/health", timeout=2.0)
             response.raise_for_status()
@@ -36,21 +40,24 @@ class EngineClient:
         return (
             isinstance(payload, dict)
             and payload.get("status") == "ok"
-            and payload.get("model") in ("phonon-2", "FermionResearch/Phonon-2")
+            and payload.get("model") in ("phonon-2", "FermionResearch/Phonon-2", "parakeet-v3")
         )
 
-    async def transcribe(self, audio: bytes) -> Transcription:
+    async def transcribe(self, audio: bytes, model: ModelId = "phonon-2") -> Transcription:
         """Send an in-memory WAV upload and reject malformed upstream responses."""
         try:
             response = await self.client.post(
-                "/v1/audio/transcriptions",
-                files={"file": ("recording.wav", audio, "audio/wav")},
-                data={"model": "phonon-2", "response_format": "json"},
+                "/transcribe",
+                params={"model": model},
+                content=audio,
+                headers={"Content-Type": "audio/wav"},
             )
             response.raise_for_status()
         except httpx.TimeoutException as error:
             raise EngineUnavailable("Transcription timed out. Try again.", 504) from error
         except httpx.HTTPStatusError as error:
+            if error.response.status_code == 409:
+                raise EngineUnavailable(self.conflict_message(error.response), 409) from error
             status = 503 if error.response.status_code == 503 else 502
             raise EngineUnavailable(
                 "The transcription engine could not process the audio.", status
@@ -64,4 +71,36 @@ class EngineClient:
         except (ValueError, ValidationError) as error:
             raise EngineUnavailable(
                 "The transcription engine returned an invalid response.", 502
+            ) from error
+
+    @staticmethod
+    def conflict_message(response: httpx.Response) -> str:
+        """Preserve actionable model conflicts, without leaking arbitrary errors."""
+        try:
+            detail = response.json().get("detail")
+            if isinstance(detail, str):
+                return detail
+        except (ValueError, AttributeError):
+            pass
+        return "The engine is busy or a different model is active. Retry shortly."
+
+    async def models(
+        self,
+        model: ModelId | None = None,
+        action: Literal["download", "activate"] | None = None,
+    ) -> ModelsStatus:
+        """Fetch state or start one explicit model action."""
+        try:
+            response = (
+                await self.client.get("/models", timeout=3)
+                if action is None
+                else await self.client.post(f"/models/{model}/{action}", timeout=5)
+            )
+            if response.status_code == 409:
+                raise EngineUnavailable(self.conflict_message(response), 409)
+            response.raise_for_status()
+            return ModelsStatus.model_validate(response.json())
+        except (httpx.HTTPError, ValueError, ValidationError) as error:
+            raise EngineUnavailable(
+                "The model service is unavailable. Check that make run is running."
             ) from error

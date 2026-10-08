@@ -1,3 +1,5 @@
+MODEL ?= phonon-2
+
 .PHONY: setup check format run web engine download-model
 
 setup:
@@ -23,7 +25,7 @@ web:
 	uv run --locked diktator
 
 engine:
-	FERMION_CACHE_DIR="$(CURDIR)/.cache/fermion" uv run --project engine fermion serve phonon-2 --port 8010
+	uv run --project engine python -m diktator.inference serve --port 8010
 
 download-model:
-	./scripts/download-model.sh
+	./scripts/download-model.sh $(MODEL)

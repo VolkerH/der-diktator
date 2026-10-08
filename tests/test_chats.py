@@ -20,7 +20,7 @@ def anyio_backend() -> str:
 
 
 def transcribing_engine(request: httpx.Request) -> httpx.Response:
-    if request.url.path == "/v1/audio/transcriptions":
+    if request.url.path == "/transcribe":
         return httpx.Response(200, json={"text": "From the stored audio."})
     return httpx.Response(200, json={"status": "ok", "model": "phonon-2"})
 
