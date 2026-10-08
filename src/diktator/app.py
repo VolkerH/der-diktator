@@ -20,7 +20,6 @@ from diktator.errors import (
     ENGINE_ERROR_STATUSES,
     ApiFailure,
     StreamErrorEvent,
-    engine_failure,
     error_responses,
     install_error_handlers,
 )
@@ -30,6 +29,7 @@ from diktator.streaming import (
     StreamError,
     connect_engine,
     relay_stream,
+    stream_failure,
     stream_url,
 )
 
@@ -202,17 +202,7 @@ def create_app(
         except WebSocketDisconnect:
             pass
         except (OSError, TimeoutError, WebSocketException, StreamError, ValueError) as error:
-            failure = (
-                error
-                if isinstance(error, StreamError)
-                else engine_failure(
-                    "engine_timeout"
-                    if isinstance(error, TimeoutError)
-                    else "engine_unavailable"
-                    if isinstance(error, (OSError, WebSocketException))
-                    else "engine_error"
-                )
-            )
+            failure = stream_failure(error)
             if (
                 browser.client_state == WebSocketState.CONNECTED
                 and browser.application_state == WebSocketState.CONNECTED

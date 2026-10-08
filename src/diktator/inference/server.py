@@ -14,14 +14,19 @@ from diktator.engine import Transcription
 from diktator.errors import (
     ApiFailure,
     StreamErrorEvent,
-    engine_failure,
     error_responses,
     install_error_handlers,
 )
 from diktator.inference.manager import ModelConflict, ModelManager
 from diktator.inference.store import ModelStore, exclusive_lock, models_directory
 from diktator.models import ModelId, ModelsStatus
-from diktator.streaming import StreamError, connect_engine, relay_stream, stream_url
+from diktator.streaming import (
+    StreamError,
+    connect_engine,
+    relay_stream,
+    stream_failure,
+    stream_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +108,12 @@ def create_engine(manager: ModelManager | None = None) -> FastAPI:
                 connect_engine(stream_url(endpoint)) as upstream,
             ):
                 # The web service already sent this one fixed configuration.
-                config = await browser.receive_json()
+                try:
+                    config = await browser.receive_json()
+                except ValueError as error:
+                    raise StreamError(
+                        "Invalid live audio configuration.", "validation_error", 422
+                    ) from error
                 if config != {"sample_rate": 16000, "format": "pcm_s16le"}:
                     raise StreamError("Unsupported live audio format.", "unsupported_audio", 415)
                 await upstream.send('{"sample_rate":16000,"format":"pcm_s16le"}')
@@ -118,17 +128,7 @@ def create_engine(manager: ModelManager | None = None) -> FastAPI:
             ValueError,
             WebSocketException,
         ) as error:
-            failure = (
-                error
-                if isinstance(error, (ModelConflict, StreamError))
-                else engine_failure(
-                    "engine_timeout"
-                    if isinstance(error, TimeoutError)
-                    else "engine_unavailable"
-                    if isinstance(error, (OSError, WebSocketException))
-                    else "engine_error"
-                )
-            )
+            failure = stream_failure(error)
             with suppress(WebSocketDisconnect, RuntimeError):
                 await browser.send_json(
                     StreamErrorEvent(message=str(failure), code=failure.code).model_dump()

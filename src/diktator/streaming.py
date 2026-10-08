@@ -9,6 +9,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import WebSocket, WebSocketDisconnect
 from websockets.asyncio.client import connect
+from websockets.exceptions import WebSocketException
 
 from diktator.config import Settings
 from diktator.errors import ApiFailure, StreamErrorEvent, engine_failure
@@ -31,6 +32,17 @@ class StreamError(ApiFailure):
 
     def __init__(self, message: str, code: str = "engine_error", status_code: int = 502) -> None:
         super().__init__(message, code, status_code)
+
+
+def stream_failure(error: Exception) -> ApiFailure:
+    """Keep local coded failures; sanitize transport and protocol diagnostics."""
+    if isinstance(error, ApiFailure):
+        return error
+    if isinstance(error, TimeoutError):
+        return engine_failure("engine_timeout")
+    if isinstance(error, (OSError, WebSocketException)):
+        return engine_failure("engine_unavailable")
+    return engine_failure("engine_error")
 
 
 def stream_url(engine_url: str, model: ModelId | None = None) -> str:
