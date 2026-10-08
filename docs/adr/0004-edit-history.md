@@ -6,6 +6,7 @@ Discussion: [#15](https://github.com/VolkerH/der-diktator/issues/15) —
 [collaboration follow-up](https://github.com/VolkerH/der-diktator/issues/15#issuecomment-6060764920),
 [review of the reviews §2, §4](https://github.com/VolkerH/der-diktator/issues/15#issuecomment-6061024479),
 [accepted corrections and no-audio sessions](https://github.com/VolkerH/der-diktator/issues/15#issuecomment-6061509440);
+[PR review refining session history](https://github.com/VolkerH/der-diktator/pull/17#issuecomment-6061964903);
 [#5](https://github.com/VolkerH/der-diktator/issues/5),
 [#16](https://github.com/VolkerH/der-diktator/issues/16).
 
@@ -22,8 +23,8 @@ the transcript.
 - Each chat has a **materialized current transcript** plus an **append-only application edit
   history**, both updated atomically by one service. Search, export and titles read the current
   transcript. Database journaling is not the edit history.
-- History entries record accepted, coalesced edit batches with a server-derived actor, a unique
-  operation ID, and versioned payloads.
+- History records accepted, coalesced edit batches and dictation sessions with a server-derived
+  actor, unique operation IDs, and versioned payloads.
 - **Document revision**, **chat event sequence**, and **metadata revisions** are separate
   counters. A title change or a recording is not a text operation.
 - Imported chats start with a **baseline snapshot**; earlier edits cannot be reconstructed.
@@ -33,21 +34,23 @@ the transcript.
   range; how anchors move after later edits is specified with the protocol
   ([0005](0005-collaborative-editing-protocol.md)).
 - **Restoring** an earlier version appends a new edit; history is never rewritten.
-- **Dictation without stored audio (#5)** is recorded as an ordinary text edit inserting the
-  transcript. The edit carries optional session metadata
-  `{duration_seconds, audio_retention: "not_stored", model}` and has no recording ID, audio file,
-  playback or retranscription. Clients render that metadata as #5's "Audio not saved" pill, in the
-  chat and in the timeline. Recordings with retained audio keep their own recording entry. #5's
-  session-ID and idempotency rules apply to the edit, so a retry cannot insert text twice.
-- An empty or interrupted no-audio session must still be able to record its session metadata and
-  outcome in history, even when there is no text to insert. Such an entry does not advance the
-  document revision solely to record metadata. #5 specifies finalization and retry behavior so the
-  session produces one pill, preserves any confirmed text, and does not claim successful completion
-  after an interruption. This does not require a separate recording row.
+- **Dictation without stored audio (#5)** always has one logical **dictation-session history entry**
+  identified by a stable session ID, carrying duration, `audio_retention: "not_stored"`, model and
+  outcome. Successful, empty and interrupted sessions use the same structure. Clients render one
+  "Audio not saved" pill per session in the chat and timeline. There is no recording row, recording
+  ID, audio file, playback or retranscription. Retained audio keeps its recording entry.
+- Zero or more text edits link to that session; each accepted edit has its own operation ID. Session
+  finalization and edit application are independently deduplicated, so retries neither add pills nor
+  insert text twice. Session metadata alone does not advance the document revision. #5 specifies
+  checkpoints/finalization and their history representation, preserves confirmed text on
+  interruption, and distinguishes an interrupted or unknown outcome from successful completion.
+  Multiple lifecycle events, if needed, project to the same logical session entry.
 
 ## Consequences
 
-- #5 needs no separate metadata-only recording entry.
+- #5 needs no recording row. Session metadata has one representation regardless of text output;
+  it is not duplicated on each text edit. This replaces the earlier proposal to attach it directly
+  to the inserting edit.
 - History keeps text later deleted from the current transcript. Before history is shown to other
   members, #16 defines what new members and viewers can see, how history is purged, and how chat
   deletion and exports treat it. Append-only during editing does not mean impossible to purge.
