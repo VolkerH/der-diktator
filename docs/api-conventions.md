@@ -62,8 +62,11 @@ code. Register further feature errors with their statuses and recovery guidance.
 ## Conditional writes
 
 Use opaque, strong `ETag` validators and `If-Match`. Each endpoint defines the read representation and
-validator scope; clients preserve the quoted value. Check and commit atomically: a stale validator
-returns 412 and applies no mutation. Return the new validator or document how to retrieve it.
+validator scope; clients preserve the quoted value. A strong validator changes whenever its
+representation changes. A subresource that is written independently, such as a chat's text, has its
+own representation and validator; the parent resource's validator covers every change to the parent.
+Check and commit atomically: a stale validator returns 412 and applies no mutation. Return the new
+validator or document how to retrieve it.
 
 Keep drafts on conflict. Fetching a new validator and resending the old full-text replacement can
 erase another person's edits. Conditional saves remain the interim contract until the
@@ -75,10 +78,17 @@ chat-event and metadata revisions stay separate; metadata alone does not advance
 Plain resource replacement/deletion (PUT/DELETE) normally needs no idempotency key. This does not
 promise identical retry responses or deduplicate history: enforce preconditions and avoid duplicate
 user-visible events where required. A retry may find an already-deleted resource or a stale validator.
-Commands whose duplication creates extra effects require keys: creating chats, starting transcription,
-applying results, sending shares and recording dictation sessions/edits.
+Commands whose duplication creates extra effects need deduplication: creating chats and recordings,
+starting transcription, applying results, sending shares and recording dictation sessions/edits.
 
-Use `Idempotency-Key` for HTTP commands and document equivalent stream/session identifiers:
+Prefer client-chosen resource IDs where the command creates exactly one resource. The client
+generates a random ID (UUID-sized) once per logical create and reuses it on retry, e.g.
+`PUT /api/chats/{id}`. A repeat with the same input returns the existing resource; the same ID with
+different input, or an ID already used by an inaccessible resource, returns 409
+`idempotency_conflict`. This needs no ledger, and crash recovery follows the resource's own
+database/file boundary. Use `Idempotency-Key` for commands that cannot be expressed this way.
+
+For `Idempotency-Key` commands, and equivalent stream/session identifiers:
 
 - Scope to actor, operation and target; reserve atomically before admission. Hash normalized effective
   input, including applicable preconditions. Different input with the same key returns 409.

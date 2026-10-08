@@ -39,6 +39,9 @@ with simple local or self-hosted deployment.
   Use a tested transaction-control recipe for the pysqlite driver; `BEGIN IMMEDIATE` for short
   read-modify-write units, not for every read.
 - Store timestamps as UTC and return them timezone-aware; SQLite has no timezone-aware type.
+- The application process holds an **exclusive lock on the data directory** for its lifetime,
+  acquired before migration, import or cleanup. A second instance refuses to start without
+  modifying anything. The lock works on all supported platforms.
 - Supported deployment: local filesystem or a named Docker volume. WSL and bind-mount setups need
   validation per configuration. Preserve the meaning of `DIKTATOR_DATA_DIR` or migrate it
   explicitly.
@@ -59,7 +62,10 @@ with simple local or self-hosted deployment.
   files untouched.
 - Persist import completion independently of whether the imported chat still exists, so a deleted
   chat is never resurrected. Protect not-yet-imported audio from cleanup.
-- Imported chats start with a baseline history snapshot (see [0004](0004-edit-history.md)).
+- Import recording metadata even when its audio file is missing. Report the missing file and return
+  `recording_not_found` for its audio, so a file restored later is used rather than swept.
+- Record the transcript as it was at import time, so the baseline history snapshot (see
+  [0004](0004-edit-history.md)) reflects the imported state even when history is added later.
 - Old JSON is migration recovery material, not a continuing backup.
 
 ## Consequences
