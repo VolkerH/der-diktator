@@ -18,9 +18,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from diktator.db import session_scope
-from diktator.db.rows import ChatMemberRow, ChatRow, RecordingRow
+from diktator.db.rows import ChatMemberRow, ChatRow, GroupRow, RecordingRow
 from diktator.durability import sync_directory
 from diktator.errors import ApiFailure
+from diktator.group_models import ChatPlacement, GroupNotFound
 from diktator.search import parse_query
 
 IDENTIFIER = re.compile(r"[0-9a-f]{32}")
@@ -121,6 +122,8 @@ class ChatSummary(BaseModel):
     id: str
     title: str
     custom_title: str | None
+    group_id: str | None
+    placement_etag: str
     updated: datetime
     recording_count: int
     etag: str
@@ -283,7 +286,7 @@ class ChatService:
                     .scalar_subquery()
                 )
                 rows = session.execute(
-                    select(ChatRow, count)
+                    select(ChatRow, ChatMemberRow, count)
                     .join(ChatMemberRow, ChatMemberRow.chat_id == ChatRow.id)
                     .where(ChatMemberRow.user_id == actor_id)
                     .order_by(ChatRow.updated.desc(), ChatRow.id)
@@ -293,11 +296,19 @@ class ChatService:
                         id=row.id,
                         title=title_for(row.text, row.custom_title),
                         custom_title=row.custom_title,
+                        group_id=member.group_id,
+                        placement_etag=ChatPlacement(
+                            actor_id=actor_id,
+                            chat_id=row.id,
+                            incarnation=row.incarnation,
+                            group_id=member.group_id,
+                            placement_revision=member.placement_revision,
+                        ).etag,
                         updated=row.updated,
                         recording_count=recording_count,
                         etag=chat_etag(row),
                     )
-                    for row, recording_count in rows
+                    for row, member, recording_count in rows
                     if search.matches(row.text, row.custom_title or "")
                 ]
         except SQLAlchemyError as error:
@@ -306,25 +317,52 @@ class ChatService:
                 "Saved chats could not be loaded. Try again.", "storage_error", 500
             ) from error
 
-    def create(self, actor_id: str) -> Chat:
-        return self.create_with_id(actor_id, uuid.uuid4().hex)[0]
+    def create(self, actor_id: str, group_id: str | None = None) -> Chat:
+        return self.create_with_id(actor_id, uuid.uuid4().hex, group_id)[0]
 
-    def create_with_id(self, actor_id: str, chat_id: str) -> tuple[Chat, bool]:
-        """Create once for a chosen ID; retries return the accessible winner unchanged."""
+    def create_with_id(
+        self, actor_id: str, chat_id: str, group_id: str | None = None
+    ) -> tuple[Chat, bool]:
+        """Return accessible existing chats unchanged; apply placement only on creation."""
         self._folder(chat_id)
-        with self._mutation_lock, session_scope(self.engine, write=True) as session:
-            existing = session.get(ChatRow, chat_id)
-            if existing is not None:
-                try:
-                    return self._model(session, self._chat(session, actor_id, chat_id)), False
-                except ChatNotFound:
-                    raise idempotency_conflict() from None
-            now = _now()
-            row = ChatRow(id=chat_id, created=now, updated=now, text="", created_by=actor_id)
-            session.add(row)
-            session.flush()
-            session.add(ChatMemberRow(chat_id=row.id, user_id=actor_id, role="owner"))
-            return self._model(session, row), True
+        try:
+            with self._mutation_lock, session_scope(self.engine, write=True) as session:
+                existing = session.get(ChatRow, chat_id)
+                if existing is not None:
+                    try:
+                        row = self._chat(session, actor_id, chat_id)
+                        return self._model(session, row), False
+                    except ChatNotFound:
+                        raise idempotency_conflict() from None
+                if (
+                    group_id is not None
+                    and session.scalar(
+                        select(GroupRow).where(
+                            GroupRow.id == group_id, GroupRow.owner_id == actor_id
+                        )
+                    )
+                    is None
+                ):
+                    raise GroupNotFound()
+                now = _now()
+                row = ChatRow(
+                    id=chat_id,
+                    created=now,
+                    updated=now,
+                    text="",
+                    created_by=actor_id,
+                )
+                session.add(row)
+                session.flush()
+                session.add(
+                    ChatMemberRow(chat_id=row.id, user_id=actor_id, role="owner", group_id=group_id)
+                )
+                return self._model(session, row), True
+        except SQLAlchemyError as error:
+            log.exception("Chat creation failed for chat %s", chat_id)
+            raise ApiFailure(
+                "The chat could not be created. Try again.", "storage_error", 500
+            ) from error
 
     def get(self, actor_id: str, chat_id: str) -> Chat:
         with session_scope(self.engine) as session:

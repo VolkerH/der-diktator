@@ -1,6 +1,8 @@
 import { ApiRequestError } from "./errors.js";
 import { MAX_DURATION_SECONDS, wordCount } from "./audio.js";
 import { chatApi, spliceText } from "./chats.js";
+import { groupApi } from "./groups.js";
+import { GroupSidebar } from "./group-sidebar.js";
 import { modelPicker } from "./models.js";
 import { LiveTranscriber } from "./live.js";
 import { MicrophoneRecorder } from "./recorder.js";
@@ -9,6 +11,7 @@ import { MicrophoneRecorder } from "./recorder.js";
 /** @typedef {import("./chats.js").ChatSummary} ChatSummary */
 /** @typedef {import("./chats.js").ChatTitle} ChatTitle */
 /** @typedef {import("./chats.js").Recording} Recording */
+/** @typedef {import("./groups.js").Group} Group */
 
 const recordButton = /** @type {HTMLButtonElement} */ (document.getElementById("record"));
 const stopButton = /** @type {HTMLButtonElement} */ (document.getElementById("stop"));
@@ -48,6 +51,7 @@ let listError = null;
 /** @type {ReturnType<typeof setTimeout> | undefined} */
 let searchTimer;
 const chatList = /** @type {HTMLElement} */ (document.getElementById("chat-list"));
+const draftUnsorted = /** @type {HTMLButtonElement} */ (document.getElementById("draft-unsorted"));
 const chatTitle = /** @type {HTMLButtonElement} */ (document.getElementById("chat-title"));
 const titleDialog = /** @type {HTMLDialogElement} */ (document.getElementById("title-editor"));
 const titleForm = /** @type {HTMLFormElement} */ (document.getElementById("title-form"));
@@ -94,6 +98,21 @@ let timerId;
 let chat = null;
 /** @type {ChatSummary[]} */
 let chats = [];
+/** @type {Group[]} */
+let groups = [];
+/** @type {string | null} */
+let groupListError = null;
+/** The selected placement of an unsaved draft. @type {string | null} */
+let pendingGroupId = null;
+let missingDraftGroup = false;
+const groupSidebar = new GroupSidebar(chatList, {
+  newChat,
+  create: (id, name) => changeGroup(() => groupApi.create(id, name), id),
+  rename: (group, name) => changeGroup(() => groupApi.rename(group, name)),
+  remove: (group) => changeGroup(() => groupApi.remove(group)),
+  move: moveChat,
+  render: renderChats,
+});
 /** @type {Promise<Chat> | null} */
 let creating = null;
 let textDirty = false;
@@ -185,6 +204,8 @@ function updateControls() {
   stopButton.disabled = !recording || busy;
   copyButton.disabled = active || !transcript.value.trim();
   newChatButton.disabled = active;
+  groupSidebar.lock(active);
+  draftUnsorted.disabled = active;
   transcript.readOnly = active;
   const words = wordCount(transcript.value);
   count.textContent = `${words} ${words === 1 ? "word" : "words"}`;
@@ -249,8 +270,8 @@ function element(tag, className, text = "") {
   return node;
 }
 
-/** @param {string | null} id @param {string} title @param {string} meta */
-function chatItem(id, title, meta) {
+/** @param {string | null} id @param {string} title @param {string} meta @param {ChatSummary | null} [summary] */
+function chatItem(id, title, meta, summary = null) {
   const item = element("li", "chat-item");
   item.classList.toggle("active", id === (chat?.id ?? null));
   const open = /** @type {HTMLButtonElement} */ (element("button", "chat-open"));
@@ -281,20 +302,34 @@ function chatItem(id, title, meta) {
     });
     remove.addEventListener("blur", () => setConfirming(false));
     item.append(remove);
+    if (summary) {
+      const move = groupSidebar.button("Move", () => groupSidebar.editMove(summary), "chat-move");
+      move.setAttribute("aria-label", `Move “${title}” to group`);
+      move.setAttribute("aria-haspopup", "dialog");
+      move.setAttribute("aria-controls", "group-move");
+      item.append(move);
+    }
   }
   return item;
 }
 
 function renderChats() {
-  const items = chats.map((summary) =>
-    chatItem(
-      summary.id,
-      summary.id === chat?.id ? chat.title : summary.title,
-      `${formatWhen(summary.updated)} · ${summary.recording_count} ${summary.recording_count === 1 ? "clip" : "clips"}`,
-    ),
+  groupSidebar.render(
+    groups,
+    chats,
+    pendingGroupId,
+    !chat,
+    Boolean(searchQuery.trim()),
+    (summary) =>
+      summary
+        ? chatItem(
+            summary.id,
+            summary.id === chat?.id ? chat.title : summary.title,
+            `${formatWhen(summary.updated)} · ${summary.recording_count} ${summary.recording_count === 1 ? "clip" : "clips"}`,
+            summary,
+          )
+        : chatItem(null, "New chat", "Not saved yet"),
   );
-  if (!chat && !searchQuery.trim()) items.unshift(chatItem(null, "New chat", "Not saved yet"));
-  chatList.replaceChildren(...items);
   chatList.hidden = shownQuery !== searchQuery;
   chatList.setAttribute("aria-busy", String(listLoading));
   searchClear.disabled = !searchQuery;
@@ -303,7 +338,7 @@ function renderChats() {
     listError ??
     (listLoading
       ? "Loading chats…"
-      : searchQuery.trim() && !items.length
+      : searchQuery.trim() && !chats.length
         ? "No matching chats."
         : "");
   searchState.hidden = !searchState.textContent;
@@ -408,40 +443,138 @@ function addRecordings(target, recordings) {
   target.recordings.push(...recordings.filter((clip) => !known.has(clip.id)));
 }
 
-/** A new chat is created on the server the first time it needs to store something. */
+/** Reuse the pending chat ID after an uncertain create response. */
 async function ensureChat() {
   if (chat) return chat;
+  if (missingDraftGroup)
+    throw new Error("This draft's group no longer exists. Save it in Unsorted to continue.");
   const generation = navigationGeneration;
-  creating ??= chatApi
-    .create(pendingChatId)
-    .then((created) => {
+  const input = { id: pendingChatId, groupId: pendingGroupId };
+  creating ??= (async () => {
+    let created;
+    try {
+      created = await chatApi.create(input.id, input.groupId);
+    } catch (error) {
+      if (!(error instanceof ApiRequestError) || error.code !== "group_not_found") throw error;
       if (generation === navigationGeneration) {
-        chat = created;
-        if (!searchQuery.trim())
-          chats = [
-            {
-              id: created.id,
-              title: created.title,
-              custom_title: created.custom_title,
-              updated: created.updated,
-              recording_count: 0,
-              etag: created.etag ?? "",
-            },
-            ...chats.filter((item) => item.id !== created.id),
-          ];
-        else void refreshChats();
-        renderChats();
+        missingDraftGroup = true;
+        draftUnsorted.hidden = false;
+        await refreshChats(true);
       }
-      return created;
-    })
-    .finally(() => {
-      if (generation === navigationGeneration) creating = null;
-    });
+      throw new Error(
+        "This draft's group no longer exists. Your text and recording are kept. Save this draft in Unsorted to continue.",
+      );
+    }
+    if (generation === navigationGeneration) {
+      chat = created;
+      draftUnsorted.hidden = true;
+      if (!searchQuery.trim())
+        chats = [
+          {
+            id: created.id,
+            title: created.title,
+            custom_title: created.custom_title,
+            updated: created.updated,
+            recording_count: created.recordings.length,
+            etag: created.etag ?? "",
+            group_id: input.groupId,
+            placement_etag: "",
+          },
+          ...chats.filter((item) => item.id !== created.id),
+        ];
+      else void refreshChats();
+      renderChats();
+    }
+    return created;
+  })().finally(() => {
+    if (generation === navigationGeneration) creating = null;
+  });
   return await creating;
 }
 
+/** Update private metadata without replacing the editor or acknowledging shared validators.
+ * @param {() => Promise<unknown>} operation @param {string} [createdId] */
+async function changeGroup(operation, createdId) {
+  if (recording || busy) throw new Error("Wait for the current operation to finish.");
+  busy = true;
+  updateControls();
+  try {
+    await operation();
+    await refreshChats(true);
+    if (listError || groupListError)
+      throw new Error(listError || groupListError || "Groups could not be loaded.");
+  } catch (error) {
+    await refreshChats(true);
+    // A chosen-ID create can be acknowledged by its own ID after a lost response.
+    if (createdId && !groupListError && groups.some((group) => group.id === createdId)) return;
+    showError(error);
+    if (error instanceof ApiRequestError && error.code === "revision_conflict")
+      throw new Error("This group changed elsewhere. Review the current groups and try again.");
+    throw error;
+  } finally {
+    busy = false;
+    updateControls();
+  }
+}
+
+/** Moves use only placement validators and preserve drafts, shared state and recency.
+ * @param {ChatSummary} summary @param {string | null} groupId */
+async function moveChat(summary, groupId) {
+  if (recording || busy) throw new Error("Wait for the current operation to finish.");
+  busy = true;
+  updateControls();
+  let moveDispatched = false;
+  try {
+    if (!summary.placement_etag)
+      throw new Error("The group version could not be loaded. Refresh the chat list.");
+    moveDispatched = true;
+    const saved = await groupApi.move(summary.id, groupId, summary.placement_etag);
+    summary.group_id = saved.group_id;
+    summary.placement_etag = saved.etag;
+    await refreshChats();
+  } catch (error) {
+    // Reconcile ambiguous writes and stale placements. A retry remains explicit.
+    try {
+      const current = await groupApi.placement(summary.id);
+      summary.group_id = current.group_id;
+      summary.placement_etag = current.etag;
+      if (moveDispatched && current.group_id === groupId && !(error instanceof ApiRequestError)) {
+        await refreshChats();
+        return;
+      }
+    } catch {
+      /* Retain the last acknowledged placement when reconciliation fails. */
+    }
+    await refreshChats(error instanceof ApiRequestError && error.code === "group_not_found");
+    showError(error);
+    if (error instanceof ApiRequestError && error.code === "revision_conflict")
+      throw new Error(
+        "This chat's group changed elsewhere. Review its current group and move again to use your selection.",
+      );
+    if (error instanceof ApiRequestError && error.code === "group_not_found")
+      throw new Error(
+        "That group no longer exists. Your draft is kept. Close this dialog and choose another group or Unsorted.",
+      );
+    throw error;
+  } finally {
+    busy = false;
+    updateControls();
+  }
+}
+
+draftUnsorted.addEventListener("click", () => {
+  if (!missingDraftGroup || recording || busy || chat) return;
+  pendingChatId = newId();
+  pendingGroupId = null;
+  missingDraftGroup = false;
+  draftUnsorted.hidden = true;
+  hideError();
+  renderChats();
+  void saveText();
+});
+
 /** Search only affects the list; editor, selection and recording stay untouched. */
-async function refreshChats() {
+async function refreshChats(refreshGroupList = false) {
   clearTimeout(searchTimer);
   const generation = navigationGeneration;
   const requestGeneration = ++listGeneration;
@@ -451,9 +584,22 @@ async function refreshChats() {
   listRetryable = true;
   renderChats();
   try {
-    const latest = await chatApi.list(query);
+    const [chatResult, groupResult] = await Promise.allSettled([
+      chatApi.list(query),
+      refreshGroupList ? groupApi.list() : Promise.resolve(null),
+    ]);
     if (generation !== navigationGeneration || requestGeneration !== listGeneration) return;
-    chats = latest;
+    if (groupResult.status === "fulfilled") {
+      if (groupResult.value !== null) {
+        groups = groupResult.value;
+        groupListError = null;
+      }
+    } else {
+      groupListError = "Groups could not be loaded. Refresh to try again.";
+      showError(new Error(groupListError));
+    }
+    if (chatResult.status === "rejected") throw chatResult.reason;
+    chats = chatResult.value;
     shownQuery = query;
     if (errorMessage.textContent === STARTUP_ERROR) hideError();
   } catch (error) {
@@ -475,8 +621,8 @@ function changeSearch(query, immediate = false) {
   listLoading = true;
   listError = null;
   renderChats();
-  if (immediate) void refreshChats();
-  else searchTimer = setTimeout(() => void refreshChats(), 200);
+  if (immediate) void refreshChats(false);
+  else searchTimer = setTimeout(() => void refreshChats(false), 200);
 }
 
 searchInput.addEventListener("input", () => changeSearch(searchInput.value));
@@ -486,7 +632,7 @@ searchClear.addEventListener("click", () => {
   searchInput.focus();
 });
 searchRetry.addEventListener("click", async () => {
-  await refreshChats();
+  await refreshChats(true);
   await finishStartup();
 });
 
@@ -560,8 +706,8 @@ function scheduleSave() {
   saveTimer = setTimeout(() => void saveText(), 700);
 }
 
-/** @param {Chat | null} next */
-function setChat(next) {
+/** @param {Chat | null} next @param {string | null} [draftGroup] */
+function setChat(next, draftGroup = null) {
   const refreshPending = listLoading;
   listGeneration++;
   navigationGeneration++;
@@ -569,6 +715,9 @@ function setChat(next) {
   titleTarget = null;
   creating = null;
   pendingChatId = newId();
+  pendingGroupId = draftGroup;
+  missingDraftGroup = false;
+  draftUnsorted.hidden = true;
   clearTimeout(saveTimer);
   textConflict = false;
   conflictNotice.hidden = true;
@@ -624,14 +773,15 @@ async function openChat(id) {
   }
 }
 
-async function newChat() {
+/** @param {string | null} [groupId] */
+async function newChat(groupId = null) {
   closeDrawer();
   if (recording || busy) return;
   busy = true;
   updateControls();
   try {
     if (!(await prepareToLeave())) return;
-    setChat(null);
+    setChat(null, groupId);
     transcript.focus();
   } finally {
     busy = false;
@@ -1146,7 +1296,7 @@ async function loadChats() {
   startupGeneration = navigationGeneration;
   busy = true;
   updateControls();
-  await refreshChats();
+  await refreshChats(true);
   busy = false;
   updateControls();
   await finishStartup();

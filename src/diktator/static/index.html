@@ -42,6 +42,44 @@
         </div>
       </form>
     </dialog>
+    <dialog
+      id="group-editor"
+      class="model-settings title-editor"
+      aria-labelledby="group-editor-heading"
+    >
+      <form id="group-name-form">
+        <h2 id="group-editor-heading">New group</h2>
+        <label for="group-name-input">Group name</label>
+        <input
+          id="group-name-input"
+          type="text"
+          autocomplete="off"
+          aria-describedby="group-name-help group-name-error"
+        />
+        <p id="group-name-help">Up to 80 characters. Groups are private to you.</p>
+        <p id="group-name-error" class="error" role="alert" hidden></p>
+        <div class="title-actions">
+          <button id="group-name-cancel" class="chip" type="button">Cancel</button>
+          <button id="group-name-save" class="chip accent" type="submit">Save</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog
+      id="group-move"
+      class="model-settings title-editor"
+      aria-labelledby="group-move-heading"
+    >
+      <form id="group-move-form">
+        <h2 id="group-move-heading">Move chat</h2>
+        <label for="group-move-select">Move to group</label>
+        <select id="group-move-select" aria-describedby="group-move-error"></select>
+        <p id="group-move-error" class="error" role="alert" hidden></p>
+        <div class="title-actions">
+          <button id="group-move-cancel" class="chip" type="button">Cancel</button>
+          <button id="group-move-save" class="chip accent" type="submit">Move</button>
+        </div>
+      </form>
+    </dialog>
     <div class="shell">
       <aside id="sidebar" class="sidebar" aria-label="App navigation">
         <span class="brand">
@@ -51,10 +89,28 @@
             <small>Dictation &amp; transcription</small>
           </span>
         </span>
-        <button id="new-chat" class="new-chat" type="button">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
-          New chat
-        </button>
+        <div class="sidebar-actions">
+          <button id="new-chat" class="new-chat" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+            New chat
+          </button>
+          <button
+            id="new-group"
+            class="group-create"
+            type="button"
+            aria-haspopup="dialog"
+            aria-controls="group-editor"
+            title="New group"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"
+              />
+              <path d="M12 11v5M9.5 13.5h5" />
+            </svg>
+            <span class="visually-hidden">New group</span>
+          </button>
+        </div>
         <div class="chat-filter" role="search">
           <label class="visually-hidden" for="chat-filter-input">Search chats</label>
           <svg class="chat-filter-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -157,6 +213,9 @@
         </section>
 
         <p id="error" class="error" role="alert" hidden></p>
+        <button id="draft-unsorted" class="chip" type="button" hidden>
+          Save this draft in Unsorted
+        </button>
 
         <section class="sheet" aria-label="Transcript">
           <label class="visually-hidden" for="transcript">Transcript</label>

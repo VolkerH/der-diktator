@@ -21,6 +21,10 @@
   --icon-retry: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4'/%3E%3C/svg%3E");
   --icon-trash: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12'/%3E%3C/svg%3E");
   --icon-close: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M6 6l12 12M18 6 6 18'/%3E%3C/svg%3E");
+  --icon-plus: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='M12 5v14M5 12h14'/%3E%3C/svg%3E");
+  --icon-more: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='5' cy='12' r='2'/%3E%3Ccircle cx='12' cy='12' r='2'/%3E%3Ccircle cx='19' cy='12' r='2'/%3E%3C/svg%3E");
+  --icon-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  --icon-move: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2zM10 13.5h6M13.5 11l2.5 2.5-2.5 2.5'/%3E%3C/svg%3E");
   --icon-pencil: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4'/%3E%3C/svg%3E");
   color: var(--ink);
   background: var(--page);
@@ -163,7 +167,8 @@ main {
   padding: 0 4px 4px;
 }
 .sidebar.locked .chat-list,
-.sidebar.locked .new-chat {
+.sidebar.locked .new-chat,
+.sidebar.locked .group-create {
   opacity: 0.55;
   pointer-events: none;
 }
@@ -279,6 +284,7 @@ main {
   mask: var(--icon-trash) center / contain no-repeat;
 }
 .chat-item:hover .chat-delete,
+.chat-item:focus-within .chat-delete,
 .chat-delete:focus-visible,
 .chat-delete.confirm {
   opacity: 1;
@@ -1120,7 +1126,8 @@ textarea:read-only {
   font-size: 13px;
   font-weight: 650;
 }
-.title-editor input {
+.title-editor input,
+.title-editor select {
   width: 100%;
   min-height: 44px;
   padding: 10px 14px;
@@ -1131,7 +1138,8 @@ textarea:read-only {
   font: inherit;
   font-size: 16px;
 }
-.title-editor input:focus-visible {
+.title-editor input:focus-visible,
+.title-editor select:focus-visible {
   outline: none;
   border-color: var(--violet);
   box-shadow: 0 0 0 4px #7c3aed1f;
@@ -1275,4 +1283,262 @@ textarea:read-only {
     min-height: 44px;
     font-size: 16px;
   }
+}
+
+/* New chat stays the primary action; New group is a compact companion. */
+.sidebar-actions {
+  display: flex;
+  gap: 8px;
+}
+.sidebar-actions .new-chat {
+  flex: 1;
+}
+.group-create {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  min-height: 42px;
+  padding: 0;
+  border: 1px solid var(--sheet-line);
+  border-radius: 14px;
+  background: var(--sheet);
+  color: var(--chip-ink);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.group-create:hover {
+  background: var(--chip);
+}
+.group-create:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.group-create svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Group sections: a quiet label row above the chats it contains. */
+.chat-group {
+  min-width: 0;
+}
+.chat-group + .chat-group {
+  margin-top: 10px;
+}
+.group-header {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 32px;
+  padding-right: 4px;
+}
+.group-fold {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 6px 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.group-fold::before {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  vertical-align: -1px;
+  background: currentColor;
+  mask: var(--icon-chevron) center / contain no-repeat;
+  transition: transform 0.15s;
+}
+.group-fold[aria-expanded="false"]::before {
+  transform: rotate(-90deg);
+}
+.group-fold:not(:disabled):hover {
+  color: var(--ink);
+}
+.group-fold:disabled {
+  cursor: default;
+}
+.group-fold:disabled::before {
+  opacity: 0.4;
+}
+.group-add,
+.group-menu-toggle {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  font-size: 0;
+  list-style: none;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.15s,
+    background 0.15s;
+}
+.group-add::before,
+.group-menu-toggle::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  mask: var(--icon-plus) center / contain no-repeat;
+}
+.group-menu-toggle::before {
+  mask-image: var(--icon-more);
+}
+.group-menu-toggle::-webkit-details-marker {
+  display: none;
+}
+.group-header:hover :is(.group-add, .group-menu-toggle),
+.group-header:focus-within :is(.group-add, .group-menu-toggle),
+.group-menu[open] .group-menu-toggle {
+  opacity: 1;
+}
+.group-add:hover,
+.group-menu-toggle:hover,
+.group-menu[open] .group-menu-toggle {
+  background: var(--chip);
+  color: var(--ink);
+}
+.group-menu {
+  position: relative;
+}
+.group-menu-actions {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 5;
+  display: grid;
+  min-width: 148px;
+  padding: 6px;
+  border: 1px solid var(--sheet-line);
+  border-radius: 12px;
+  background: var(--sheet);
+  box-shadow: 0 18px 40px -12px #1a143366;
+}
+.group-action {
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.group-action:hover {
+  background: var(--chip);
+}
+.group-action:last-child {
+  color: var(--danger);
+}
+.group-action:last-child:hover {
+  background: #e5384f1f;
+}
+.group-chats {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Move uses the same quiet icon button as delete and sits before it. */
+.chat-move {
+  order: 1;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: var(--muted);
+  font-size: 0;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.15s,
+    background 0.15s;
+}
+.chat-move::before {
+  content: "";
+  width: 17px;
+  height: 17px;
+  background: currentColor;
+  mask: var(--icon-move) center / contain no-repeat;
+}
+.chat-delete {
+  order: 2;
+}
+.chat-item:hover .chat-move,
+.chat-item:focus-within .chat-move,
+.chat-move:focus-visible {
+  opacity: 1;
+}
+.chat-move:hover {
+  background: #7c3aed1f;
+  color: var(--violet);
+}
+.chat-item:has(.chat-delete.confirm) .chat-move {
+  display: none;
+}
+/* With a mouse, row actions take no room until the row is hovered or focused,
+   so titles are not truncated by invisible buttons. */
+@media (hover: hover) and (min-width: 861px) {
+  .chat-item:not(:hover, :focus-within) :is(.chat-move, .chat-delete) {
+    display: none;
+  }
+  .group-header:not(:hover, :focus-within) :is(.group-add, .group-menu:not([open])) {
+    display: none;
+  }
+}
+@media (max-width: 860px), (hover: none) {
+  .chat-move,
+  .group-add,
+  .group-menu-toggle {
+    opacity: 1;
+  }
+  .group-header {
+    min-height: 40px;
+  }
+  .group-add,
+  .group-menu-toggle {
+    width: 36px;
+    height: 36px;
+  }
+}
+#draft-unsorted {
+  justify-self: start;
 }

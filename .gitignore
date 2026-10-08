@@ -13,3 +13,6 @@ dist/
 .env
 test-results/
 playwright-report/
+
+# Review-only screenshots and recordings are hosted outside the repository.
+/docs/pr-media/
