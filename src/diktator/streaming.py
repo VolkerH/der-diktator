@@ -135,7 +135,7 @@ async def relay_stream(browser: WebSocket, engine: EngineStream, settings: Setti
                 raise StreamError("The engine returned an invalid live transcript.")
             if event["type"] == "error":
                 logger.warning(
-                    "Upstream live error (code=%r): %s", event.get("code"), event["message"]
+                    "Upstream live error (code=%r): %r", event.get("code"), event["message"]
                 )
                 failure = engine_failure(event.get("code"))
                 event = StreamErrorEvent(message=str(failure), code=failure.code).model_dump()
