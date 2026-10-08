@@ -42,7 +42,6 @@ The error codes below are implemented:
 | `engine_error`                             | 502  | Upstream failure or invalid response; outcome may be uncertain.                   |
 | `engine_timeout`                           | 504  | Timed out waiting for the engine; work may still be running.                      |
 | `invalid_title`                            | 422  | Invalid title string; use 1–120 characters without controls or line breaks.       |
-| `storage_error`                            | 500  | Title write rolled back; retain the name and retry.                               |
 | `validation_error`                         | 422  | Invalid request fields; correct them.                                             |
 | `revision_conflict`                        | 412  | Preserve the draft, fetch current state and reconcile.                            |
 | `idempotency_conflict`                     | 409  | Same key, different input; reconcile the original operation.                      |

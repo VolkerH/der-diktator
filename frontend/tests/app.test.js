@@ -71,7 +71,9 @@ class Element {
   }
   load() {}
   removeAttribute() {}
-  focus() {}
+  focus() {
+    if (!this.disabled) globalThis.document.activeElement = this;
+  }
   select() {}
 }
 
@@ -151,7 +153,7 @@ function chatServer() {
     if (parsed.searchParams.has("model"))
       server.requestedModels.push(parsed.searchParams.get("model"));
     const method = options.method ?? "GET";
-    const titleEtag = (chat) => `"title-${chat.id}-${chat.title_revision}-${chat.title}"`;
+    const titleEtag = (chat) => `"title-${chat.id}-${chat.title_revision}"`;
     const json = (body, status = 200) =>
       Response.json(body, {
         status,
@@ -1543,4 +1545,49 @@ test("an older autosave cannot replace newer title metadata read after a conflic
   assert.equal(app.element("transcript").value, "New text");
   await deleteRow(app, 0);
   assert.equal(app.server.chats.size, 1, "metadata-only reads do not acknowledge deletion");
+});
+
+test("successful title save restores focus after a delayed sidebar refresh", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  const fetch = globalThis.fetch;
+  let finishRefresh;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (url === "/api/chats") {
+      await new Promise((resolve) => {
+        finishRefresh = resolve;
+      });
+    }
+    return fetch(url, options);
+  });
+  await app.element("chat-title").emit("click");
+  await submitTitle(app, "Renamed");
+  assert.equal(app.element("title-editor").open, false);
+  assert.equal(app.element("chat-title").disabled, true);
+  finishRefresh();
+  await settle();
+  assert.equal(app.element("chat-title").disabled, false);
+  assert.equal(globalThis.document.activeElement, app.element("chat-title"));
+});
+
+test("a failed rename after cancellation reports its error outside the closed dialog", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  const fetch = globalThis.fetch;
+  let fail;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url).endsWith("/title") && options?.method === "PUT") {
+      return new Promise((resolve, reject) => {
+        fail = reject;
+      });
+    }
+    return fetch(url, options);
+  });
+  await app.element("chat-title").emit("click");
+  await submitTitle(app, "Attempted name");
+  await app.element("title-cancel").emit("click");
+  fail(new TypeError("Network unavailable"));
+  await settle();
+  assert.equal(app.element("title-editor").open, false);
+  assert.match(app.element("error").textContent, /Network unavailable/);
+  assert.equal(app.element("error").hidden, false);
+  assert.equal(app.element("chat-title").textContent, "Original");
 });

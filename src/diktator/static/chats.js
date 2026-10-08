@@ -45,13 +45,12 @@ export const chatApi = {
   create: (id) => chatRequest(`/api/chats/${id}`, { method: "PUT" }),
   /** @param {string} id @returns {Promise<Chat>} */
   get: (id) => chatRequest(`/api/chats/${id}`),
-  /** @param {string} id @returns {Promise<ChatTitle>} */
+  /** @param {string} id @returns {Promise<{ custom_title: string | null, title_revision: number, titleEtag: string | null }>} */
   getTitle: async (id) => {
     const { body, headers } = await request(`/api/chats/${id}/title`);
     return {
       ...body,
       titleEtag: headers.get("ETag"),
-      titleChatRevision: Number(headers.get("Chat-Revision")),
     };
   },
   /** @param {string} id @param {string | null} customTitle @param {string} etag @returns {Promise<Chat>} */

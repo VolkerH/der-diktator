@@ -18,6 +18,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    with op.batch_alter_table("chats") as batch:
-        batch.drop_column("title_revision")
-        batch.drop_column("custom_title")
+    # Rebuilding chats would cascade-delete memberships and recordings with foreign_keys=ON.
+    # Native DROP COLUMN (SQLite >= 3.35) preserves the parent table and its dependent rows.
+    op.drop_column("chats", "title_revision")
+    op.drop_column("chats", "custom_title")

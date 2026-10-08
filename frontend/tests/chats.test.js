@@ -93,9 +93,8 @@ test("title API uses only the server's canonical name and preserves scoped valid
     );
   });
   const current = await chatApi.getTitle("a".repeat(32));
-  assert.equal(current.title, "Server label");
+  assert.equal(current.custom_title, "Server label");
   assert.equal(current.titleEtag, '"title-read"');
-  assert.equal(current.titleChatRevision, 7);
   const saved = await chatApi.saveTitle("a".repeat(32), null, current.titleEtag);
   assert.equal(calls[1][1].headers["If-Match"], '"title-read"');
   assert.equal(calls[1][1].body, '{"custom_title":null}');

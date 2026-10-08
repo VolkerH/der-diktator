@@ -707,9 +707,10 @@ async function commitTitle(customTitle) {
     titleError.textContent =
       error instanceof Error ? error.message : "The name could not be saved.";
     titleError.hidden = false;
+    if (!titleDialog.open) showError(error);
     if (error instanceof ApiRequestError && error.code === "revision_conflict" && chat) {
       try {
-        const latest = await chatApi.getTitle(chat.id);
+        const latest = await chatApi.get(chat.id);
         if (editing.generation !== navigationGeneration) return;
         acknowledgeTitleMetadata(chat, latest);
         titleError.textContent = `The current name is “${chat.title}”. Save again to use your name.`;
@@ -725,6 +726,7 @@ async function commitTitle(customTitle) {
     titleSave.disabled = false;
     titleReset.disabled = !chat?.custom_title;
     updateControls();
+    if (!titleDialog.open && editing.generation === navigationGeneration) chatTitle.focus();
   }
 }
 

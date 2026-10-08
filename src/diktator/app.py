@@ -294,11 +294,7 @@ def create_app(
 
     @app.get(
         "/api/chats/{chat_id}/title",
-        description="Read canonical shared title metadata. ETag covers title, custom_title and "
-        "title_revision. The automatic title can change after a text edit; recordings do not "
-        "change this validator. Retain the quoted validator for title PUT. Chat-Revision "
-        "reports the parent snapshot ordering for title freshness only; it does not "
-        "acknowledge unseen text or authorize deletion.",
+        description="Read the custom title and its revision. Retain ETag for conditional renames.",
         responses={
             **error_responses(404, 422),
             200: {
@@ -317,21 +313,13 @@ def create_app(
         chat = store().get(actor_id, chat_id)
         response.headers["ETag"] = chat.title_etag
         response.headers["Chat-Revision"] = str(chat.revision)
-        return ChatTitle(
-            title=chat.title, custom_title=chat.custom_title, title_revision=chat.title_revision
-        )
+        return ChatTitle(custom_title=chat.custom_title, title_revision=chat.title_revision)
 
     @app.put(
         "/api/chats/{chat_id}/title",
-        description="Rename a shared chat with required custom_title (string or null). Trim "
-        "strings and require 1-120 Unicode code points without controls or line breaks. Null "
-        "restores automatic naming. Invalid strings return 422 invalid_title; malformed bodies "
-        "return 422 validation_error. Optional If-Match checks the title validator atomically; "
-        "stale values return 412 revision_conflict. Missing headers retain legacy unconditional "
-        "writes. Changed overrides advance title/whole-chat revisions and recency, never the "
-        "text revision. Identical values change nothing. Returns a complete Chat and all scoped "
-        "validators. After a lost response, read and compare before retrying; preserve drafts.",
-        responses={**error_responses(404, 412, 422, 500), 200: {"headers": validator_headers}},
+        description="Set a shared title, or null for automatic naming. Optional If-Match checks "
+        "only title metadata; transcript edits do not conflict. Returns the complete Chat.",
+        responses={**error_responses(404, 412, 422), 200: {"headers": validator_headers}},
     )
     def update_title(
         chat_id: ChatId,

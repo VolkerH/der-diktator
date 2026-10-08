@@ -8,6 +8,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from sqlalchemy.exc import OperationalError
 
 from diktator.chats import ChatService
@@ -74,7 +76,7 @@ async def test_manual_titles_survive_text_audio_and_restart_then_reset(tmp_path:
         assert reset.json()["text_revision"] == current.json()["text_revision"]
         title = await client.get(f"/api/chats/{CHAT_ID}/title")
         assert title.json() == {
-            key: reset.json()[key] for key in ("title", "custom_title", "title_revision")
+            key: reset.json()[key] for key in ("custom_title", "title_revision")
         }
         assert title.headers["etag"] == reset.headers["title-etag"]
         assert int(title.headers["chat-revision"]) == reset.json()["revision"]
@@ -92,6 +94,10 @@ async def test_manual_titles_survive_text_audio_and_restart_then_reset(tmp_path:
         "name\x7f",
         "name\u2028",
         "name\u2029",
+        "\u200b",
+        "\ufeff \u200b",
+        "\u202eevil",
+        "\u2066name\u2069",
     ],
 )
 @pytest.mark.anyio
@@ -128,9 +134,8 @@ async def test_scoped_conflicts_and_atomic_parallel_title_writes(tmp_path: Path)
     async with client_for(transcribing_engine, Settings(data_directory=tmp_path)) as client:
         created = await client.put(f"/api/chats/{CHAT_ID}")
         text = await client.put(f"/api/chats/{CHAT_ID}/text", json={"text": "Automatic"})
-        assert text.headers["title-etag"] != created.headers["title-etag"]
+        assert text.headers["title-etag"] == created.headers["title-etag"]
         for validator in (
-            created.headers["title-etag"],
             text.headers["etag"],
             "W/" + text.headers["title-etag"],
         ):
@@ -222,7 +227,7 @@ def test_released_schema_title_defaults_and_persistence(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
-async def test_failed_title_commit_rolls_back_and_reports_storage_error(tmp_path: Path) -> None:
+async def test_failed_title_commit_rolls_back(tmp_path: Path) -> None:
     async with client_for(transcribing_engine, Settings(data_directory=tmp_path)) as client:
         created = await client.put(f"/api/chats/{CHAT_ID}")
         original = ChatService._model
@@ -233,13 +238,11 @@ async def test_failed_title_commit_rolls_back_and_reports_storage_error(tmp_path
                 raise OperationalError("statement", {}, Exception("private disk diagnostic"))
             return model
 
-        with patch("diktator.chats.ChatService._model", fail_after_flush):
-            failed = await client.put(f"/api/chats/{CHAT_ID}/title", json={"custom_title": "Lost"})
-        assert failed.status_code == 500
-        assert failed.json() == {
-            "code": "storage_error",
-            "detail": "The name could not be saved. Try again.",
-        }
+        with (
+            patch("diktator.chats.ChatService._model", fail_after_flush),
+            pytest.raises(OperationalError),
+        ):
+            await client.put(f"/api/chats/{CHAT_ID}/title", json={"custom_title": "Lost"})
         assert (await client.get(f"/api/chats/{CHAT_ID}")).json() == created.json()
 
 
@@ -275,3 +278,53 @@ async def test_title_text_and_audio_mutations_preserve_each_other(tmp_path: Path
             2,
             3,
         )
+
+
+@pytest.mark.anyio
+async def test_transcript_edits_do_not_conflict_with_title_metadata(tmp_path: Path) -> None:
+    async with client_for(transcribing_engine, Settings(data_directory=tmp_path)) as client:
+        created = await client.put(f"/api/chats/{CHAT_ID}")
+        before = await client.get(f"/api/chats/{CHAT_ID}/title")
+        await client.put(f"/api/chats/{CHAT_ID}/text", json={"text": "Written elsewhere"})
+        after = await client.get(f"/api/chats/{CHAT_ID}/title")
+        assert before.json() == after.json()
+        assert before.headers["etag"] == after.headers["etag"]
+        renamed = await client.put(
+            f"/api/chats/{CHAT_ID}/title",
+            json={"custom_title": "Family 👩‍👩‍👧‍👦"},
+            headers={"If-Match": created.headers["title-etag"]},
+        )
+        assert renamed.status_code == 200
+        assert renamed.json()["text"] == "Written elsewhere"
+        assert renamed.json()["custom_title"] == "Family 👩‍👩‍👧‍👦"
+
+
+def test_title_downgrade_preserves_memberships_recordings_and_audio(service: ChatService) -> None:
+    chat = service.create(LOCAL_USER_ID)
+    service.update_text(LOCAL_USER_ID, chat.id, "Retained transcript")
+    service.update_title(LOCAL_USER_ID, chat.id, "Temporary override")
+    recording = service.add_recording(LOCAL_USER_ID, chat.id, make_wav(), 1.0)
+    config = Config()
+    config.set_main_option(
+        "script_location", str(Path(__file__).parents[1] / "src/diktator/db/migrations")
+    )
+    with service.engine.connect().execution_options(write=True) as connection:
+        assert connection.exec_driver_sql("PRAGMA foreign_keys").scalar() == 1
+        members = connection.exec_driver_sql("SELECT * FROM chat_members").all()
+        recordings = connection.exec_driver_sql("SELECT * FROM recordings").all()
+        connection.commit()
+        config.attributes["connection"] = connection
+        command.downgrade(config, "0002")
+        assert connection.exec_driver_sql("SELECT * FROM chat_members").all() == members
+        assert connection.exec_driver_sql("SELECT * FROM recordings").all() == recordings
+        assert (
+            connection.exec_driver_sql("SELECT text FROM chats").scalar() == "Retained transcript"
+        )
+        assert connection.exec_driver_sql("PRAGMA foreign_key_check").all() == []
+        connection.commit()
+        command.upgrade(config, "head")
+    restored = service.get(LOCAL_USER_ID, chat.id)
+    assert restored.custom_title is None
+    assert restored.title == "Retained transcript"
+    assert len(restored.recordings) == 1
+    assert service.recording_audio(LOCAL_USER_ID, chat.id, recording.id) == make_wav()

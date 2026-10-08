@@ -1,7 +1,6 @@
 """Public chat representations and membership-authorized application service."""
 
 import hashlib
-import json
 import logging
 import os
 import re
@@ -15,7 +14,6 @@ from threading import Lock
 
 from pydantic import BaseModel, ConfigDict, PrivateAttr, computed_field, field_validator
 from sqlalchemy import Engine, func, select
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from diktator.db import session_scope
@@ -67,18 +65,13 @@ class Chat(BaseModel):
 
     @property
     def title_etag(self) -> str:
-        """Validate the title representation, including its automatic name."""
-        payload = json.dumps(
-            [self.title, self.custom_title, self.title_revision], ensure_ascii=True
-        )
-        digest = hashlib.sha256(payload.encode()).hexdigest()
-        return f'"title-{self.id}-{self._incarnation}-{digest}"'
+        """Validate writable title metadata independently of transcript edits."""
+        return f'"title-{self.id}-{self._incarnation}-{self.title_revision}"'
 
 
 class ChatTitle(BaseModel):
     """Shared title metadata, independently writable from transcript and audio."""
 
-    title: str
     custom_title: str | None
     title_revision: int
 
@@ -98,6 +91,16 @@ class TitleUpdate(BaseModel):
         if any(unicodedata.category(character) in {"Cc", "Cs", "Zl", "Zp"} for character in value):
             raise ApiFailure("Titles cannot contain controls or line breaks.", "invalid_title", 422)
         value = value.strip()
+        if any(
+            "\u202a" <= character <= "\u202e" or "\u2066" <= character <= "\u2069"
+            for character in value
+        ):
+            raise ApiFailure("Titles cannot contain bidirectional controls.", "invalid_title", 422)
+        if not any(
+            not character.isspace() and unicodedata.category(character) != "Cf"
+            for character in value
+        ):
+            raise ApiFailure("A title must contain visible characters.", "invalid_title", 422)
         if not 1 <= len(value) <= 120:
             raise ApiFailure("A title must contain 1 to 120 characters.", "invalid_title", 422)
         return value
@@ -139,6 +142,11 @@ def chat_etag(row: ChatRow) -> str:
 def text_etag(row: ChatRow) -> str:
     """Compute the independently writable text validator from its row snapshot."""
     return f'"text-{row.id}-{row.incarnation}-{row.text_revision}"'
+
+
+def title_etag(row: ChatRow) -> str:
+    """Compute the independently writable title validator without loading recordings."""
+    return f'"title-{row.id}-{row.incarnation}-{row.title_revision}"'
 
 
 class ChatNotFound(ApiFailure):
@@ -330,21 +338,15 @@ class ChatService:
     ) -> Chat:
         """Change shared metadata in one transaction, preserving transcript and audio."""
         custom_title = TitleUpdate(custom_title=custom_title).custom_title
-        try:
-            with session_scope(self.engine, write=True) as session:
-                row = self._chat(session, actor_id, chat_id)
-                check_precondition(if_match, self._model(session, row).title_etag)
-                if row.custom_title != custom_title:
-                    row.custom_title = custom_title
-                    row.title_revision += 1
-                    row.revision += 1
-                    row.updated = _now()
-                return self._model(session, row)
-        except SQLAlchemyError as error:
-            log.exception("Title update failed for chat %s", chat_id)
-            raise ApiFailure(
-                "The name could not be saved. Try again.", "storage_error", 500
-            ) from error
+        with session_scope(self.engine, write=True) as session:
+            row = self._chat(session, actor_id, chat_id)
+            check_precondition(if_match, title_etag(row))
+            if row.custom_title != custom_title:
+                row.custom_title = custom_title
+                row.title_revision += 1
+                row.revision += 1
+                row.updated = _now()
+            return self._model(session, row)
 
     def delete(self, actor_id: str, chat_id: str, if_match: str | None = None) -> None:
         with self._mutation_lock:
