@@ -7,7 +7,7 @@ import shutil
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from threading import RLock
+from threading import Lock
 
 from pydantic import BaseModel
 from sqlalchemy import Engine, func, select
@@ -97,15 +97,16 @@ def finalize_audio(path: Path, audio: bytes) -> None:
 class ChatService:
     """One owned SQLite database and stable audio paths, with short transactions.
 
-    A service-level lock spans each mutation and its file cleanup. File operations
-    happen outside transactions, while competing uploads/deletes cannot cross that
-    boundary. Every operation creates and closes its own session in its calling thread.
+    A plain lock spans uploads, deletions and creation through file cleanup.
+    Creation stays serialized so a recreated ID cannot acquire a folder while its
+    previous deletion is still removing it. File work runs outside transactions;
+    reads and text-only updates use their own sessions without this lock.
     """
 
     def __init__(self, root: Path, engine: Engine) -> None:
         self.root = root
         self.engine = engine
-        self._mutation_lock = RLock()
+        self._mutation_lock = Lock()
 
     def _folder(self, chat_id: str) -> Path:
         if not IDENTIFIER.fullmatch(chat_id):
@@ -189,7 +190,7 @@ class ChatService:
             return self._model(session, self._chat(session, actor_id, chat_id))
 
     def update_text(self, actor_id: str, chat_id: str, text: str) -> Chat:
-        with self._mutation_lock, session_scope(self.engine, write=True) as session:
+        with session_scope(self.engine, write=True) as session:
             row = self._chat(session, actor_id, chat_id)
             row.text = text
             row.updated = _now()
@@ -245,27 +246,28 @@ class ChatService:
             return recording
 
     def recording_audio(self, actor_id: str, chat_id: str, recording_id: str) -> bytes:
-        # Serialize the row lookup and read with deletion, so a completed lookup
-        # cannot race a folder removal. No database transaction surrounds the read.
-        with self._mutation_lock:
-            if not IDENTIFIER.fullmatch(recording_id):
-                raise RecordingNotFound()
-            with session_scope(self.engine) as session:
-                self._chat(session, actor_id, chat_id)
-                row = session.scalar(
-                    select(RecordingRow).where(
-                        RecordingRow.id == recording_id, RecordingRow.chat_id == chat_id
-                    )
+        if not IDENTIFIER.fullmatch(recording_id):
+            raise RecordingNotFound()
+        with session_scope(self.engine) as session:
+            self._chat(session, actor_id, chat_id)
+            row = session.scalar(
+                select(RecordingRow).where(
+                    RecordingRow.id == recording_id, RecordingRow.chat_id == chat_id
                 )
-                if row is None:
-                    raise RecordingNotFound()
-                relative_path = row.audio_path
-            expected = f"{chat_id}/{recording_id}.wav"
-            path = self._folder(chat_id) / f"{recording_id}.wav"
-            if relative_path != expected or path.is_symlink():
+            )
+            if row is None:
                 raise RecordingNotFound()
-            try:
-                return path.read_bytes()
-            except OSError as error:
-                log.warning("Recording audio is missing or unreadable: %s", path)
-                raise RecordingNotFound() from error
+            relative_path = row.audio_path
+        # Use the stored relative path. This layout confines audio to the authorized
+        # chat and rejects traversal, absolute paths and platform-specific separators.
+        if not re.fullmatch(rf"{chat_id}/[0-9a-f]{{32}}\.wav", relative_path):
+            raise RecordingNotFound()
+        path = self._folder(chat_id) / relative_path.split("/")[1]
+        if path.is_symlink():
+            raise RecordingNotFound()
+        try:
+            return path.read_bytes()
+        except OSError as error:
+            # Deletion may remove the file after lookup; reads never block mutations.
+            log.warning("Recording audio is missing or unreadable: %s", path)
+            raise RecordingNotFound() from error

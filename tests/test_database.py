@@ -654,3 +654,53 @@ def test_independently_locked_special_character_directories_are_isolated(tmp_pat
             engine.dispose()
         for lock in locks:
             lock.release()
+
+
+def test_recording_uses_safe_stored_relative_path(service: ChatService) -> None:
+    chat = service.create(LOCAL_USER_ID)
+    recording = service.add_recording(LOCAL_USER_ID, chat.id, make_wav(), 0.01)
+    original = service.root / chat.id / f"{recording.id}.wav"
+    stored = original.with_name("d" * 32 + ".wav")
+    original.rename(stored)
+    with session_scope(service.engine, write=True) as session:
+        row = session.get(RecordingRow, recording.id)
+        assert row is not None
+        row.audio_path = stored.relative_to(service.root).as_posix()
+    assert service.recording_audio(LOCAL_USER_ID, chat.id, recording.id) == make_wav()
+    sweep_orphans(service.engine, service.root)
+    assert stored.exists()
+
+
+@pytest.mark.parametrize("unsafe", ["../outside.wav", "/outside.wav", "other/file.wav", "a\\b.wav"])
+def test_recording_rejects_unsafe_stored_path(service: ChatService, unsafe: str) -> None:
+    chat = service.create(LOCAL_USER_ID)
+    recording = service.add_recording(LOCAL_USER_ID, chat.id, make_wav(), 0.01)
+    with session_scope(service.engine, write=True) as session:
+        row = session.get(RecordingRow, recording.id)
+        assert row is not None
+        row.audio_path = unsafe
+    with pytest.raises(RecordingNotFound):
+        service.recording_audio(LOCAL_USER_ID, chat.id, recording.id)
+
+
+def test_audio_read_does_not_block_mutations_and_handles_delete_race(service: ChatService) -> None:
+    chat = service.create(LOCAL_USER_ID)
+    recording = service.add_recording(LOCAL_USER_ID, chat.id, make_wav(), 0.01)
+    started, finish = Event(), Event()
+    read_bytes = Path.read_bytes
+
+    def paused(path: Path) -> bytes:
+        started.set()
+        assert finish.wait(5)
+        return read_bytes(path)
+
+    with patch.object(Path, "read_bytes", paused), ThreadPoolExecutor(2) as pool:
+        reading = pool.submit(service.recording_audio, LOCAL_USER_ID, chat.id, recording.id)
+        try:
+            assert started.wait(5)
+            deleting = pool.submit(service.delete, LOCAL_USER_ID, chat.id)
+            deleting.result(timeout=2)
+        finally:
+            finish.set()
+        with pytest.raises(RecordingNotFound):
+            reading.result()
