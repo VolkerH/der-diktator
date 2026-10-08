@@ -1,0 +1,55 @@
+{
+  "model": "smollm3-3b",
+  "browser": "153.0.8010.12",
+  "real_correction_model": true,
+  "speech_engine": "mocked; no audio used",
+  "app_data": "isolated temporary directory",
+  "checks": [
+    {
+      "language": "en",
+      "viewport": [1280, 900],
+      "headings_in_preview": true,
+      "accept_undo_preserve_selection": true,
+      "language_metadata_displayed": true,
+      "horizontal_overflow": false,
+      "output": "  ## Delivery Schedule\n\nWe discussed two topics today. First, the delivery schedule for the AX-17 parts. The parts should arrive on Monday. Alice Müller must check the shipment before we confirm delivery. We have not yet received the replacement sensor. Please do not inform the customer that the repair is complete.\n\nSecond, the budget. We have 2400 euros left. We should not order the expensive sensor. The cheaper part costs 180 euros. Please send the corrected report to Alice by Friday. Keep the old measurements for comparison.  "
+    },
+    {
+      "language": "de",
+      "viewport": [1280, 900],
+      "headings_in_preview": true,
+      "accept_undo_preserve_selection": true,
+      "language_metadata_displayed": true,
+      "horizontal_overflow": false,
+      "output": "  ## Thema 1: Liefertermin für AX-17 Teile\nWir haben heute den Liefertermin für die AX-17 Teile besprochen. Diese Teile sollen am Montag ankommen. Alice Müller muss die Sendung prüfen, bevor wir die Lieferung bestätigen. Wir haben den Ersatzsensor noch nicht erhalten. Bitte sagen Sie dem Kunden nicht, dass die Reparatur abgeschlossen ist.\n\n## Thema 2: Budget\nZweitens haben wir das Budget besprochen. Wir haben noch 2400 Euro zur Verfügung. Bitte bestellen Sie nicht den teuren Sensor. Das günstigere Teil kostet 180 Euro. Bitte senden Sie den korrigierten Bericht bis Freitag an Alice und bewahren Sie die alten Messwerte zum Vergleich auf.  "
+    },
+    {
+      "language": "fr",
+      "viewport": [1280, 900],
+      "headings_in_preview": true,
+      "accept_undo_preserve_selection": true,
+      "language_metadata_displayed": true,
+      "horizontal_overflow": false,
+      "output": "  ## Calendrier de livraison et pièces AX-17\n\nNous avons discuté aujourd'hui de deux sujets principaux. Le premier concerne le calendrier de livraison pour les pièces AX-17. Il est prévu que ces pièces arrivent lundi. Alice Müller doit vérifier le colis avant que nous puissions confirmer la livraison. Nous n'avons pas encore reçu le capteur de remplacement. Veuillez ne pas informer le client que la réparation est terminée avant que nous ayons reçu toutes les pièces nécessaires.\n\n## Budget\n\nNous avons également abordé le budget. Nous avons encore 2400 euros disponibles pour les réparations. Il est important de ne pas commander le capteur coûteux. La pièce moins chère coûte 180 euros. Envoyez le rapport corrigé à Alice avant vendredi. Conservez les anciennes mesures pour comparaison.  "
+    },
+    {
+      "language": "es",
+      "viewport": [1280, 900],
+      "headings_in_preview": false,
+      "accept_undo_preserve_selection": true,
+      "language_metadata_displayed": true,
+      "horizontal_overflow": false,
+      "output": "  Hoy hemos discutido dos temas. Primero, el calendario de entrega: las piezas AX-17 deben llegar el lunes. Alice Müller debe revisar el paquete antes de que confirmemos la entrega. Aún no hemos recibido el sensor de repuesto. No le diga al cliente que la reparación está terminada. Segundo, el presupuesto: nos quedan 2400 euros. No pida el sensor caro; la pieza más barata cuesta 180 euros. Envíe el informe corregido a Alice antes del viernes. Conserve las mediciones anteriores para compararlas.  "
+    },
+    {
+      "language": "de",
+      "viewport": [390, 844],
+      "headings_in_preview": true,
+      "accept_undo_preserve_selection": true,
+      "language_metadata_displayed": true,
+      "horizontal_overflow": false,
+      "output": "  ## Thema 1: Liefertermin für AX-17 Teile\nWir haben heute den Liefertermin für die AX-17 Teile besprochen. Diese Teile sollen am Montag ankommen. Alice Müller muss die Sendung prüfen, bevor wir die Lieferung bestätigen. Wir haben den Ersatzsensor noch nicht erhalten. Bitte sagen Sie dem Kunden nicht, dass die Reparatur abgeschlossen ist.\n\n## Thema 2: Budget\nZweitens haben wir das Budget besprochen. Wir haben noch 2400 Euro zur Verfügung. Bitte bestellen Sie nicht den teuren Sensor. Das günstigere Teil kostet 180 Euro. Bitte senden Sie den korrigierten Bericht bis Freitag an Alice und bewahren Sie die alten Messwerte zum Vergleich auf.  "
+    }
+  ],
+  "page_errors": []
+}

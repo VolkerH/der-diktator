@@ -3,7 +3,7 @@ import { request } from "./request.js";
 
 /** @typedef {{text: string, key: number, version: number, active: boolean}} CorrectionSnapshot */
 /** @typedef {{snapshot: CorrectionSnapshot, start: number, end: number}} SelectionSnapshot */
-/** @typedef {{configured: boolean, model: string|null, default_mode: string, modes: {id: string, label: string}[], max_input_characters: number, timeout_seconds: number}} Capabilities */
+/** @typedef {{configured: boolean, model: string|null, languages: string[], default_mode: string, modes: {id: string, label: string}[], max_input_characters: number, timeout_seconds: number}} Capabilities */
 
 /** Exact slicing deliberately adds no spaces and never interprets Markdown as HTML.
  * @param {SelectionSnapshot} selection @param {string} replacement */
@@ -149,7 +149,7 @@ export function correctionControls(snapshot, apply, announce) {
     mode.replaceChildren();
     mode.disabled = true;
     generate.disabled = true;
-    provider.textContent = "Local correction · English prototype";
+    provider.textContent = "Local correction · Preview prototype";
     status.textContent = "Checking correction setup…";
     dialog.showModal();
     try {
@@ -164,8 +164,11 @@ export function correctionControls(snapshot, apply, announce) {
       }
       mode.value = capabilities.default_mode;
       mode.disabled = !capabilities.configured;
+      const languages = capabilities.languages.length
+        ? `Configured languages: ${capabilities.languages.join(", ")}`
+        : "Languages not specified by this server";
       provider.textContent = capabilities.configured
-        ? `Local model: ${capabilities.model} · English prototype`
+        ? `Local model: ${capabilities.model} · ${languages}`
         : "Local correction is not configured";
       const tooLong = [...original.value].length > capabilities.max_input_characters;
       generate.disabled = !capabilities.configured || tooLong;

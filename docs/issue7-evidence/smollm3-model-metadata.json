@@ -1,0 +1,21 @@
+{
+  "repo": "ggml-org/SmolLM3-3B-GGUF",
+  "revision": "4965cb60b150737b68a0408c36aeefb65078f894",
+  "files": [
+    {
+      "rfilename": "SmolLM3-Q4_K_M.gguf",
+      "blobId": "b2767aa0a163fee52c40f6e763d3ec55c71d17df",
+      "size": 1915305312,
+      "lfs": {
+        "sha256": "8334b850b7bd46238c16b0c550df2138f0889bf433809008cc17a8b05761863e",
+        "size": 1915305312,
+        "pointerSize": 135
+      }
+    }
+  ],
+  "card": {
+    "license": "apache-2.0",
+    "language": ["en", "fr", "es", "it", "pt", "zh", "ar", "ru"],
+    "base_model": ["HuggingFaceTB/SmolLM3-3B"]
+  }
+}

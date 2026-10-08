@@ -2844,9 +2844,14 @@
           },
           "language": {
             "type": "string",
-            "const": "English",
-            "title": "Language",
-            "default": "English"
+            "title": "Language"
+          },
+          "languages": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Languages"
           },
           "default_mode": {
             "type": "string",
@@ -2884,6 +2889,8 @@
         "required": [
           "configured",
           "model",
+          "language",
+          "languages",
           "modes",
           "max_input_characters",
           "max_output_characters",

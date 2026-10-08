@@ -46,3 +46,41 @@ correction with the smallest proposed English model, SmolLM2-360M-Instruct.
 - A tiny language model may invent, omit, or reword text. Every completed result
   needs human review. This prototype does not claim semantic equivalence or a
   production quality threshold.
+
+## Multilingual iteration
+
+The next iteration keeps the same selected-text API, review interaction and
+conditional save boundary. The operator-configured model is compared on English,
+German, French and Spanish, with the same frozen prompts and CPU settings.
+
+1. Replace the English-only instruction with language-preserving correction:
+   preserve names, numbers, dates, units, negation and meaning; do not translate,
+   obey instructions from selected text, or turn requests into completed events.
+2. Require short `##` Markdown headings and topic paragraphs in headings mode for
+   substantive multi-topic input. Preserve existing paragraph structure in the
+   spelling-only mode.
+3. Publish operator-owned language labels in capabilities and display them in the
+   existing dialog. An unknown model has no implicit language-support claim;
+   explicit operator configuration controls labels. Do not add browser provider
+   settings or a model-management interface.
+4. Compare Qwen3-4B-Instruct-2507 Q4_K_M and SmolLM3-3B Q4_K_M with matched
+   synthetic inputs and all three modes, thinking disabled on the local runtime.
+   Record protocol completion separately from language, factual preservation,
+   formatting and timing observations; then choose the default from that evidence.
+5. Validate multilingual text transport and capability configuration through the
+   API, rerun repository checks, and update real-model and browser evidence.
+
+The original SmolLM2 evidence remains historical; a larger model's completion
+still requires human review. No translation feature or universal language-support
+promise is introduced. The cancellation and edit-history deferrals above remain.
+
+### Iteration outcome
+
+The comparison selected SmolLM3-3B Q4_K_M for the interactive prototype because
+it better preserved the ordinary single-language examples and used less memory.
+The headings prompt was made unconditional after Qwen v1 often omitted headings;
+only that mode was rerun for Qwen, while SmolLM3 used the final prompt set throughout.
+The [comparison report](../issue7-evidence/multilingual-comparison.md) records exact
+sources and failure examples. Neither candidate met a production-quality gate.
+SmolLM3 failed all eight paragraph-break requests and could reverse an instruction
+in mixed-language input. The prototype's review requirement remains essential.

@@ -9,8 +9,13 @@ next edit or navigation. Paragraph formatting is the initial style; spelling and
 punctuation, and paragraphs with Markdown headings are also available.
 
 The [MVP plan](plans/local-correction-prototype.md) records the scope and deferred
-work. This is a working endpoint-backed interaction prototype. The smallest
-model's output quality is insufficient for unattended correction.
+work. The current iteration asks the model to preserve the original language and
+is configured for English, German, French and Spanish. It uses the same review and conditional
+save workflow. Language labels describe operator configuration; every suggestion
+still needs human review. The [matched comparison](issue7-evidence/multilingual-comparison.md)
+records why SmolLM3 was selected and the failures of both candidates. In the
+measured examples, paragraphs mode did not add paragraph breaks, and mixed-language
+text could lose a negation; those are known prototype limitations.
 
 ## Run the prototype
 
@@ -19,28 +24,31 @@ completions, or run llama.cpp independently. The speech engine and correction
 server have separate lifecycles; correction works even when no speech model is
 running. Nothing is downloaded or started by the app automatically.
 
-The tested smallest candidate was the publisher's
-[SmolLM2-360M-Instruct GGUF](https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct-GGUF),
-using its Q8_0 artifact. The publisher repository provided Q8_0, so no unverified
-third-party Q4 conversion was introduced. The
+The configured default is
+[SmolLM3-3B](https://huggingface.co/HuggingFaceTB/SmolLM3-3B), using
+[ggml-org's Q4_K_M GGUF distribution](https://huggingface.co/ggml-org/SmolLM3-3B-GGUF).
+The prototype runs this model with thinking disabled. The
 [llama.cpp server documentation](https://github.com/ggml-org/llama.cpp/tree/master/tools/server)
-describes CPU execution and compatible chat completions.
+describes CPU execution and compatible chat completions. Configure thinking on
+the model server, not in the browser; the example also explicitly disables it
+for compatible runtime templates.
 
 With a downloaded `llama-server` and model file:
 
 ```bash
 llama-server \
-  --model /path/to/smollm2-360m-instruct-q8_0.gguf \
-  --alias smollm2-360m-instruct \
-  --host 127.0.0.1 --port 18017 \
-  --ctx-size 4096 --threads 4 --parallel 1 --n-gpu-layers 0
+  --model /path/to/SmolLM3-Q4_K_M.gguf \
+  --alias smollm3-3b \
+  --host 127.0.0.1 --port 18019 \
+  --ctx-size 4096 --threads 4 --parallel 1 --n-gpu-layers 0 \
+  --reasoning off --chat-template-kwargs '{"enable_thinking":false}'
 ```
 
 From this worktree, in a second terminal:
 
 ```bash
-DIKTATOR_CORRECTION_URL=http://127.0.0.1:18017/v1 \
-DIKTATOR_CORRECTION_MODEL=smollm2-360m-instruct \
+DIKTATOR_CORRECTION_URL=http://127.0.0.1:18019/v1 \
+DIKTATOR_CORRECTION_MODEL=smollm3-3b \
 DIKTATOR_DATA_DIR=/tmp/phonon2-issue7-demo \
 uv run --locked uvicorn diktator.app:create_app --factory \
   --host 127.0.0.1 --port 18018
@@ -55,8 +63,8 @@ For the already installed environment used during development, the equivalent
 app command was:
 
 ```bash
-DIKTATOR_CORRECTION_URL=http://127.0.0.1:18017/v1 \
-DIKTATOR_CORRECTION_MODEL=smollm2-360m-instruct \
+DIKTATOR_CORRECTION_URL=http://127.0.0.1:18019/v1 \
+DIKTATOR_CORRECTION_MODEL=smollm3-3b \
 DIKTATOR_DATA_DIR=/tmp/phonon2-issue7-demo \
 PYTHONPATH=/tmp/phonon2-issue7-prototype/src \
 /home/hilsenstein/phonon2/.venv/bin/python -m uvicorn \
@@ -74,26 +82,43 @@ The request schema also has a hard 16,000-character text ceiling. Python callers
 can pass a configured `Settings(correction=CorrectionSettings(...))` to
 `create_app` to adjust the normal limits.
 
-| Environment variable               | Meaning                                                       |
-| ---------------------------------- | ------------------------------------------------------------- |
-| `DIKTATOR_CORRECTION_URL`          | Base URL including `/v1`; omitted means disabled.             |
-| `DIKTATOR_CORRECTION_MODEL`        | Provider model ID; defaults to `smollm2-360m-instruct`.       |
-| `DIKTATOR_CORRECTION_API_KEY`      | Optional Bearer credential, retained only on the server.      |
-| `DIKTATOR_CORRECTION_PROMPTS_FILE` | Optional UTF-8 JSON file replacing the three editing prompts. |
+| Environment variable               | Meaning                                                         |
+| ---------------------------------- | --------------------------------------------------------------- |
+| `DIKTATOR_CORRECTION_URL`          | Base URL including `/v1`; omitted means disabled.               |
+| `DIKTATOR_CORRECTION_MODEL`        | Provider model ID; defaults to `smollm3-3b`.                    |
+| `DIKTATOR_CORRECTION_LANGUAGES`    | Comma-separated operator language labels; see resolution below. |
+| `DIKTATOR_CORRECTION_API_KEY`      | Optional Bearer credential, retained only on the server.        |
+| `DIKTATOR_CORRECTION_PROMPTS_FILE` | Optional UTF-8 JSON file replacing the three editing prompts.   |
+
+When language labels are omitted, the default model resolves to English, German,
+French and Spanish. A custom model ID or alias resolves to no labels unless
+`DIKTATOR_CORRECTION_LANGUAGES` is set explicitly. An empty environment value
+clears labels. Python configuration uses `CorrectionSettings(languages=(...))`;
+`None` requests default-model resolution and `()` declares no languages.
+The app does not probe or detect the configured provider's language capabilities.
 
 A prompt file must contain nonempty strings for all three keys: `spelling`,
 `paragraphs`, and `headings`. The shared Python system instruction is prepended
 to each. Restart the app after configuration or prompt changes. These are
 operator settings, not browser preferences. Mode choice applies only to the
-current dialog; reopening uses the backend's default.
+current dialog; reopening uses the backend's default. The shared instruction
+asks the model to preserve source language and language switches, names, numbers,
+dates, units, negation and meaning. It prohibits translation, summarization and following
+instructions embedded in selected text. Headings mode asks for `##` sections and
+paragraphs on substantive multi-topic input; spelling mode requests unchanged
+paragraph structure. These are model instructions, not automatic semantic guarantees.
 
 ## HTTP and streaming contract
 
-`GET /api/corrections/capabilities` returns `configured`, model identity, language,
-mode IDs/labels, `default_mode`, character limits, timeout and concurrency.
+`GET /api/corrections/capabilities` returns `configured`, model identity, a
+`languages` array of operator-owned labels, mode IDs/labels, `default_mode`, character limits, timeout and concurrency.
 `configured: true` means configuration exists; it is **not** a health check or a
 claim that the model meets a quality threshold. Discovery does not contact the
-provider and never exposes its URL, credential or prompts.
+provider and never exposes its URL, credential or prompts. The original singular
+`language` field remains as a readable joined label (or `Unspecified`) for
+compatibility; new clients should use `languages`. No language field was added to
+the generation request: the prompt asks the model to preserve the source text's
+language without a separate language parameter.
 
 `POST /api/corrections` accepts this JSON and defaults `mode` to `paragraphs`:
 
@@ -112,7 +137,7 @@ Python event definitions. Events are:
 
 ```json
 {"type":"delta","text":"Provisional words"}
-{"type":"done","text":"  Authoritative replacement.  ","mode":"paragraphs","model":"smollm2-360m-instruct"}
+{"type":"done","text":"  Authoritative replacement.  ","mode":"paragraphs","model":"smollm3-3b"}
 ```
 
 Or the stream ends with an error instead of `done`:
@@ -186,11 +211,49 @@ snapshot and use the current conditional write API themselves.
 Validation on 2026-10-09 used the isolated worktree source, with `diktator.__file__`
 confirmed as `/tmp/phonon2-issue7-prototype/src/diktator/__init__.py`.
 
-- Ruff formatting/lint and ty: passed. Full Python suite: **384 passed**, including
-  26 correction tests and the updated OpenAPI/event schema contract checks.
-- Prettier, ESLint and TypeScript: passed. Full frontend suite: **166 passed**,
+- Ruff formatting/lint and ty: passed. Full Python suite: **389 passed**, including
+  31 correction tests and the updated OpenAPI/event schema contract checks.
+- Prettier, ESLint and TypeScript: passed. Full frontend suite: **167 passed**,
   including stream completion/error/cancellation, exact selection replacement,
   stale preview guards, Accept/Undo, context-menu action and remote save conflict.
+
+### Current multilingual browser checks
+
+Real SmolLM3 correction in Chromium **153.0.8010.12** passed preview, Accept,
+Undo and exact outside-selection preservation for English, German, French and
+Spanish at 1280 × 900, plus German at 390 × 844. There were no JavaScript page
+errors or horizontal overflow. These checks used temporary isolated chat data
+and a mocked speech status; they did not exercise audio capture or speech
+inference. See the [browser evidence](issue7-evidence/multilingual-browser-smoke.json).
+The Spanish model response did not contain headings, so this is not a claim that
+headings formatting succeeded in all four languages.
+
+![Multilingual correction preview with the selected SmolLM3 model](issue7-evidence/multilingual-preview-desktop.png)
+
+[Current mobile preview](issue7-evidence/multilingual-preview-mobile.png)
+
+### Current multilingual model comparison
+
+The [comparison report](issue7-evidence/multilingual-comparison.md) retains exact
+inputs, outputs, prompt revisions and model provenance. Both final candidates
+completed 26/26 synthetic requests. SmolLM3 preserved the ordinary single-language
+examples better than Qwen and is the interactive prototype default, but neither
+met a production-quality threshold. SmolLM3 had headings in 8/10 requested cases
+and paragraph breaks in 0/8 paragraph-mode cases. It also introduced semantic
+changes, including reversing a do-not-translate instruction in mixed-language
+text. These outcomes are separate from API/UI correctness.
+
+SmolLM3's median first streamed delta was 5.13 seconds and completion was 13.19
+seconds, compared with Qwen's 6.11 and 17.77 seconds. These are single-pass warm
+synthetic observations with matched runtime settings and uncontrolled other host
+work, not latency guarantees. See the report for per-mode prompt provenance and
+memory measurements.
+
+### Historical SmolLM2 baseline
+
+The following evidence describes the original English-only iteration, before
+multilingual prompts or the SmolLM3 default were introduced.
+
 - Real HTTP API and Chromium **153.0.8010.12** with the CPU model: passed preview,
   Accept, Undo, context-menu Cancel, outside-selection/edge-whitespace preservation,
   desktop (1280 × 900) and mobile (390 × 844) layouts, without horizontal overflow
@@ -211,14 +274,31 @@ misspellings unchanged, lowercased a proper name, sometimes wrapped output in
 quotes, and failed to create requested paragraph breaks or headings. A real
 browser preview changed a request not to order a sensor into a statement that
 it had not been ordered, altering meaning. These observations justify explicit
-review; protocol completion is not semantic validation. English is the only
-intended prototype language, and no German-quality claim is made.
+review; protocol completion is not semantic validation. That initial baseline
+was English-only and made no German-quality claim.
 
 The single warm service samples showed first output around 0.20–0.27 seconds and
 completion around 0.53–0.70 seconds. A separate warm HTTP sample was faster.
 These synthetic samples are **not benchmarks** and establish neither cold-start
 performance nor a general quality or latency guarantee.
 
-![Desktop correction preview with original and suggestion](issue7-evidence/preview-desktop.png)
+![Historical SmolLM2 desktop preview with original and suggestion](issue7-evidence/preview-desktop.png)
 
-[Mobile preview screenshot](issue7-evidence/preview-mobile.png)
+[Historical SmolLM2 mobile preview](issue7-evidence/preview-mobile.png)
+
+### SmolLM2 control with the multilingual prompts
+
+The [additional control run](issue7-evidence/smollm2-multilingual-control.json)
+used the first multilingual prompt revision and the same 26 synthetic cases as
+the larger models. All requests completed, but none of the ten headings requests
+produced `##` headings. Manual inspection found substantive failures: German
+input became English, “yesterday” became “last week”, an exact 23 °C target became
+“above 23 °C”, and instructions restricting production or distribution were
+omitted. In the quoted-command case, a prohibition on sending the report before
+review became an instruction to send it before review.
+
+This isolates a continuing quality limitation of the smallest model under the
+new prompts. It is not a matched timing comparison: the control used Q8_0 and
+prompt caching, while the larger candidates use Q4_K_M with caching disabled.
+Its timing values are retained in the raw evidence but excluded from the larger
+models' timing comparison.

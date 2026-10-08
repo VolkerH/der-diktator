@@ -3456,7 +3456,11 @@ for (const failure of ["conflict", "network"])
   });
 
 /** The correction provider is separate from speech and never writes chats. */
-function correctionServer(t, produce = () => "  Corrected 🙂. \n") {
+function correctionServer(
+  t,
+  produce = () => "  Corrected 🙂. \n",
+  languages = ["English", "German", "French", "Spanish"],
+) {
   const upstreamFetch = globalThis.fetch;
   const requests = [];
   t.mock.method(globalThis, "fetch", async (url, options) => {
@@ -3464,7 +3468,8 @@ function correctionServer(t, produce = () => "  Corrected 🙂. \n") {
       return new Response(
         JSON.stringify({
           configured: true,
-          model: "smollm2-360m-instruct",
+          model: "multilingual-test-model",
+          languages,
           default_mode: "paragraphs",
           modes: [
             { id: "paragraphs", label: "Readable paragraphs" },
@@ -3505,6 +3510,7 @@ test("correction preview sends only selection; accept and undo use conditional s
   const end = original.indexOf("After");
   await selectCorrection(app, start, end);
   assert.equal(app.element("correction-mode").value, "paragraphs");
+  assert.match(app.element("correction-provider").textContent, /English, German, French, Spanish/);
   await app.element("correction-generate").emit("click");
   assert.equal(editor.value, original);
   assert.deepEqual(requests, [{ text: original.slice(start, end), mode: "paragraphs" }]);
@@ -3587,4 +3593,13 @@ test("context menu uses the selected snapshot and a mode change requires regener
   await app.element("correction-mode").emit("change");
   assert.equal(app.element("correction-accept").disabled, true);
   assert.equal(app.element("transcript").value, "Original");
+});
+
+test("correction UI makes no language claim for an unlabelled provider", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  correctionServer(t, () => "Corrected", []);
+  await selectCorrection(app, 0, 8);
+  assert.match(app.element("correction-provider").textContent, /Languages not specified/);
+  assert.doesNotMatch(app.element("correction-provider").textContent, /English/);
+  assert.equal(app.element("correction-generate").disabled, false);
 });

@@ -14,8 +14,11 @@ import pytest
 from diktator.app import create_app
 from diktator.config import Settings
 from diktator.corrections import (
+    DEFAULT_LANGUAGES,
+    DEFAULT_MODEL,
     EVENT_SCHEMA,
     PROMPTS,
+    SYSTEM_PROMPT,
     CorrectionMode,
     CorrectionRequest,
     CorrectionService,
@@ -77,6 +80,8 @@ async def test_disabled_discovery_and_generation(tmp_path: Path) -> None:
         assert capability["configured"] is False
         assert capability["model"] is None
         assert capability["default_mode"] == "paragraphs"
+        assert capability["languages"] == list(DEFAULT_LANGUAGES)
+        assert capability["language"] == ", ".join(DEFAULT_LANGUAGES)
         assert len(capability["modes"]) == 3
         response = await client.post("/api/corrections", json={"text": "hello"})
         assert response.status_code == 503
@@ -103,7 +108,7 @@ async def test_modes_text_only_prompt_and_non_mutating_preview(
             "type": "done",
             "text": "\t Café 🙂 corrected. \n",
             "mode": mode,
-            "model": "smollm2-360m-instruct",
+            "model": DEFAULT_MODEL,
         }
         assert any(item["type"] == "delta" for item in stream)
         assert (await client.get("/api/chats")).json() == []
@@ -115,7 +120,7 @@ async def test_modes_text_only_prompt_and_non_mutating_preview(
     assert request.headers["authorization"] == "Bearer operator-secret"
     payload = json.loads(request.content)
     assert payload["messages"][1] == {"role": "user", "content": original.strip()}
-    assert PROMPTS[mode] in payload["messages"][0]["content"]
+    assert payload["messages"][0]["content"] == SYSTEM_PROMPT + PROMPTS[mode]
     assert payload["stream"] is True
     assert payload["temperature"] == 0
     assert payload["max_tokens"] == 1536
@@ -248,3 +253,46 @@ async def test_provider_settings_prompts_and_event_schema(
         replace(config, base_url="file:///tmp/private")
     schema = Path(__file__).parents[1] / "docs/schemas/correction-event.json"
     assert json.loads(schema.read_text()) == EVENT_SCHEMA
+
+
+@pytest.mark.parametrize(
+    "selected",
+    [
+        "  Do not order the sensor. Alice has 2400 euros.  ",
+        "  Bestelle den Sensor nicht. Alice hat 2400 Euro.  ",
+        "  Ne commandez pas le capteur. Alice a 2400 euros.  ",
+        "  No pidas el sensor. Alice tiene 2400 euros.  ",
+    ],
+)
+async def test_multilingual_selection_stays_exact_at_the_provider_boundary(
+    tmp_path: Path, selected: str
+) -> None:
+    def provider(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["messages"][1]["content"] == selected.strip()
+        return httpx.Response(200, text=complete(selected.strip()))
+
+    async with api(tmp_path, provider) as client:
+        result = events(await client.post("/api/corrections", json={"text": selected}))
+        assert result[-1]["type"] == "done"
+        assert result[-1]["text"] == selected
+
+
+async def test_language_declarations_follow_operator_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = CorrectionSettings(base_url="http://local/v1", model="another-local-model")
+    assert config.language_labels == ()
+    async with api(tmp_path, lambda _: httpx.Response(200, text=complete()), config) as client:
+        capabilities = (await client.get("/api/corrections/capabilities")).json()
+        assert capabilities["languages"] == []
+        assert capabilities["language"] == "Unspecified"
+
+    monkeypatch.setenv("DIKTATOR_CORRECTION_MODEL", "another-local-model")
+    monkeypatch.setenv("DIKTATOR_CORRECTION_LANGUAGES", "German, French")
+    configured = CorrectionSettings.from_environment()
+    assert configured.language_labels == ("German", "French")
+    monkeypatch.setenv("DIKTATOR_CORRECTION_LANGUAGES", "")
+    assert CorrectionSettings.from_environment().language_labels == ()
+    with pytest.raises(ValueError, match="languages"):
+        replace(config, languages=("",))

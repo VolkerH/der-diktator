@@ -555,7 +555,9 @@ for conditional saves and limits, and the [native-sharing contract](docs/native-
 for handoff outcomes and client responsibilities.
 
 This prototype branch also adds **Fix selection…** for local language-model
-correction previews, with explicit Accept and Undo. It is disabled until a local
-endpoint is configured. See the [prototype setup, API and validation notes](docs/local-correction.md)
-and [MVP plan](docs/plans/local-correction-prototype.md). The smallest tested model
-has material editing-quality failures; review every suggestion.
+correction previews, with explicit Accept and Undo. The multilingual iteration
+asks the model to preserve the original language and defaults to SmolLM3-3B, with
+operator-configured English, German, French and Spanish labels. It is disabled
+until a local endpoint is configured. See the
+[prototype setup, API and validation notes](docs/local-correction.md) and
+[MVP plan](docs/plans/local-correction-prototype.md). Review every suggestion.
