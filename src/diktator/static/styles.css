@@ -1542,3 +1542,138 @@ textarea:read-only {
 #draft-unsorted {
   justify-self: start;
 }
+
+/* Sheet actions: secondary chips first, the accent Copy always at the trailing edge. */
+.sheet-actions {
+  display: flex;
+  flex: 1 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Sidebar settings row: a quiet list row, not a second status card. */
+.sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  width: 100%;
+  min-height: 42px;
+  margin-bottom: -6px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.sidebar-link:hover {
+  background: var(--chip);
+}
+.sidebar-link:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 2px;
+}
+.sidebar-link svg {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Export and preference dialogs: one vertical rhythm instead of per-element margins. */
+.export-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.export-dialog > * {
+  margin: 0;
+}
+.export-dialog > .settings-intro {
+  margin-top: -8px;
+}
+.field {
+  display: grid;
+  gap: 8px;
+}
+.field > label {
+  font-size: 14px;
+  font-weight: 600;
+}
+.field-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+.field-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.export-text {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--sheet-line);
+  border-radius: 12px;
+  background: var(--sheet);
+  color: inherit;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.55;
+  resize: vertical;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.export-text:focus {
+  border-color: #7c3aed80;
+  box-shadow: 0 0 0 4px #7c3aed1f;
+}
+.export-text:read-only {
+  background: color-mix(in srgb, var(--chip) 55%, var(--sheet));
+}
+.dialog-actions {
+  align-items: center;
+}
+/* Status sits on its own line just above the buttons it reports on. */
+.dialog-status {
+  flex: 1 0 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+/* Keep the live region in the tree, but let an empty one take no space. */
+.dialog-status:empty {
+  position: absolute;
+}
+
+@media (max-width: 540px) {
+  /* Buttons share the full row; one that wraps grows to a full-width row, never an orphan. */
+  .sheet-actions {
+    flex-basis: 100%;
+  }
+  .sheet-actions .chip,
+  .export-dialog .dialog-actions .chip {
+    flex: 1 1 auto;
+    justify-content: center;
+    white-space: nowrap;
+  }
+  .export-dialog {
+    padding: 20px;
+  }
+}

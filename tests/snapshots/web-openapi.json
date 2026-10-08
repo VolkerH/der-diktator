@@ -453,6 +453,253 @@
         }
       }
     },
+    "/api/preferences": {
+      "get": {
+        "summary": "Get Preferences",
+        "operationId": "get_preferences_api_preferences_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Preferences"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "Opaque strong validator for the complete preference representation.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update Preferences",
+        "description": "Update the server-resolved user's preferences. If-Match is required; stale validators return 412 without writes. Omitted fields stay unchanged; reset lists restore defaults. Refetch after an uncertain write, retaining the local draft.",
+        "operationId": "update_preferences_api_preferences_patch",
+        "parameters": [
+          {
+            "name": "if-match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreferenceUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Preferences"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "description": "Opaque strong validator for the complete preference representation.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "412": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Precondition Failed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "428": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Precondition Required"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        }
+      }
+    },
+    "/api/exports": {
+      "post": {
+        "summary": "Prepare Export",
+        "description": "Prepare an exact unsaved draft. Plain preserves text; with_preamble resolves this user's preference and wraps the draft in a safe Markdown fence. No chat, history, clipboard or delivery effects. Whitespace-only input is rejected; maximum text length is the configured transcript limit (1,000,000 characters by default). Retain successful output through final copy/share.",
+        "operationId": "prepare_export_api_exports_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftExport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreparedExport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request Entity Too Large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/exports/preview": {
+      "post": {
+        "summary": "Preview Export",
+        "description": "Preview an unsaved preamble against a fixed server example; never saves preferences or chat text.",
+        "operationId": "preview_export_api_exports_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExportPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreparedExport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/groups": {
       "get": {
         "summary": "List Groups",
@@ -2491,6 +2738,39 @@
         "title": "ChatTitle",
         "description": "Shared title metadata, independently writable from transcript and audio."
       },
+      "DraftExport": {
+        "properties": {
+          "format": {
+            "type": "string",
+            "enum": ["plain", "with_preamble"],
+            "title": "Format",
+            "default": "plain"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 1000000,
+            "title": "Text"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["text"],
+        "title": "DraftExport"
+      },
+      "ExportPreviewRequest": {
+        "properties": {
+          "copy_preamble": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Copy Preamble"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["copy_preamble"],
+        "title": "ExportPreviewRequest",
+        "description": "Preview an unsaved preference without persisting it."
+      },
       "Group": {
         "properties": {
           "id": {
@@ -2664,6 +2944,97 @@
         "type": "object",
         "required": ["group_id"],
         "title": "PlacementUpdate"
+      },
+      "PreferenceUpdate": {
+        "properties": {
+          "copy_preamble": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Copy Preamble"
+          },
+          "share_include_preamble": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Share Include Preamble"
+          },
+          "reset": {
+            "items": {
+              "type": "string",
+              "enum": ["copy_preamble", "share_include_preamble"]
+            },
+            "type": "array",
+            "title": "Reset"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "PreferenceUpdate",
+        "description": "Omitted fields remain unchanged; reset and replacement are mutually exclusive."
+      },
+      "Preferences": {
+        "properties": {
+          "copy_preamble": {
+            "type": "string",
+            "title": "Copy Preamble"
+          },
+          "copy_preamble_is_default": {
+            "type": "boolean",
+            "title": "Copy Preamble Is Default",
+            "default": true
+          },
+          "share_include_preamble": {
+            "type": "boolean",
+            "title": "Share Include Preamble",
+            "default": false
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision",
+            "default": 1
+          },
+          "default_copy_preamble": {
+            "type": "string",
+            "title": "Default Copy Preamble"
+          },
+          "max_copy_preamble_characters": {
+            "type": "integer",
+            "title": "Max Copy Preamble Characters",
+            "default": 4000
+          }
+        },
+        "type": "object",
+        "title": "Preferences",
+        "description": "Current values, revision and server-owned defaults for one user profile."
+      },
+      "PreparedExport": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "media_type": {
+            "type": "string",
+            "enum": ["text/plain", "text/markdown"],
+            "title": "Media Type"
+          }
+        },
+        "type": "object",
+        "required": ["text", "media_type"],
+        "title": "PreparedExport",
+        "description": "Exact text for the final client copy/share action, with no delivery side effects."
       },
       "Recording": {
         "properties": {

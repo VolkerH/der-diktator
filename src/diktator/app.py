@@ -19,7 +19,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocketState
 from websockets.exceptions import WebSocketException
@@ -43,9 +43,11 @@ from diktator.errors import (
     error_responses,
     install_error_handlers,
 )
+from diktator.exports import ExportFormat, ExportPreviewRequest, PreparedExport, format_export
 from diktator.group_models import ChatCreate, ChatPlacement, Group, GroupName, PlacementUpdate
 from diktator.groups import GroupService
 from diktator.models import ModelId, ModelsStatus
+from diktator.preferences import Preferences, PreferenceService, PreferenceUpdate
 from diktator.storage import Storage, open_storage
 from diktator.streaming import (
     StreamConnector,
@@ -91,6 +93,12 @@ def create_app(
 
     class TextUpdate(BaseModel):
         text: str = Field(max_length=settings.max_text_characters)
+
+    class DraftExport(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        format: ExportFormat = "plain"
+        # Length errors use the public 413 code rather than generic Pydantic 422.
+        text: str = Field(json_schema_extra={"maxLength": settings.max_text_characters})
 
     # The bundled interface is small: load once rather than reading files per request.
     html = (STATIC_DIRECTORY / "index.html").read_bytes()
@@ -186,6 +194,74 @@ def create_app(
     async def transcribe(request: Request, model: ModelId = "phonon-2") -> Transcription:
         recording, _info = await read_recording(request)
         return await engine.transcribe(recording, model)
+
+    def preferences() -> PreferenceService:
+        return PreferenceService(app.state.storage.engine)
+
+    preference_headers = {
+        "ETag": {
+            "description": "Opaque strong validator for the complete preference representation.",
+            "schema": {"type": "string"},
+        }
+    }
+
+    @app.get(
+        "/api/preferences", responses={**error_responses(503), 200: {"headers": preference_headers}}
+    )
+    def get_preferences(actor_id: Actor, response: Response) -> Preferences:
+        result = preferences().get(actor_id)
+        response.headers["ETag"] = result.etag(actor_id)
+        return result
+
+    @app.patch(
+        "/api/preferences",
+        responses={**error_responses(412, 422, 428, 503), 200: {"headers": preference_headers}},
+        description=(
+            "Update the server-resolved user's preferences. If-Match is required; stale "
+            "validators return 412 without writes. Omitted fields stay unchanged; reset "
+            "lists restore defaults. Refetch after an uncertain write, retaining the local "
+            "draft."
+        ),
+    )
+    def update_preferences(
+        update: PreferenceUpdate,
+        actor_id: Actor,
+        response: Response,
+        if_match: Annotated[str | None, Header()] = None,
+    ) -> Preferences:
+        result = preferences().update(actor_id, update, if_match)
+        response.headers["ETag"] = result.etag(actor_id)
+        return result
+
+    @app.post(
+        "/api/exports",
+        responses=error_responses(400, 413, 422, 503),
+        description=(
+            "Prepare an exact unsaved draft. Plain preserves text; with_preamble resolves "
+            "this user's preference and wraps the draft in a safe Markdown fence. No chat, "
+            "history, clipboard or delivery effects. Whitespace-only input is rejected; "
+            "maximum text length is the configured transcript limit (1,000,000 characters "
+            "by default). Retain successful output through final copy/share."
+        ),
+    )
+    def prepare_export(draft: DraftExport, actor_id: Actor) -> PreparedExport:
+        if len(draft.text) > settings.max_text_characters:
+            raise ApiFailure("The text exceeds the export limit.", "text_too_large", 413)
+        preamble = (
+            preferences().get(actor_id).copy_preamble if draft.format == "with_preamble" else None
+        )
+        return format_export(draft.text, preamble)
+
+    @app.post(
+        "/api/exports/preview",
+        responses=error_responses(400, 422),
+        description=(
+            "Preview an unsaved preamble against a fixed server example; never saves "
+            "preferences or chat text."
+        ),
+    )
+    def preview_export(draft: ExportPreviewRequest) -> PreparedExport:
+        return format_export("Your dictated text appears here.", draft.copy_preamble)
 
     group_headers = {
         "ETag": {

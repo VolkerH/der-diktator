@@ -3,6 +3,8 @@
 import logging
 from dataclasses import dataclass, field
 
+from sqlalchemy import Engine
+
 from diktator.chats import ChatService
 from diktator.config import Settings, default_data_directory, legacy_data_directories, migrate_chats
 from diktator.db import DATABASE_NAME, DataDirectoryLock, open_engine, upgrade_schema
@@ -18,6 +20,11 @@ class Storage:
     chats: ChatService
     _ownership: DataDirectoryLock = field(repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
+
+    @property
+    def engine(self) -> Engine:
+        """The shared application database, independent of a particular service."""
+        return self.chats.engine
 
     def close(self) -> None:
         """Dispose connections before releasing ownership; repeated shutdown is harmless."""

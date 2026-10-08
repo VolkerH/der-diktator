@@ -546,3 +546,7 @@ Whisper is by OpenAI. Its weights and the
 References: [WSL localhost networking](https://learn.microsoft.com/en-us/windows/wsl/networking),
 [Fermion speech API](https://www.fermionresearch.com/docs/speech/),
 [Fermion streaming protocol](https://www.fermionresearch.com/docs/speech-streaming/).
+
+Copy with preamble prepares your current edited draft through the backend. Preamble preferences
+are saved for the shared local user profile in SQLite. See the [preferences and export API](docs/preferences-export-api.md)
+for conditional saves, limits and client responsibilities.

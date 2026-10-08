@@ -72,9 +72,15 @@ class Element {
   load() {}
   removeAttribute() {}
   focus() {
-    if (!this.disabled) globalThis.document.activeElement = this;
+    if (!this.disabled) {
+      globalThis.document.activeElement = this;
+      this.focused = true;
+    }
   }
-  select() {}
+  select() {
+    this.selectionStart = 0;
+    this.selectionEnd = this.value.length;
+  }
 }
 
 const id = (number) => String(number).padStart(32, "0");
@@ -2525,4 +2531,320 @@ test("autosaves and uploads reuse the group registry without surfacing unrelated
   await settle();
   assert.equal(groupReads, 1);
   assert.equal(app.element("error").hidden, false);
+});
+
+/** Install the preferences/export API without duplicating the backend formatter in tests. */
+function exportServer(t) {
+  const underlying = globalThis.fetch;
+  const server = {
+    requests: [],
+    preamble: "Server preamble",
+    etag: '"preference-1"',
+    exportText: "Exact backend output 🌻\n````text\nDraft\n````",
+    failSave: null,
+  };
+  t.mock.method(globalThis, "fetch", async (url, options = {}) => {
+    if (!String(url).startsWith("/api/preferences") && !String(url).startsWith("/api/exports"))
+      return underlying(url, options);
+    server.requests.push([url, options]);
+    if (url === "/api/exports" || url === "/api/exports/preview")
+      return Response.json({ text: server.exportText, media_type: "text/markdown" });
+    if (options.method === "PATCH") {
+      if (server.failSave === "network") throw new TypeError("Network unavailable");
+      if (server.failSave)
+        return Response.json(
+          { detail: "Preferences changed elsewhere", code: "revision_conflict" },
+          { status: 412 },
+        );
+      const body = JSON.parse(options.body);
+      server.preamble = body.reset ? "Default preamble" : body.copy_preamble;
+      server.etag = '"preference-2"';
+    }
+    return Response.json(
+      {
+        copy_preamble: server.preamble,
+        default_copy_preamble: "Default preamble",
+        max_copy_preamble_characters: 4000,
+        revision: 1,
+      },
+      { headers: { ETag: server.etag } },
+    );
+  });
+  return server;
+}
+
+test("copy with preamble prepares exact unsaved text and copies only on a fresh gesture", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Saved words"));
+  const exports = exportServer(t);
+  const transcript = app.element("transcript");
+  transcript.value = "  Unsaved draft 🌻\n````  ";
+  transcript.setSelectionRange(2, 7);
+  await transcript.emit("input");
+  await app.element("copy-preamble").emit("click");
+  assert.equal(app.element("prepared-dialog").open, true);
+  assert.equal(app.element("prepared-text").value, exports.exportText);
+  assert.equal(app.copied.length, 0);
+  assert.deepEqual(JSON.parse(exports.requests[0][1].body), {
+    text: transcript.value,
+    format: "with_preamble",
+  });
+  await app.element("prepared-copy").emit("click");
+  assert.deepEqual(app.copied, [exports.exportText]);
+  assert.equal(transcript.value, "  Unsaved draft 🌻\n````  ");
+  assert.equal(transcript.selectionStart, 2);
+  assert.equal(transcript.selectionEnd, 7);
+  assert.equal(app.element("save-state").textContent, "Editing…");
+  assert.equal(exports.requests.length, 1);
+});
+
+test("clipboard failure selects backend-prepared output and retries the same payload", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Saved words"));
+  const exports = exportServer(t);
+  t.mock.method(navigator.clipboard, "writeText", async () => {
+    throw new Error("Denied");
+  });
+  await app.element("copy-preamble").emit("click");
+  await app.element("prepared-copy").emit("click");
+  assert.match(app.element("prepared-status").textContent, /Text selected/);
+  assert.equal(app.element("prepared-text").focused, true);
+  assert.equal(app.element("prepared-text").selectionEnd, exports.exportText.length);
+  assert.equal(app.element("prepared-text").value, exports.exportText);
+  assert.equal(app.element("transcript").value, "Saved words");
+  t.mock.method(navigator.clipboard, "writeText", async (text) => app.copied.push(text));
+  exports.exportText = "New result must not be used";
+  await app.element("prepared-copy").emit("click");
+  assert.deepEqual(app.copied, [app.element("prepared-text").value]);
+  assert.equal(exports.requests.length, 1);
+});
+
+for (const change of ["edit", "edit then undo", "navigation", "record", "record then finish"])
+  test(`a late export after ${change} only displays a matching inactive draft`, async (t) => {
+    const app = await appEnvironment(t, (server) => server.add("Saved words"));
+    exportServer(t);
+    const fetch = globalThis.fetch;
+    let release;
+    t.mock.method(globalThis, "fetch", async (url, options) => {
+      const response = await fetch(url, options);
+      if (url === "/api/exports")
+        await new Promise((resolve) => {
+          release = resolve;
+        });
+      return response;
+    });
+    const pending = app.element("copy-preamble").emit("click");
+    await settle();
+    if (change.startsWith("edit")) {
+      app.element("transcript").value = "New draft";
+      await app.element("transcript").emit("input");
+      if (change === "edit then undo") {
+        app.element("transcript").value = "Saved words";
+        await app.element("transcript").emit("input");
+      }
+    } else if (change === "navigation") {
+      await app.element("new-chat").emit("click");
+    } else {
+      const socket = await startLive(app);
+      if (change === "record then finish") {
+        await app.element("stop").emit("click");
+        await waitForEnd(socket);
+        socket.event({ type: "done", text: "" });
+        await waitForIdle(app);
+        assert.equal(app.element("transcript").value, "Saved words");
+      }
+    }
+    release();
+    await pending;
+    assert.equal(
+      Boolean(app.element("prepared-dialog").open),
+      ["edit then undo", "record then finish"].includes(change),
+    );
+    assert.equal(app.copied.length, 0);
+  });
+
+test("preamble preference editing previews on the server, cancels and saves with its validator", async (t) => {
+  const app = await appEnvironment(t);
+  const exports = exportServer(t);
+  await app.element("preferences-open").emit("click");
+  await settle();
+  const input = app.element("copy-preamble-input");
+  assert.equal(input.value, "Server preamble");
+  input.value = "Unsaved preference";
+  await app.element("preferences-preview-button").emit("click");
+  assert.equal(app.element("preferences-preview").value, exports.exportText);
+  assert.equal(exports.preamble, "Server preamble");
+  await app.element("preferences-cancel").emit("click");
+  await app.element("preferences-open").emit("click");
+  await settle();
+  assert.equal(input.value, "Server preamble");
+  input.value = "Saved preference";
+  await app.element("preferences-save").emit("click");
+  assert.equal(exports.preamble, "Saved preference");
+  const [, save] = exports.requests.find(([, options]) => options.method === "PATCH");
+  assert.equal(save.headers["If-Match"], '"preference-1"');
+  assert.equal(app.element("preferences-dialog").open, false);
+  await app.element("preferences-open").emit("click");
+  await settle();
+  await app.element("preferences-reset").emit("click");
+  assert.equal(input.value, "Default preamble");
+  await app.element("preferences-save").emit("click");
+  assert.deepEqual(JSON.parse(exports.requests.at(-1)[1].body), { reset: ["copy_preamble"] });
+});
+
+for (const failure of ["conflict", "network"])
+  test(`a ${failure} preference save keeps the draft until explicit confirmed reload`, async (t) => {
+    const app = await appEnvironment(t);
+    const exports = exportServer(t);
+    await app.element("preferences-open").emit("click");
+    await settle();
+    app.element("copy-preamble-input").value = "My preference draft";
+    exports.failSave = failure;
+    await app.element("preferences-save").emit("click");
+    assert.equal(app.element("copy-preamble-input").value, "My preference draft");
+    assert.equal(app.element("preferences-dialog").open, true);
+    assert.equal(app.element("preferences-save").disabled, true);
+    assert.equal(app.element("preferences-reload").hidden, false);
+    t.mock.method(globalThis.window, "confirm", () => false);
+    await app.element("preferences-reload").emit("click");
+    assert.equal(app.element("copy-preamble-input").value, "My preference draft");
+    t.mock.method(globalThis.window, "confirm", () => true);
+    await app.element("preferences-reload").emit("click");
+    await settle();
+    assert.equal(app.element("copy-preamble-input").value, "Server preamble");
+    assert.equal(app.element("preferences-save").disabled, false);
+  });
+
+test("closing preferences ignores its pending response after reopening", async (t) => {
+  const app = await appEnvironment(t);
+  exportServer(t);
+  const fetch = globalThis.fetch;
+  let release;
+  let delay = true;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (url === "/api/preferences" && delay) {
+      delay = false;
+      await new Promise((resolve) => {
+        release = resolve;
+      });
+      return Response.json({ copy_preamble: "Stale response" }, { headers: { ETag: '"stale"' } });
+    }
+    return response;
+  });
+  await app.element("preferences-open").emit("click");
+  await settle();
+  await app.element("preferences-cancel").emit("click");
+  await app.element("preferences-open").emit("click");
+  await settle();
+  app.element("copy-preamble-input").value = "New draft";
+  release();
+  await settle();
+  assert.equal(app.element("copy-preamble-input").value, "New draft");
+});
+
+test("clipboard retries keep exact backend CRLF despite textarea normalization", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Draft"));
+  const exports = exportServer(t);
+  exports.exportText = "Preamble\r\nSecond line\n\n```text\nDraft\n```";
+  const exact = exports.exportText;
+  const output = app.element("prepared-text");
+  let displayed = "";
+  // Model the browser's actual textarea normalization for this regression.
+  Object.defineProperty(output, "value", {
+    get: () => displayed,
+    set: (text) => {
+      displayed = text.replace(/\r\n?/gu, "\n");
+    },
+  });
+  await app.element("copy-preamble").emit("click");
+  assert.notEqual(output.value, exact);
+  await app.element("prepared-copy").emit("click");
+  assert.deepEqual(app.copied, [exact]);
+  t.mock.method(navigator.clipboard, "writeText", async () => {
+    throw new Error("Denied");
+  });
+  await app.element("prepared-copy").emit("click");
+  assert.match(app.element("prepared-status").textContent, /Text selected/);
+  t.mock.method(navigator.clipboard, "writeText", async (text) => app.copied.push(text));
+  exports.exportText = "A later response must not replace the prepared string";
+  await app.element("prepared-copy").emit("click");
+  assert.deepEqual(app.copied, [exact, exact]);
+  assert.equal(exports.requests.length, 1);
+});
+
+test("typing text equal to the default saves custom text; Use default is explicit", async (t) => {
+  const app = await appEnvironment(t);
+  const server = exportServer(t);
+  await app.element("preferences-open").emit("click");
+  await settle();
+  await app.element("preferences-reset").emit("click");
+  await app.element("copy-preamble-input").emit("input");
+  await app.element("preferences-save").emit("click");
+  assert.deepEqual(JSON.parse(server.requests.at(-1)[1].body), {
+    copy_preamble: "Default preamble",
+  });
+});
+
+test("a successful preview clears an earlier preview error", async (t) => {
+  const app = await appEnvironment(t);
+  exportServer(t);
+  const originalFetch = globalThis.fetch;
+  let failing = true;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (url === "/api/exports/preview" && failing)
+      return Response.json(
+        { detail: "Invalid preamble", code: "validation_error" },
+        { status: 422 },
+      );
+    return originalFetch(url, options);
+  });
+  await app.element("preferences-open").emit("click");
+  await settle();
+  await app.element("preferences-preview-button").emit("click");
+  assert.equal(app.element("preferences-error").hidden, false);
+  failing = false;
+  await app.element("preferences-preview-button").emit("click");
+  assert.equal(app.element("preferences-error").hidden, true);
+});
+
+test("export timeout reports the error and enables preparation again", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Saved words"));
+  exportServer(t);
+  const deadline = new AbortController();
+  t.mock.method(AbortSignal, "timeout", () => deadline.signal);
+  const originalFetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (url === "/api/exports")
+      return new Promise((_, reject) => {
+        options.signal.addEventListener("abort", () => reject(options.signal.reason), {
+          once: true,
+        });
+      });
+    return originalFetch(url, options);
+  });
+  const pending = app.element("copy-preamble").emit("click");
+  await settle();
+  assert.equal(app.element("copy-preamble").disabled, true);
+  deadline.abort(new DOMException("Request timed out", "TimeoutError"));
+  await pending;
+  assert.equal(app.element("copy-preamble").disabled, false);
+  assert.notEqual(app.element("prepared-dialog").open, true);
+});
+
+test("preamble mode stays visible when typing, undoing and restoring the default", async (t) => {
+  const app = await appEnvironment(t);
+  exportServer(t);
+  await app.element("preferences-open").emit("click");
+  await settle();
+  const mode = app.element("preferences-mode");
+  assert.match(mode.textContent, /Using a custom preamble/);
+  await app.element("preferences-reset").emit("click");
+  assert.match(mode.textContent, /Using the default preamble/);
+  app.element("copy-preamble-input").value = "Edited";
+  await app.element("copy-preamble-input").emit("input");
+  assert.match(mode.textContent, /Using a custom preamble/);
+  app.element("copy-preamble-input").value = "Default preamble";
+  await app.element("copy-preamble-input").emit("input");
+  assert.match(mode.textContent, /Using a custom preamble/);
+  await app.element("preferences-reset").emit("click");
+  assert.match(mode.textContent, /Future updates apply automatically/);
 });

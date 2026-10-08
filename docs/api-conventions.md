@@ -48,6 +48,11 @@ The error codes below are implemented:
 | `storage_error`                            | 500  | Chat creation/listing or private group storage failed; retain drafts and retry.   |
 | `validation_error`                         | 422  | Invalid request fields; correct them.                                             |
 | `revision_conflict`                        | 412  | Preserve the draft, fetch current state and reconcile.                            |
+| `precondition_required`                    | 428  | Read the resource and supply its validator before writing.                        |
+| `invalid_export`                           | 400  | Enter non-whitespace draft/preamble text.                                         |
+| `text_too_large`                           | 413  | Reduce the draft to the configured transcript limit.                              |
+| `preferences_unavailable`                  | 503  | Preferences cannot be read; retain the draft and retry later.                     |
+| `persistence_failed`                       | 503  | Preference write failed; refetch before retrying.                                 |
 | `idempotency_conflict`                     | 409  | Same key, different input; reconcile the original operation.                      |
 
 For authenticated chat access, missing and inaccessible resources have the same public 404 status
@@ -128,6 +133,10 @@ For `Idempotency-Key` commands, and equivalent stream/session identifiers:
 
 Busy means rejected, not queued. A queue needs explicit admission and cancellation rules in
 [#12](https://github.com/VolkerH/der-diktator/issues/12).
+
+Feature routes and client obligations for preamble preferences and exact draft preparation are
+documented in [Preferences and draft exports](preferences-export-api.md). New preference writes
+require If-Match (428 `precondition_required` when absent); legacy chat writes keep their rollout.
 
 ## Time and streams
 
