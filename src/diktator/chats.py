@@ -226,7 +226,9 @@ class ChatService:
                 finalize_audio(path, audio)
                 with session_scope(self.engine, write=True) as session:
                     chat = self._chat(session, actor_id, chat_id)
-                    chat.updated = recording.created
+                    # A text save may finish during audio finalization. Sample recency
+                    # inside this write transaction and preserve any later stored value.
+                    chat.updated = max(chat.updated, _now())
                     session.add(
                         RecordingRow(
                             id=recording.id,

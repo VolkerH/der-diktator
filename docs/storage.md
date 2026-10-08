@@ -6,9 +6,13 @@ an internal dependency; requests cannot choose an actor. Every chat-scoped read
 or mutation checks membership. Creator metadata does not grant access, and
 missing and inaccessible chats share `chat_not_found` responses.
 
-Creation sets `created` and `updated` to the same UTC timestamp. Every successful
-text replacement and recording upload advances `updated`; reading and listing
-chats do not. Lists sort by `updated` descending, with chat ID as the tie breaker.
+Creation sets `created` and `updated` to the same UTC timestamp. Text replacement
+sets `updated` during its database mutation. Uploads update recency after audio
+finalization to the later of the database mutation time and the stored `updated`,
+so a text save during finalization cannot be overwritten by an earlier timestamp.
+The recording keeps its upload-start `created` timestamp. Reading and listing
+chats do not change recency. Lists sort by `updated` descending, with chat ID as
+the tie breaker.
 Recordings sort by creation time and ID. Legacy import preserves the original
 creation and update instants and the import-time transcript independently of a
 chat's later deletion.

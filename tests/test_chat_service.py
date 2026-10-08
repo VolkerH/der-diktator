@@ -1,7 +1,7 @@
 """Chat authorization, recency and database/file mutation boundaries."""
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event
 from unittest.mock import patch
@@ -216,3 +216,41 @@ def test_creation_waits_for_deleted_id_folder_cleanup(service: ChatService) -> N
         assert creation.result().id == chat.id
     recording = service.add_recording(LOCAL_USER_ID, chat.id, make_wav(), 0.01)
     assert service.recording_audio(LOCAL_USER_ID, chat.id, recording.id) == make_wav()
+
+
+@pytest.mark.parametrize("upload_time_offset", [3, 1])
+def test_upload_recency_preserves_text_save_during_finalization(
+    service: ChatService, upload_time_offset: int
+) -> None:
+    from diktator.chats import finalize_audio
+
+    chat = service.create(LOCAL_USER_ID)
+    recording_started = chat.updated + timedelta(seconds=1)
+    text_saved = chat.updated + timedelta(seconds=2)
+    upload_mutation = chat.updated + timedelta(seconds=upload_time_offset)
+    started, finish = Event(), Event()
+
+    def paused(path: Path, audio: bytes) -> None:
+        finalize_audio(path, audio)
+        started.set()
+        assert finish.wait(5)
+
+    with (
+        patch("diktator.chats.finalize_audio", paused),
+        patch("diktator.chats._now", side_effect=[recording_started, text_saved, upload_mutation]),
+        ThreadPoolExecutor(2) as pool,
+    ):
+        upload = pool.submit(service.add_recording, LOCAL_USER_ID, chat.id, make_wav(), 0.01)
+        try:
+            assert started.wait(5)
+            saving = pool.submit(service.update_text, LOCAL_USER_ID, chat.id, "saved during upload")
+            saved = saving.result(timeout=2)
+            assert saved.updated == text_saved
+        finally:
+            finish.set()
+        recording = upload.result()
+    stored = service.get(LOCAL_USER_ID, chat.id)
+    assert stored.text == saved.text
+    assert recording.created == recording_started
+    assert stored.recordings == [recording]
+    assert stored.updated == max(saved.updated, upload_mutation)
