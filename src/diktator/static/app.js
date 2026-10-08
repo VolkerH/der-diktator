@@ -1,3 +1,4 @@
+import { ApiRequestError } from "./errors.js";
 import { MAX_DURATION_SECONDS, wordCount } from "./audio.js";
 import { chatApi, spliceText, titleFor } from "./chats.js";
 import { modelPicker } from "./models.js";
@@ -22,6 +23,11 @@ const meter = /** @type {HTMLCanvasElement} */ (document.getElementById("meter")
 const timer = /** @type {HTMLElement} */ (document.getElementById("timer"));
 const count = /** @type {HTMLElement} */ (document.getElementById("word-count"));
 const saveState = /** @type {HTMLElement} */ (document.getElementById("save-state"));
+const conflictNotice = /** @type {HTMLElement} */ (document.getElementById("text-conflict"));
+const loadLatestButton = /** @type {HTMLButtonElement} */ (document.getElementById("load-latest"));
+const copyVersionButton = /** @type {HTMLButtonElement} */ (
+  document.getElementById("copy-version")
+);
 const liveMode = /** @type {HTMLInputElement} */ (document.getElementById("live-mode"));
 const chatList = /** @type {HTMLElement} */ (document.getElementById("chat-list"));
 const chatTitle = /** @type {HTMLElement} */ (document.getElementById("chat-title"));
@@ -63,6 +69,13 @@ let chats = [];
 /** @type {Promise<Chat> | null} */
 let creating = null;
 let textDirty = false;
+let textConflict = false;
+/** Invalidate every late result, including leaving and reopening the same chat ID. */
+let navigationGeneration = 0;
+/** Chosen once for this new chat and retained after a failed creation. */
+let pendingChatId = crypto.randomUUID().replaceAll("-", "");
+/** Audio objects retain their identity through storage failure and retry. */
+const recordingIds = new WeakMap();
 /** @type {ReturnType<typeof setTimeout> | undefined} */
 let saveTimer;
 /** Saves run one after another so an older text never overwrites a newer one. */
@@ -342,67 +355,103 @@ function setSaveState(text) {
 /** A new chat is created on the server the first time it needs to store something. */
 async function ensureChat() {
   if (chat) return chat;
+  const generation = navigationGeneration;
   creating ??= chatApi
-    .create()
+    .create(pendingChatId)
     .then((created) => {
-      chat = created;
-      chats = [
-        { id: created.id, title: "New chat", updated: created.updated, recording_count: 0 },
-        ...chats,
-      ];
-      renderChats();
+      if (generation === navigationGeneration) {
+        chat = created;
+        chats = [
+          { id: created.id, title: "New chat", updated: created.updated, recording_count: 0 },
+          ...chats.filter((item) => item.id !== created.id),
+        ];
+        renderChats();
+      }
       return created;
     })
     .finally(() => {
-      creating = null;
+      if (generation === navigationGeneration) creating = null;
     });
   return await creating;
 }
 
 async function refreshChats() {
+  const generation = navigationGeneration;
   try {
-    chats = await chatApi.list();
+    const latest = await chatApi.list();
+    if (generation !== navigationGeneration) return;
+    chats = latest;
   } catch {
     // The list is refreshed again after the next save.
   }
   renderChats();
 }
 
-async function writeText() {
+/** @param {number} generation */
+async function writeText(generation) {
+  if (generation !== navigationGeneration || textConflict) return;
   clearTimeout(saveTimer);
   if (!textDirty) return;
-  textDirty = false;
   const text = transcript.value;
-  if (!chat && !text) return;
+  if (!chat && !text) {
+    textDirty = false;
+    return;
+  }
   setSaveState("Saving…");
   try {
     const target = await ensureChat();
-    const saved = await chatApi.saveText(target.id, text);
+    if (generation !== navigationGeneration || textConflict) return;
+    if (!target.textEtag)
+      throw new Error("The text version could not be loaded. Reload this chat.");
+    const saved = await chatApi.saveText(target.id, text, target.textEtag);
+    if (generation !== navigationGeneration || chat?.id !== target.id) return;
+    // Acknowledge the submitted snapshot; edits made during the request remain dirty.
     target.text = saved.text;
     target.updated = saved.updated;
-    setSaveState(textDirty ? "Saving…" : "Saved");
+    target.etag = saved.etag;
+    target.textEtag = saved.textEtag;
+    target.revision = saved.revision;
+    target.text_revision = saved.text_revision;
+    textDirty = transcript.value !== text;
+    setSaveState(textDirty ? "Editing…" : "Saved");
     await refreshChats();
   } catch (error) {
+    if (generation !== navigationGeneration) return;
     textDirty = true;
-    setSaveState("Not saved");
-    showError(error);
+    if (error instanceof ApiRequestError && error.code === "revision_conflict") {
+      textConflict = true;
+      clearTimeout(saveTimer);
+      conflictNotice.hidden = false;
+      setSaveState("This chat changed elsewhere");
+    } else {
+      setSaveState("Not saved");
+      showError(error);
+    }
   }
 }
 
 function saveText() {
-  saving = saving.then(writeText);
+  const generation = navigationGeneration;
+  saving = saving.then(() => writeText(generation));
   return saving;
 }
 
 function scheduleSave() {
   textDirty = true;
-  setSaveState("Editing…");
   clearTimeout(saveTimer);
+  if (textConflict) return;
+  setSaveState("Editing…");
   saveTimer = setTimeout(() => void saveText(), 700);
 }
 
 /** @param {Chat | null} next */
 function setChat(next) {
+  navigationGeneration++;
+  creating = null;
+  pendingChatId = crypto.randomUUID().replaceAll("-", "");
+  clearTimeout(saveTimer);
+  textConflict = false;
+  conflictNotice.hidden = true;
   stopPlayback();
   discardUnsaved();
   hideError();
@@ -426,15 +475,24 @@ function canLeaveChat() {
   );
 }
 
+/** Save before leaving; failed/conflicted drafts require explicit discard confirmation. */
+async function prepareToLeave() {
+  await saveText();
+  if (textDirty && !window.confirm("Discard your unsaved changes?")) return false;
+  return canLeaveChat();
+}
+
 /** @param {string} id */
 async function openChat(id) {
   closeDrawer();
-  if (recording || busy || id === chat?.id || !canLeaveChat()) return;
-  await saveText();
+  if (recording || busy || id === chat?.id) return;
   busy = true;
   updateControls();
   try {
-    setChat(await chatApi.get(id));
+    if (!(await prepareToLeave())) return;
+    const generation = ++navigationGeneration;
+    const next = await chatApi.get(id);
+    if (generation === navigationGeneration) setChat(next);
   } catch (error) {
     showError(error);
     await refreshChats();
@@ -446,28 +504,58 @@ async function openChat(id) {
 
 async function newChat() {
   closeDrawer();
-  if (recording || busy || !canLeaveChat()) return;
-  await saveText();
-  if (chat) setChat(null);
-  transcript.focus();
+  if (recording || busy) return;
+  busy = true;
+  updateControls();
+  try {
+    if (!(await prepareToLeave())) return;
+    setChat(null);
+    transcript.focus();
+  } finally {
+    busy = false;
+    updateControls();
+  }
 }
 
 /** @param {string} id */
 async function deleteChat(id) {
   if (recording || busy) return;
-  if (chat?.id === id) {
-    textDirty = false;
-    clearTimeout(saveTimer);
-  }
-  await saving;
+  busy = true;
+  updateControls();
   try {
-    await chatApi.remove(id);
+    if (!(await prepareToLeave())) return;
+    // Use the open chat's acknowledged version, including recording changes fetched
+    // below. Sidebar entries have no validator; fetch their version before deleting.
+    const target = chat?.id === id ? chat : await chatApi.get(id);
+    if (!target.etag) throw new Error("The chat version could not be loaded. Retry deletion.");
+    await chatApi.remove(id, target.etag);
+    if (chat?.id === id) setChat(null);
+    await refreshChats();
   } catch (error) {
     showError(error);
+  } finally {
+    busy = false;
+    updateControls();
   }
-  if (chat?.id === id) setChat(null);
-  await refreshChats();
 }
+
+loadLatestButton.addEventListener("click", async () => {
+  if (!chat || recording || busy || !window.confirm("Discard your unsaved changes?")) return;
+  const target = chat.id;
+  const generation = navigationGeneration;
+  busy = true;
+  updateControls();
+  try {
+    const latest = await chatApi.get(target);
+    if (generation === navigationGeneration && chat?.id === target) setChat(latest);
+  } catch (error) {
+    showError(error);
+  } finally {
+    busy = false;
+    updateControls();
+  }
+});
+copyVersionButton.addEventListener("click", () => copyButton.click());
 
 function captureInsertion() {
   return {
@@ -500,8 +588,21 @@ function restoreInsertion() {
  */
 async function storeRecording(audio) {
   try {
+    const generation = navigationGeneration;
     const target = await ensureChat();
-    const stored = await chatApi.addRecording(target.id, audio);
+    let recordingId = recordingIds.get(audio);
+    if (!recordingId) {
+      recordingId = crypto.randomUUID().replaceAll("-", "");
+      recordingIds.set(audio, recordingId);
+    }
+    const stored = await chatApi.addRecording(target.id, audio, recordingId);
+    if (generation !== navigationGeneration) return { chatId: target.id, recording: stored };
+    // The upload changes the chat validator, while its text validator stays valid.
+    // Refresh headers without replacing the local editor or its acknowledged text.
+    const latest = await chatApi.get(target.id);
+    if (generation !== navigationGeneration) return { chatId: target.id, recording: stored };
+    target.etag = latest.etag;
+    target.revision = latest.revision;
     target.recordings.push(stored);
     if (unsaved === audio) discardUnsaved();
     renderClips();
@@ -744,7 +845,8 @@ copyButton.addEventListener("click", async () => {
 window.addEventListener("pagehide", () => {
   window.clearInterval(timerId);
   clearTimeout(saveTimer);
-  if (textDirty && chat) void chatApi.saveText(chat.id, transcript.value, true).catch(() => {});
+  if (textDirty && chat?.textEtag && !textConflict)
+    void chatApi.saveText(chat.id, transcript.value, chat.textEtag, true).catch(() => {});
   activeStream?.cancel();
   void recorder.release();
   discardUnsaved();

@@ -1,7 +1,7 @@
 import { ApiRequestError } from "./errors.js";
 
 /** @typedef {{ id: string, created: string, duration_seconds: number }} Recording */
-/** @typedef {{ id: string, created: string, updated: string, text: string, recordings: Recording[] }} Chat */
+/** @typedef {{ id: string, created: string, updated: string, text: string, recordings: Recording[], revision: number, text_revision: number, etag: string | null, textEtag: string | null }} Chat */
 /** @typedef {{ id: string, title: string, updated: string, recording_count: number }} ChatSummary */
 
 /** @param {string} path @param {RequestInit} [options] */
@@ -11,6 +11,11 @@ async function request(path, options = {}) {
   const result = await response.json().catch(() => null);
   if (!response.ok) {
     throw new ApiRequestError(result, "The request failed. Try again.");
+  }
+  if (result && typeof result === "object" && Array.isArray(result.recordings)) {
+    // Validators are opaque header values. Preserve the quotes and resource scope.
+    result.etag = response.headers.get("ETag");
+    result.textEtag = response.headers.get("Text-ETag");
   }
   return result;
 }
@@ -26,26 +31,27 @@ function transcriptText(result) {
 export const chatApi = {
   /** @returns {Promise<ChatSummary[]>} */
   list: () => request("/api/chats"),
-  /** @returns {Promise<Chat>} */
-  create: () => request("/api/chats", { method: "POST" }),
+  /** @param {string} id @returns {Promise<Chat>} */
+  create: (id) => request(`/api/chats/${id}`, { method: "PUT" }),
   /** @param {string} id @returns {Promise<Chat>} */
   get: (id) => request(`/api/chats/${id}`),
-  /** @param {string} id */
-  remove: (id) => request(`/api/chats/${id}`, { method: "DELETE" }),
+  /** @param {string} id @param {string} etag */
+  remove: (id, etag) =>
+    request(`/api/chats/${id}`, { method: "DELETE", headers: { "If-Match": etag } }),
   /** Keepalive lets a save started while the page closes still reach the server.
-   * @param {string} id @param {string} text @param {boolean} [keepalive]
+   * @param {string} id @param {string} text @param {string} etag @param {boolean} [keepalive]
    * @returns {Promise<Chat>} */
-  saveText: (id, text, keepalive = false) =>
+  saveText: (id, text, etag, keepalive = false) =>
     request(`/api/chats/${id}/text`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "If-Match": etag },
       body: JSON.stringify({ text }),
       keepalive,
     }),
-  /** @param {string} id @param {Blob} audio @returns {Promise<Recording>} */
-  addRecording: (id, audio) =>
-    request(`/api/chats/${id}/recordings`, {
-      method: "POST",
+  /** @param {string} id @param {Blob} audio @param {string} recordingId @returns {Promise<Recording>} */
+  addRecording: (id, audio, recordingId) =>
+    request(`/api/chats/${id}/recordings/${recordingId}`, {
+      method: "PUT",
       headers: { "Content-Type": "audio/wav" },
       body: audio,
     }),
