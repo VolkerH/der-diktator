@@ -18,6 +18,7 @@ class Element {
     this.paused = true;
     this.selectionStart = 0;
     this.selectionEnd = 0;
+    this.isConnected = true;
     this.children = [];
     this.attributes = new Map();
     this.listeners = new Map();
@@ -28,7 +29,7 @@ class Element {
         else classes.delete(name);
         return force;
       },
-      contains: (name) => classes.has(name),
+      contains: (name) => classes.has(name) || String(this.className).split(/\s+/u).includes(name),
     };
   }
   addEventListener(type, callback) {
@@ -39,12 +40,40 @@ class Element {
   }
   append(...children) {
     this.children.push(...children);
+    for (const child of children) child.setConnected(this.isConnected);
   }
   replaceChildren(...children) {
+    for (const child of this.children) child.setConnected(false);
     this.children = children;
+    for (const child of children) child.setConnected(this.isConnected);
+  }
+  setConnected(connected) {
+    this.isConnected = connected;
+    for (const child of this.children) child.setConnected(connected);
   }
   setAttribute(name, value) {
     this.attributes.set(name, value);
+  }
+  getAttribute(name) {
+    return this.attributes.get(name) ?? null;
+  }
+  querySelector(selector) {
+    return this.querySelectorAll(selector)[0] ?? null;
+  }
+  querySelectorAll(selector) {
+    const [ancestorSelector, descendantSelector] = selector.trim().split(/\s+/u);
+    const matches = (element, part) => {
+      const attribute = part.match(/^\[data-chat-id="([^"]+)"\]$/u);
+      if (attribute) return element.getAttribute("data-chat-id") === attribute[1];
+      if (part.startsWith(".")) return element.classList.contains(part.slice(1));
+      return false;
+    };
+    const descendants = (root) => root.children.flatMap((child) => [child, ...descendants(child)]);
+    if (!descendantSelector)
+      return descendants(this).filter((item) => matches(item, ancestorSelector));
+    return descendants(this)
+      .filter((item) => matches(item, ancestorSelector))
+      .flatMap((item) => descendants(item).filter((child) => matches(child, descendantSelector)));
   }
   setSelectionRange(start, end) {
     this.selectionStart = start;
@@ -72,7 +101,7 @@ class Element {
   load() {}
   removeAttribute() {}
   focus() {
-    if (!this.disabled) {
+    if (!this.disabled && this.isConnected) {
       globalThis.document.activeElement = this;
       this.focused = true;
     }
@@ -345,7 +374,6 @@ function chatServer() {
       if (method === "GET")
         return Response.json(
           {
-            title: chat.title,
             custom_title: chat.custom_title,
             title_revision: chat.title_revision,
           },
@@ -527,6 +555,21 @@ function chatRows(app) {
   ]);
 }
 
+function findByClass(root, name) {
+  if (root.classList.contains(name)) return root;
+  for (const child of root.children) {
+    const found = findByClass(child, name);
+    if (found) return found;
+  }
+  return null;
+}
+
+function chatAction(row, label) {
+  return findByClass(row, "chat-menu-actions").children.find(
+    (button) => button.textContent === label,
+  );
+}
+
 /** Place the cursor as if the user clicked into the transcript. */
 function setCursor(app, start, end = start) {
   app.element("transcript").setSelectionRange(start, end);
@@ -657,7 +700,7 @@ test("chats can be switched, started anew, and deleted after confirming", async 
   assert.deepEqual(chatRows(app)[0], ["New chat", true]);
   assert.equal(app.server.chats.size, 2, "an empty new chat is not stored");
 
-  const remove = chatItems(app)[1].children[1];
+  const remove = chatAction(chatItems(app)[1], "Delete");
   await remove.emit("click");
   assert.equal(app.server.chats.size, 2, "the first click only asks for confirmation");
   assert.equal(remove.textContent, "Delete");
@@ -1160,7 +1203,7 @@ test("a late list response is ignored after navigating away and back to the same
 });
 
 async function deleteRow(app, index) {
-  const remove = chatItems(app)[index].children[1];
+  const remove = chatAction(chatItems(app)[index], "Delete");
   await remove.emit("click");
   await remove.emit("click");
   await settle();
@@ -1410,6 +1453,14 @@ async function submitTitle(app, value) {
   await settle();
 }
 
+async function openSidebarRename(app, index) {
+  const row = chatItems(app)[index];
+  const toggle = findByClass(row, "chat-menu-toggle");
+  await chatAction(row, "Rename").emit("click");
+  await settle();
+  return { row, toggle };
+}
+
 test("title editor cancellation keeps a new chat lazy; submitted literal labels are canonical", async (t) => {
   const app = await appEnvironment(t);
   await app.element("chat-title").emit("click");
@@ -1524,6 +1575,240 @@ test("title network failure keeps the confirmed label and input", async (t) => {
   assert.equal(app.element("title-input").value, "Keep this input");
   assert.equal(app.element("title-editor").open, true);
   assert.match(app.element("title-error").textContent, /Network unavailable/);
+});
+
+test("sidebar rename targets another chat without saving or replacing the active draft", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    server.add("First");
+    server.add("Second");
+  });
+  const requests = [];
+  const fetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    requests.push([String(url), options?.method ?? "GET"]);
+    return fetch(url, options);
+  });
+  app.element("transcript").value = "Unsaved active draft";
+  await app.element("transcript").emit("input");
+
+  await openSidebarRename(app, 1);
+  assert.equal(app.element("title-input").value, "Second");
+  await submitTitle(app, "Renamed second");
+
+  assert.equal(app.server.chats.get(id(2)).title, "Renamed second");
+  assert.equal(app.server.chats.get(id(1)).text, "First");
+  assert.equal(app.element("transcript").value, "Unsaved active draft");
+  assert.equal(app.element("chat-title").textContent, "First");
+  assert.deepEqual(
+    requests.filter(([url]) => url.endsWith("/text")),
+    [],
+    "renaming another chat does not flush the active editor",
+  );
+  assert.equal(
+    globalThis.document.activeElement,
+    app.element("chat-list").querySelector(`[data-chat-id="${id(2)}"] .chat-menu-toggle`),
+    "successful rename restores focus to the refreshed target row",
+  );
+});
+
+test("an active autosave does not stale a pending sidebar title read", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => {
+    server.add("First");
+    server.add("Second");
+  });
+  const fetch = globalThis.fetch;
+  let releaseRead;
+  let blockRead = true;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url) === `/api/chats/${id(2)}` && !options?.method && blockRead) {
+      blockRead = false;
+      await new Promise((resolve) => {
+        releaseRead = resolve;
+      });
+    }
+    return fetch(url, options);
+  });
+
+  await chatAction(chatItems(app)[1], "Rename").emit("click");
+  await settle();
+  app.element("transcript").value = "Updated active";
+  await app.element("transcript").emit("input");
+  t.mock.timers.tick(700);
+  await settle();
+  assert.equal(app.server.chats.get(id(1)).text, "Updated active");
+
+  releaseRead();
+  await settle();
+  assert.equal(app.element("title-editor").open, true);
+  assert.equal(app.element("title-input").value, "Second");
+  assert.equal(app.element("transcript").value, "Updated active");
+  await app.element("title-cancel").emit("click");
+});
+
+test("sidebar rename cancellation and Escape restore focus, and reset uses the automatic title", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    server.add("First");
+    const chat = server.add("Second");
+    chat.custom_title = "Manual second";
+    chat.title = "Manual second";
+  });
+
+  const firstOpen = await openSidebarRename(app, 1);
+  assert.equal(app.element("title-input").value, "Manual second");
+  await app.element("title-cancel").emit("click");
+  assert.equal(globalThis.document.activeElement, firstOpen.toggle);
+
+  const secondOpen = await openSidebarRename(app, 1);
+  app.element("title-editor").close();
+  assert.equal(globalThis.document.activeElement, secondOpen.toggle);
+
+  await openSidebarRename(app, 1);
+  await app.element("title-reset").emit("click");
+  await settle();
+  assert.equal(app.server.chats.get(id(2)).custom_title, null);
+  assert.equal(app.server.chats.get(id(2)).title, "Second");
+  assert.equal(app.element("title-editor").open, false);
+  assert.equal(
+    globalThis.document.activeElement,
+    app.element("chat-list").querySelector(`[data-chat-id="${id(2)}"] .chat-menu-toggle`),
+  );
+});
+
+test("sidebar title reads fail visibly and cannot replace a later heading dialog", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    server.add("First");
+    server.add("Second");
+  });
+  const fetch = globalThis.fetch;
+  let releaseRead;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url) === `/api/chats/${id(2)}` && !options?.method)
+      await new Promise((resolve) => {
+        releaseRead = resolve;
+      });
+    return fetch(url, options);
+  });
+  const row = chatItems(app)[1];
+  await chatAction(row, "Rename").emit("click");
+  await settle();
+  assert.equal(typeof releaseRead, "function");
+
+  await app.element("chat-title").emit("click");
+  assert.equal(app.element("title-input").value, "First");
+  releaseRead();
+  await settle();
+  assert.equal(app.element("title-input").value, "First");
+  assert.equal(app.element("title-editor").open, true);
+  assert.equal(app.element("transcript").value, "First");
+});
+
+test("sidebar title loads cannot retarget one another", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    server.add("First");
+    server.add("Second");
+    server.add("Third");
+  });
+  const fetch = globalThis.fetch;
+  let releaseSecond;
+  let releaseThird;
+  let blockSecond = true;
+  let blockThird = true;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url) === `/api/chats/${id(2)}` && !options?.method && blockSecond) {
+      blockSecond = false;
+      await new Promise((resolve) => {
+        releaseSecond = resolve;
+      });
+    }
+    if (String(url) === `/api/chats/${id(3)}` && !options?.method && blockThird) {
+      blockThird = false;
+      await new Promise((resolve) => {
+        releaseThird = resolve;
+      });
+    }
+    return fetch(url, options);
+  });
+  await chatAction(chatItems(app)[1], "Rename").emit("click");
+  await settle();
+  await chatAction(chatItems(app)[2], "Rename").emit("click");
+  await settle();
+  releaseThird();
+  await settle();
+  assert.equal(app.element("title-input").value, "Third");
+  app.element("title-input").value = "Third draft";
+  releaseSecond();
+  await settle();
+  assert.equal(app.element("title-input").value, "Third draft");
+  await submitTitle(app, "Third renamed");
+  assert.equal(app.server.chats.get(id(3)).title, "Third renamed");
+  assert.equal(app.server.chats.get(id(2)).title, "Second");
+});
+
+test("a pending sidebar title read is discarded after chat navigation", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    server.add("First");
+    server.add("Second");
+  });
+  const fetch = globalThis.fetch;
+  let releaseRead;
+  let blockRead = true;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url) === `/api/chats/${id(2)}` && !options?.method && blockRead) {
+      blockRead = false;
+      await new Promise((resolve) => {
+        releaseRead = resolve;
+      });
+    }
+    return fetch(url, options);
+  });
+  await chatAction(chatItems(app)[1], "Rename").emit("click");
+  await settle();
+  await chatItems(app)[1].children[0].emit("click");
+  await waitForIdle(app);
+  assert.equal(app.element("transcript").value, "Second");
+  releaseRead();
+  await settle();
+  assert.notEqual(app.element("title-editor").open, true);
+});
+
+test("a failed sidebar title read leaves the editor closed and reports the API error", async (t) => {
+  const failingApp = await appEnvironment(t, (server) => {
+    server.add("One");
+    server.add("Two");
+  });
+  const originalFetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", async (url, options) =>
+    String(url) === `/api/chats/${id(2)}` && !options?.method
+      ? Response.json({ detail: "Title read unavailable." }, { status: 503 })
+      : originalFetch(url, options),
+  );
+  const toggle = findByClass(chatItems(failingApp)[1], "chat-menu-toggle");
+  await chatAction(chatItems(failingApp)[1], "Rename").emit("click");
+  await settle();
+  assert.notEqual(failingApp.element("title-editor").open, true);
+  assert.match(failingApp.element("error").textContent, /Title read unavailable/);
+  assert.equal(globalThis.document.activeElement, toggle);
+});
+
+test("sidebar title conflict keeps the entered name and retries with the refreshed validator", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    server.add("First");
+    server.add("Second");
+  });
+  const target = app.server.chats.get(id(2));
+  await openSidebarRename(app, 1);
+  target.custom_title = "Remote name";
+  target.title = "Remote name";
+  target.title_revision++;
+  target.revision++;
+  await submitTitle(app, "My name");
+  assert.equal(app.element("title-editor").open, true);
+  assert.equal(app.element("title-input").value, "My name");
+  assert.match(app.element("title-error").textContent, /Remote name/);
+  await submitTitle(app, "My name");
+  assert.equal(target.title, "My name");
+  assert.equal(app.element("transcript").value, "First");
 });
 
 test("title responses with remote text never freshen the old text validator", async (t) => {
@@ -1892,7 +2177,7 @@ async function startGroupedDraft(app, groupId) {
 }
 
 async function openMoveDialog(app, index = 0) {
-  await chatItems(app)[index].children[2].emit("click");
+  await chatAction(chatItems(app)[index], "Move").emit("click");
 }
 
 async function submitMove(app, groupId) {
@@ -2171,9 +2456,11 @@ test("group actions respect recording guards while search keeps the recording ac
   const socket = await startLive(app);
   assert.equal(app.element("new-group").disabled, true);
   assert.equal(groupSection(app, id(100)).children[0].children[1].disabled, true);
-  assert.equal(chatItems(app)[0].children[2].disabled, true);
+  assert.equal(chatAction(chatItems(app)[0], "Rename").disabled, true);
+  assert.equal(chatAction(chatItems(app)[0], "Move").disabled, true);
   await app.element("new-group").emit("click");
-  await chatItems(app)[0].children[2].emit("click");
+  await chatAction(chatItems(app)[0], "Rename").emit("click");
+  await chatAction(chatItems(app)[0], "Move").emit("click");
   assert.equal(app.element("group-editor").open, undefined);
   assert.equal(app.element("group-move").open, undefined);
   await filterChats(t, app, "unmatched");

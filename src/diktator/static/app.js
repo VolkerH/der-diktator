@@ -62,7 +62,8 @@ const titleCancel = /** @type {HTMLButtonElement} */ (document.getElementById("t
 const titleReset = /** @type {HTMLButtonElement} */ (document.getElementById("title-reset"));
 const titleError = /** @type {HTMLElement} */ (document.getElementById("title-error"));
 let titleSaving = false;
-/** @type {{ generation: number, chatId: string | null } | null} */
+let titleLoadGeneration = 0;
+/** @type {{ generation: number, chatId: string | null, returnFocus: HTMLElement, title?: string, customTitle?: string | null, titleEtag?: string | null } | null} */
 let titleTarget = null;
 const clips = /** @type {HTMLElement} */ (document.getElementById("clips"));
 const sidebar = /** @type {HTMLElement} */ (document.getElementById("sidebar"));
@@ -279,6 +280,13 @@ function element(tag, className, text = "") {
   return node;
 }
 
+/** @param {string} id */
+function chatMenuToggle(id) {
+  return /** @type {HTMLElement | null} */ (
+    chatList.querySelector(`[data-chat-id="${id}"] .chat-menu-toggle`)
+  );
+}
+
 /** @param {string | null} id @param {string} title @param {string} meta @param {ChatSummary | null} [summary] */
 function chatItem(id, title, meta, summary = null) {
   const item = element("li", "chat-item");
@@ -292,31 +300,57 @@ function chatItem(id, title, meta, summary = null) {
   });
   item.append(open);
   if (id) {
-    // Deleting takes a second click on the same button, which turns red to confirm.
-    const remove = /** @type {HTMLButtonElement} */ (element("button", "chat-delete"));
-    remove.type = "button";
-    /** @param {boolean} confirming */
-    const setConfirming = (confirming) => {
-      remove.classList.toggle("confirm", confirming);
-      remove.textContent = confirming ? "Delete" : "";
-      remove.setAttribute(
-        "aria-label",
-        confirming ? `Confirm delete “${title}”` : `Delete “${title}”`,
-      );
-    };
-    setConfirming(false);
-    remove.addEventListener("click", () => {
-      if (remove.classList.contains("confirm")) void deleteChat(id);
-      else setConfirming(true);
-    });
-    remove.addEventListener("blur", () => setConfirming(false));
-    item.append(remove);
+    item.setAttribute("data-chat-id", id);
     if (summary) {
-      const move = groupSidebar.button("Move", () => groupSidebar.editMove(summary), "chat-move");
+      const menu = /** @type {HTMLDetailsElement} */ (element("details", "chat-menu"));
+      const toggle = element("summary", "chat-menu-toggle", "⋯");
+      toggle.setAttribute("aria-label", `Actions for “${title}”`);
+      const choices = element("div", "chat-menu-actions");
+      const rename = groupSidebar.button(
+        "Rename",
+        () => {
+          menu.open = false;
+          toggle.focus();
+          void editChatTitle(summary, toggle);
+        },
+        "group-action",
+      );
+      const move = groupSidebar.button(
+        "Move",
+        () => {
+          menu.open = false;
+          toggle.focus();
+          groupSidebar.editMove(summary);
+        },
+        "group-action",
+      );
       move.setAttribute("aria-label", `Move “${title}” to group`);
       move.setAttribute("aria-haspopup", "dialog");
       move.setAttribute("aria-controls", "group-move");
-      item.append(move);
+      // Deleting takes a second click on the same menu item to confirm.
+      const remove = groupSidebar.button(
+        "Delete",
+        () => {
+          if (recording || busy) return;
+          if (remove.classList.contains("confirm")) void deleteChat(id);
+          else setConfirming(true);
+        },
+        "group-action chat-action-delete",
+      );
+      /** @param {boolean} confirming */
+      const setConfirming = (confirming) => {
+        remove.classList.toggle("confirm", confirming);
+        remove.textContent = "Delete";
+        remove.setAttribute(
+          "aria-label",
+          confirming ? `Confirm delete “${title}”` : `Delete “${title}”`,
+        );
+      };
+      setConfirming(false);
+      remove.addEventListener("blur", () => setConfirming(false));
+      choices.append(rename, move, remove);
+      menu.append(toggle, choices);
+      item.append(menu);
     }
   }
   return item;
@@ -719,6 +753,7 @@ function scheduleSave() {
 function setChat(next, draftGroup = null) {
   const refreshPending = listLoading;
   listGeneration++;
+  titleLoadGeneration++;
   navigationGeneration++;
   titleDialog.close();
   titleTarget = null;
@@ -851,21 +886,79 @@ loadLatestButton.addEventListener("click", async () => {
 copyVersionButton.addEventListener("click", copyTranscript);
 
 /** The dialog targets a navigation incarnation, not whichever chat is open later. */
-chatTitle.addEventListener("click", () => {
-  if (recording || busy || titleSaving) return;
-  titleTarget = { generation: navigationGeneration, chatId: chat?.id ?? null };
-  titleInput.value = chat?.custom_title ?? chat?.title ?? "";
+/** @param {{ generation: number, chatId: string | null, returnFocus: HTMLElement, title?: string, customTitle?: string | null, titleEtag?: string | null }} target */
+function openTitleEditor(target) {
+  titleLoadGeneration++;
+  titleTarget = target;
+  titleInput.value = target.customTitle ?? target.title ?? "New chat";
   titleError.hidden = true;
-  titleReset.disabled = !chat?.custom_title;
+  titleReset.disabled = !target.customTitle;
   titleDialog.showModal();
   titleInput.focus();
   titleInput.select();
+}
+
+chatTitle.addEventListener("click", () => {
+  if (recording || busy || titleSaving) return;
+  openTitleEditor({
+    generation: navigationGeneration,
+    chatId: chat?.id ?? null,
+    returnFocus: chatTitle,
+    title: chat?.title,
+    customTitle: chat?.custom_title,
+  });
 });
 titleCancel.addEventListener("click", () => titleDialog.close());
 titleDialog.addEventListener("close", () => {
+  const editing = titleTarget;
+  titleLoadGeneration++;
   titleTarget = null;
-  chatTitle.focus();
+  if (editing?.returnFocus.isConnected !== false) editing?.returnFocus.focus();
+  else {
+    const replacement = editing?.chatId ? chatMenuToggle(editing.chatId) : null;
+    if (replacement && replacement.isConnected !== false) replacement.focus();
+    else chatTitle.focus();
+  }
 });
+
+/** Load a sidebar chat's current title without navigating or touching the editor draft.
+ * @param {ChatSummary} summary @param {HTMLElement} returnFocus */
+async function editChatTitle(summary, returnFocus) {
+  if (recording || busy || titleSaving) return;
+  const generation = navigationGeneration;
+  const titleLoad = ++titleLoadGeneration;
+  const query = searchQuery;
+  try {
+    const observed =
+      chat?.id === summary.id
+        ? {
+            title: chat.title,
+            custom_title: chat.custom_title,
+            titleEtag: chat.titleEtag,
+          }
+        : await chatApi.get(summary.id);
+    if (
+      generation !== navigationGeneration ||
+      titleLoad !== titleLoadGeneration ||
+      query !== searchQuery ||
+      !chats.some((item) => item.id === summary.id) ||
+      recording ||
+      busy ||
+      titleSaving
+    )
+      return;
+    openTitleEditor({
+      generation,
+      chatId: summary.id,
+      returnFocus,
+      title: observed.title,
+      customTitle: observed.custom_title,
+      titleEtag: observed.titleEtag,
+    });
+  } catch (error) {
+    if (generation === navigationGeneration && titleLoad === titleLoadGeneration) showError(error);
+  }
+}
 
 /** Title freshness is separate from the complete chat version acknowledged for deletion.
  * A newer title response can contain text this tab has not acknowledged yet.
@@ -900,8 +993,10 @@ function acknowledgeTitle(target, saved) {
 async function commitTitle(customTitle) {
   const editing = titleTarget;
   if (!editing || titleSaving || recording || busy) return;
+  const otherChatId =
+    editing.chatId !== null && editing.chatId !== chat?.id ? editing.chatId : null;
   // Do not create an empty draft just to reset/cancel its name. The server validates strings.
-  if (!chat && (customTitle === null || !customTitle.trim())) {
+  if (otherChatId === null && !chat && (customTitle === null || !customTitle.trim())) {
     if (customTitle === null) titleDialog.close();
     else {
       titleError.textContent = "Enter a chat name.";
@@ -915,6 +1010,16 @@ async function commitTitle(customTitle) {
   titleError.hidden = true;
   updateControls();
   try {
+    if (otherChatId !== null) {
+      if (!editing.titleEtag)
+        throw new Error("The title version could not be loaded. Refresh the chat list.");
+      await chatApi.saveTitle(otherChatId, customTitle, editing.titleEtag);
+      if (editing.generation !== navigationGeneration) return;
+      // Refresh only the sidebar. The selected chat and its unsaved editor draft stay put.
+      await refreshChats();
+      if (titleTarget === editing) titleDialog.close();
+      return;
+    }
     // Flush existing autosaves first; editing remains possible while the request runs.
     await saveText();
     if (editing.generation !== navigationGeneration) return;
@@ -938,11 +1043,32 @@ async function commitTitle(customTitle) {
       error instanceof Error ? error.message : "The name could not be saved.";
     titleError.hidden = false;
     if (!titleDialog.open) showError(error);
-    if (error instanceof ApiRequestError && error.code === "revision_conflict" && chat) {
+    if (
+      error instanceof ApiRequestError &&
+      error.code === "revision_conflict" &&
+      otherChatId !== null
+    ) {
+      try {
+        const latest = await chatApi.get(otherChatId);
+        if (editing.generation !== navigationGeneration) return;
+        editing.title = latest.title;
+        editing.customTitle = latest.custom_title;
+        editing.titleEtag = latest.titleEtag;
+        titleReset.disabled = !latest.custom_title;
+        titleError.textContent = `The current name is “${latest.title}”. Save again to use your name.`;
+        await refreshChats();
+      } catch {
+        titleError.textContent =
+          "The name changed elsewhere. Close and reopen the chat before retrying.";
+      }
+    } else if (error instanceof ApiRequestError && error.code === "revision_conflict" && chat) {
       try {
         const latest = await chatApi.get(chat.id);
         if (editing.generation !== navigationGeneration) return;
         acknowledgeTitleMetadata(chat, latest);
+        editing.title = latest.title;
+        editing.customTitle = latest.custom_title;
+        editing.titleEtag = latest.titleEtag;
         titleError.textContent = `The current name is “${chat.title}”. Save again to use your name.`;
         renderChats();
         updateControls();
@@ -954,7 +1080,7 @@ async function commitTitle(customTitle) {
   } finally {
     titleSaving = false;
     titleSave.disabled = false;
-    titleReset.disabled = !chat?.custom_title;
+    titleReset.disabled = !titleTarget?.customTitle;
     updateControls();
   }
 }
