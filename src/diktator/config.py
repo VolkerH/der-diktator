@@ -9,6 +9,8 @@ from pathlib import Path
 
 from platformdirs import user_data_path
 
+from diktator.durability import sync_directory
+
 
 def default_data_directory() -> Path:
     """The platform's per-user data folder, e.g. ~/.local/share/diktator/chats on Linux."""
@@ -27,7 +29,6 @@ def migrate_chats(legacy: Path, target: Path) -> bool:
     and pending child; arbitrary populated targets are never merged. Copies are
     staged before rename, leaving the source intact until its child is finalized.
     """
-    from diktator.chats import sync_directory
     from diktator.db import LOCK_NAME
 
     marker = target / ".legacy-migration.json"
@@ -39,7 +40,10 @@ def migrate_chats(legacy: Path, target: Path) -> bool:
     else:
         if not legacy.is_dir():
             return False
-        if target.exists() and any(path.name != LOCK_NAME for path in target.iterdir()):
+        if target.exists() and any(
+            path.name not in {LOCK_NAME, marker.with_suffix(".tmp").name}
+            for path in target.iterdir()
+        ):
             return False
         target.mkdir(parents=True, exist_ok=True)
         state = {"source": str(legacy.resolve()), "pending": None}

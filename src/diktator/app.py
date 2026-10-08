@@ -103,12 +103,12 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         nonlocal store
-        store = await run_in_threadpool(start_storage)
-        try:
-            async with client:
+        async with client:
+            store = await run_in_threadpool(start_storage)
+            try:
                 yield
-        finally:
-            await run_in_threadpool(stop_storage)
+            finally:
+                await run_in_threadpool(stop_storage)
 
     app = FastAPI(title="Der Diktator", lifespan=lifespan)
     install_error_handlers(app)

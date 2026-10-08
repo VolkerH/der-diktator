@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from diktator.db import session_scope
 from diktator.db.rows import ChatMemberRow, ChatRow, RecordingRow
+from diktator.durability import sync_directory
 from diktator.errors import ApiFailure
 
 IDENTIFIER = re.compile(r"[0-9a-f]{32}")
@@ -77,17 +78,6 @@ def _now() -> datetime:
 
 
 log = logging.getLogger(__name__)
-
-
-def sync_directory(directory: Path) -> None:
-    """Persist renames on platforms that provide directory fsync."""
-    if os.name == "nt":
-        return
-    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def finalize_audio(path: Path, audio: bytes) -> None:

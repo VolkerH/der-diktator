@@ -1,5 +1,6 @@
 """SQLite ownership, connection policy and packaged schema upgrades."""
 
+import os
 import sqlite3
 import uuid
 from collections.abc import Iterator
@@ -14,6 +15,8 @@ from alembic.script import ScriptDirectory
 from filelock import FileLock, Timeout
 from sqlalchemy import Connection, Engine, create_engine, event
 from sqlalchemy.orm import Session
+
+from diktator.durability import sync_directory
 
 DATABASE_NAME = "diktator.sqlite3"
 LOCK_NAME = ".diktator.lock"
@@ -109,18 +112,25 @@ def upgrade_schema(engine: Engine, root: Path) -> None:
             return
         backups = root / "backups"
         backups.mkdir(exist_ok=True)
+        sync_directory(root)
         name = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ") + "-" + uuid.uuid4().hex
         # VACUUM cannot run in a transaction. The exclusive directory lock already
         # excludes application writers; bind the filename rather than interpolating SQL.
+        backup_path = backups / f"{name}.sqlite3"
+        temporary = backup_path.with_suffix(".sqlite3.tmp")
         raw = engine.raw_connection()
         try:
             cursor = raw.cursor()
             try:
-                cursor.execute("VACUUM INTO ?", (str(backups / f"{name}.sqlite3"),))
+                cursor.execute("VACUUM INTO ?", (str(temporary),))
             finally:
                 cursor.close()
         finally:
             raw.close()
+        with temporary.open("rb") as stream:
+            os.fsync(stream.fileno())
+        os.replace(temporary, backup_path)
+        sync_directory(backups)
         with engine.connect().execution_options(write=True) as connection:
             config.attributes["connection"] = connection
             command.upgrade(config, "head")

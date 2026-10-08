@@ -417,3 +417,158 @@ def test_openapi_inspection_does_not_create_storage(tmp_path: Path) -> None:
     app = create_app(Settings(data_directory=root))
     assert app.openapi()["info"]["title"] == "Der Diktator"
     assert not root.exists()
+
+
+def test_lock_excludes_another_process(service: ChatService) -> None:
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+from pathlib import Path
+from diktator.db import DataDirectoryLock, StorageInUse
+try:
+    DataDirectoryLock(Path(sys.argv[1])).acquire()
+except StorageInUse as error:
+    print(error)
+    sys.exit(23)
+sys.exit(0)
+""",
+            str(service.root),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 23
+    assert "already in use" in result.stdout
+
+
+@pytest.mark.anyio
+async def test_failed_startup_disposes_database_and_releases_lock(tmp_path: Path) -> None:
+    from sqlalchemy import Engine
+
+    disposed = []
+    real_dispose = Engine.dispose
+
+    def dispose(engine: Engine, close: bool = True) -> None:
+        disposed.append(engine)
+        real_dispose(engine, close)
+
+    app = create_app(Settings(data_directory=tmp_path))
+    with (
+        patch("diktator.app.upgrade_schema", side_effect=RuntimeError("upgrade failed")),
+        patch.object(Engine, "dispose", dispose),
+        pytest.raises(RuntimeError, match="upgrade failed"),
+    ):
+        async with app.router.lifespan_context(app):
+            pytest.fail("failed upgrade cannot serve requests")
+    assert len(disposed) == 1
+    next_app = create_app(Settings(data_directory=tmp_path))
+    async with next_app.router.lifespan_context(next_app):
+        pass
+    lock = DataDirectoryLock(tmp_path)
+    lock.acquire()
+    lock.release()
+
+
+def test_backup_contains_existing_data_before_baseline_upgrade(tmp_path: Path) -> None:
+    path = tmp_path / DATABASE_NAME
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE recovery_note (text TEXT)")
+        connection.execute("INSERT INTO recovery_note VALUES ('kept before migration')")
+    engine = open_engine(path)
+    try:
+        upgrade_schema(engine, tmp_path)
+        backup_path = next((tmp_path / "backups").glob("*.sqlite3"))
+        with sqlite3.connect(backup_path) as backup:
+            assert backup.execute("SELECT text FROM recovery_note").fetchone() == (
+                "kept before migration",
+            )
+            assert (
+                backup.execute("SELECT name FROM sqlite_master WHERE name='chats'").fetchall() == []
+            )
+        with session_scope(engine) as session:
+            assert session.scalar(text("SELECT text FROM recovery_note")) == "kept before migration"
+    finally:
+        engine.dispose()
+
+
+def test_cleanup_errors_are_logged_without_failing_startup(
+    service: ChatService, caplog: pytest.LogCaptureFixture
+) -> None:
+    chat = service.create(LOCAL_USER_ID)
+    folder = service.root / chat.id
+    folder.mkdir()
+    temporary = folder / "abandoned.wav.tmp"
+    temporary.write_bytes(b"abandoned")
+    with patch.object(Path, "unlink", side_effect=OSError("filesystem refused unlink")):
+        sweep_orphans(service.engine, service.root)
+    assert "Cannot remove abandoned recording" in caplog.text
+    assert temporary.exists()
+    sweep_orphans(service.engine, service.root)
+    assert not temporary.exists()
+
+
+@pytest.mark.anyio
+async def test_lifespan_moves_legacy_under_lock_and_resumes(tmp_path: Path) -> None:
+    import shutil
+
+    target = tmp_path / "target"
+    legacy = tmp_path / "legacy" / "chats"
+    legacy.mkdir(parents=True)
+    chat = legacy_chat(legacy)
+    settings = Settings(data_directory=target)
+    real_copytree = shutil.copytree
+    interrupted = False
+
+    def interrupt(source: Path, destination: Path, **kwargs: object) -> None:
+        nonlocal interrupted
+        if not interrupted:
+            interrupted = True
+            raise OSError("copy interrupted")
+        real_copytree(source, destination, symlinks=True)
+
+    with (
+        patch("diktator.app.default_data_directory", return_value=target),
+        patch("diktator.app.legacy_data_directories", return_value=[legacy]),
+    ):
+        app = create_app(settings)
+        with (
+            patch("diktator.config.shutil.copytree", interrupt),
+            pytest.raises(OSError, match="copy interrupted"),
+        ):
+            async with app.router.lifespan_context(app):
+                pytest.fail("migration interrupted")
+        assert (target / ".legacy-migration.json").exists()
+        assert not (target / DATABASE_NAME).exists()
+        app = create_app(settings)
+        async with app.router.lifespan_context(app):
+            engine = open_engine(target / DATABASE_NAME)
+            try:
+                assert ChatService(target, engine).get(LOCAL_USER_ID, chat.id) == chat
+            finally:
+                engine.dispose()
+    assert not legacy.exists()
+    assert not (target / ".legacy-migration.json").exists()
+
+
+def test_released_baseline_fixture_opens_without_upgrade(tmp_path: Path) -> None:
+    import shutil
+
+    fixture = Path(__file__).parent / "fixtures" / "database" / "0001.sqlite3"
+    shutil.copyfile(fixture, tmp_path / DATABASE_NAME)
+    engine = open_engine(tmp_path / DATABASE_NAME)
+    try:
+        upgrade_schema(engine, tmp_path)
+        assert not (tmp_path / "backups").exists()
+        service = ChatService(tmp_path, engine)
+        chat = service.create(LOCAL_USER_ID)
+        assert service.get(LOCAL_USER_ID, chat.id) == chat
+    finally:
+        engine.dispose()
