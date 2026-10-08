@@ -1,5 +1,17 @@
 # Agent guidance
 
+## Agent attribution
+
+- Every agent-authored commit must have a concise subject and a nonempty body
+  explaining the change and why it was made.
+- Add a `Co-authored-by:` trailer to every agent-authored commit. Identify the
+  coding agent and the actual model used, including its reasoning effort when
+  known (for example, `Co-authored-by: Codex (GPT-6 Astra, high) <noreply@openai.com>`).
+  Do not guess a model or effort level that the agent cannot verify.
+- End every agent-written issue, pull request, merge request, review, or comment
+  with a short signature such as `— Codex (GPT-6)`. Use the actual agent and
+  model so readers can distinguish the agent from the account holder.
+
 ## Backend and frontend contract
 
 - Design features so the browser, a TUI, or another client can use the same
