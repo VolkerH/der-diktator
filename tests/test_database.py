@@ -40,14 +40,14 @@ def test_baseline_backup_unknown_schema_and_repeated_startup(tmp_path: Path) -> 
     engine = open_engine(tmp_path / DATABASE_NAME)
     try:
         upgrade_schema(engine, tmp_path)
-        assert (tmp_path / "backups").exists() == (revision != "0002")
+        assert not (tmp_path / "backups").exists()
         upgrade_schema(engine, tmp_path)
-        assert (tmp_path / "backups").exists() == (revision != "0002")
+        assert not (tmp_path / "backups").exists()
         with engine.begin() as connection:
             connection.exec_driver_sql("UPDATE alembic_version SET version_num='9999'")
         with pytest.raises(UnknownSchema, match="newer"):
             upgrade_schema(engine, tmp_path)
-        assert (tmp_path / "backups").exists() == (revision != "0002")
+        assert not (tmp_path / "backups").exists()
     finally:
         engine.dispose()
 

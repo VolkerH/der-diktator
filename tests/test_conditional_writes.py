@@ -30,16 +30,6 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
-@pytest.fixture
-def service(tmp_path: Path):
-    engine = open_engine(tmp_path / DATABASE_NAME)
-    upgrade_schema(engine, tmp_path)
-    try:
-        yield ChatService(tmp_path, engine)
-    finally:
-        engine.dispose()
-
-
 @pytest.mark.anyio
 async def test_separate_validators_and_two_client_conflict(tmp_path: Path) -> None:
     async with client_for(transcribing_engine, Settings(data_directory=tmp_path)) as client:
@@ -513,7 +503,10 @@ async def test_upload_parent_validator_is_an_atomic_snapshot(tmp_path: Path, met
 
 
 @pytest.mark.anyio
-async def test_legacy_recording_identity_is_publicly_retryable(tmp_path: Path) -> None:
+@pytest.mark.parametrize("relocated", [False, True])
+async def test_legacy_recording_identity_is_publicly_retryable(
+    tmp_path: Path, relocated: bool
+) -> None:
     async with client_for(transcribing_engine, Settings(data_directory=tmp_path)) as client:
         await client.put(f"/api/chats/{CHAT_ID}")
         uploaded = await client.put(
@@ -527,8 +520,16 @@ async def test_legacy_recording_identity_is_publicly_retryable(tmp_path: Path) -
                 row = session.get(RecordingRow, RECORDING_ID)
                 assert row is not None
                 row.audio_sha256 = None  # Same nullable identity as an imported recording.
+                if relocated:
+                    original = tmp_path / row.audio_path
+                    destination = original.with_name(f"{'e' * 32}.wav")
+                    original.rename(destination)
+                    row.audio_path = destination.relative_to(tmp_path).as_posix()
             chat = await client.get(f"/api/chats/{CHAT_ID}")
             visible_id = chat.json()["recordings"][0]["id"]
+            assert (
+                await client.get(f"/api/chats/{CHAT_ID}/recordings/{visible_id}")
+            ).content == make_wav()
             retry = await client.put(
                 f"/api/chats/{CHAT_ID}/recordings/{visible_id}",
                 content=make_wav(),
@@ -542,5 +543,9 @@ async def test_legacy_recording_identity_is_publicly_retryable(tmp_path: Path) -
                 row = session.get(RecordingRow, visible_id)
                 assert row is not None
                 assert row.audio_sha256 == hashlib.sha256(make_wav()).hexdigest()
+                if relocated:
+                    assert row.audio_path == f"{CHAT_ID}/{'e' * 32}.wav"
+                    assert not (tmp_path / CHAT_ID / f"{RECORDING_ID}.wav").exists()
+                    assert (tmp_path / row.audio_path).read_bytes() == make_wav()
         finally:
             engine.dispose()
