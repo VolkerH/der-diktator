@@ -1,5 +1,6 @@
 """Loopback model service; model management and inference share one owner."""
 
+import json
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
@@ -107,9 +108,17 @@ def create_engine(manager: ModelManager | None = None) -> FastAPI:
                 manager.stream(model) as endpoint,
                 connect_engine(stream_url(endpoint)) as upstream,
             ):
-                # The web service already sent this one fixed configuration.
+                # Require a text configuration before accepting binary PCM frames.
+                frame = await browser.receive()
+                if frame["type"] == "websocket.disconnect":
+                    raise WebSocketDisconnect(frame.get("code", 1000))
+                configuration = frame.get("text")
+                if not isinstance(configuration, str):
+                    raise StreamError(
+                        "Send a text configuration before live audio.", "validation_error", 422
+                    )
                 try:
-                    config = await browser.receive_json()
+                    config = json.loads(configuration)
                 except ValueError as error:
                     raise StreamError(
                         "Invalid live audio configuration.", "validation_error", 422

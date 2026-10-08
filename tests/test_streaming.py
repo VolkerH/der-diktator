@@ -409,10 +409,14 @@ async def test_engine_stream_admission_code_reaches_browser_end_to_end(
 
 @pytest.mark.parametrize(
     ("configuration", "code"),
-    [("not JSON", "validation_error"), ('{"format":"other"}', "unsupported_audio")],
+    [
+        ("not JSON", "validation_error"),
+        (b"PCM before configuration", "validation_error"),
+        ('{"format":"other"}', "unsupported_audio"),
+    ],
 )
 async def test_engine_stream_configuration_errors_are_coded(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configuration: str, code: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configuration: str | bytes, code: str
 ) -> None:
     from diktator.inference import server
     from diktator.inference.manager import ModelManager
@@ -436,4 +440,39 @@ async def test_engine_stream_configuration_errors_are_coded(
             event = json.loads(await connection.recv())
             assert event["type"] == "error"
             assert event["code"] == code
+            assert isinstance(connection, AsgiEngineStream)
+            closing = await asyncio.wait_for(connection.outgoing.get(), timeout=2)
+            assert closing["type"] == "websocket.close"
         assert not manager.streaming
+
+
+async def test_engine_disconnect_before_configuration_releases_stream_without_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from diktator.inference import server
+    from diktator.inference.manager import ModelManager
+    from diktator.inference.store import ModelStore
+    from tests.test_models import FakeBackend, install_fixture
+
+    native = FakeEngine()
+
+    @asynccontextmanager
+    async def native_connection(_url: str) -> AsyncIterator[EngineStream]:
+        yield native
+
+    monkeypatch.setattr(server, "connect_engine", native_connection)
+    store = ModelStore(tmp_path)
+    install_fixture(store, "phonon-2")
+    manager = ModelManager(store, lambda _: FakeBackend())
+    app = server.create_engine(manager)
+    async with app.router.lifespan_context(app):
+        assert manager.job is not None
+        await manager.job
+        async with engine_connector(app)("ws://engine") as connection:
+            assert isinstance(connection, AsgiEngineStream)
+            await connection.incoming.put({"type": "websocket.disconnect", "code": 1001})
+            closing = await asyncio.wait_for(connection.outgoing.get(), timeout=2)
+            assert closing["type"] == "websocket.close"
+            assert connection.outgoing.empty()
+        assert not manager.streaming
+        assert native.sent.empty()
