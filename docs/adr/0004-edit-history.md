@@ -11,8 +11,9 @@ Discussion: [#15](https://github.com/VolkerH/der-diktator/issues/15) —
 
 ## Context
 
-The browser saves the complete transcript after a short debounce, so the server cannot tell what
-changed. #16 wants a timeline of recordings, edits and retranscriptions, and later shared editing.
+The browser saves the complete transcript after a short debounce. The server can calculate a diff
+between snapshots, but cannot recover the original sequence of editing operations or their intent.
+#16 wants a timeline of recordings, edits and retranscriptions, and later shared editing.
 #5 wants dictation without stored audio; its privacy concern is the voice (biometric data), not
 the transcript.
 
@@ -38,6 +39,11 @@ the transcript.
   playback or retranscription. Clients render that metadata as #5's "Audio not saved" pill, in the
   chat and in the timeline. Recordings with retained audio keep their own recording entry. #5's
   session-ID and idempotency rules apply to the edit, so a retry cannot insert text twice.
+- An empty or interrupted no-audio session must still be able to record its session metadata and
+  outcome in history, even when there is no text to insert. Such an entry does not advance the
+  document revision solely to record metadata. #5 specifies finalization and retry behavior so the
+  session produces one pill, preserves any confirmed text, and does not claim successful completion
+  after an interruption. This does not require a separate recording row.
 
 ## Consequences
 
