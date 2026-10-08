@@ -93,3 +93,13 @@ class LegacyImportRow(Base):
     imported_at: Mapped[datetime] = mapped_column(UtcDateTime)
     source: Mapped[str] = mapped_column(String)
     baseline_text: Mapped[str] = mapped_column(Text)
+
+
+class PreferenceRow(Base):
+    __tablename__ = "preferences"
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    copy_preamble: Mapped[str | None] = mapped_column(Text)
+    share_include_preamble: Mapped[bool] = mapped_column(default=False, server_default="0")
+    revision: Mapped[int] = mapped_column(default=1)

@@ -1,4 +1,4 @@
-import { request } from "./chats.js";
+import { request } from "./request.js";
 
 /** @typedef {{id: string, name: string, created: string, revision: number, etag: string}} Group */
 /** @typedef {{chat_id: string, group_id: string | null, placement_revision: number, etag: string}} Placement */

@@ -168,12 +168,14 @@ class RecordingNotFound(ApiFailure):
         super().__init__("This recording no longer exists.", "recording_not_found", 404)
 
 
-def check_precondition(if_match: str | None, etag: str) -> None:
+def check_precondition(
+    if_match: str | None, etag: str, message: str = "This chat changed elsewhere."
+) -> None:
     """Allow legacy writes; match only strong validators or the existing-resource wildcard."""
     if if_match is None or if_match.strip() == "*":
         return
     if etag not in [value.strip() for value in if_match.split(",")]:
-        raise ApiFailure("This chat changed elsewhere.", "revision_conflict", 412)
+        raise ApiFailure(message, "revision_conflict", 412)
 
 
 def idempotency_conflict() -> ApiFailure:

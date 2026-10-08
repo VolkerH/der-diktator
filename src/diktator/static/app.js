@@ -1,3 +1,4 @@
+import { exportControls } from "./exports.js";
 import { ApiRequestError } from "./errors.js";
 import { MAX_DURATION_SECONDS, wordCount } from "./audio.js";
 import { chatApi, spliceText } from "./chats.js";
@@ -148,6 +149,13 @@ recorder.onLevel = (/** @type {number} */ level) => {
   peakLevel = Math.max(peakLevel, level);
 };
 
+const exports = exportControls(
+  () => ({ text: transcript.value, key: navigationGeneration, active: recording || busy }),
+  (message) => {
+    status.textContent = message;
+  },
+);
+
 /** Draw the level history as mirrored bars; quiet input still shows a baseline. */
 function drawMeter() {
   const context = meter.getContext("2d");
@@ -203,6 +211,7 @@ function updateControls() {
   stopButton.hidden = !recording;
   stopButton.disabled = !recording || busy;
   copyButton.disabled = active || !transcript.value.trim();
+  exports.update();
   newChatButton.disabled = active;
   groupSidebar.lock(active);
   draftUnsorted.disabled = active;

@@ -1,4 +1,4 @@
-import { ApiRequestError } from "./errors.js";
+import { request } from "./request.js";
 
 /** @typedef {{ id: string, created: string, duration_seconds: number }} Recording */
 /** A title observation carries its parent ordering revision without acknowledging the whole Chat.
@@ -6,16 +6,6 @@ import { ApiRequestError } from "./errors.js";
 /** @typedef {ChatTitle & { id: string, created: string, updated: string, text: string, recordings: Recording[], revision: number, text_revision: number, etag: string | null, textEtag: string | null }} Chat */
 /** @typedef {{ id: string, title: string, custom_title: string | null, updated: string, recording_count: number, etag: string, group_id: string | null, placement_etag: string }} ChatSummary */
 /** @typedef {{ recording: Recording, chatEtag: string | null, chatRevision: number | null }} RecordingUpload */
-
-/** @param {string} path @param {RequestInit} [options] */
-export async function request(path, options = {}) {
-  const response = await fetch(path, { signal: AbortSignal.timeout(190_000), ...options });
-  const result = response.status === 204 ? null : await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new ApiRequestError(result, "The request failed. Try again.");
-  }
-  return { body: result, headers: response.headers };
-}
 
 /** Preserve opaque validators explicitly for routes returning a complete Chat.
  * @param {string} path @param {RequestInit} [options] @returns {Promise<Chat>} */
