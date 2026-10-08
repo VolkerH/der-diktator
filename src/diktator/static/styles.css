@@ -947,23 +947,75 @@ textarea:read-only {
   align-items: flex-start;
   gap: 12px;
 }
-.model-controls label {
+#model-picker {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+#model-picker legend {
+  margin-bottom: 12px;
   font-size: 14px;
   font-weight: 600;
 }
-.model-controls select {
-  width: 100%;
+.model-options {
+  display: grid;
+  gap: 10px;
+}
+.model-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   min-width: 0;
   padding: 12px;
   border: 1px solid var(--sheet-line);
-  border-radius: 10px;
-  color: inherit;
-  background: var(--chip);
-  font: inherit;
+  border-radius: 12px;
+  cursor: pointer;
 }
-.model-controls select:focus-visible {
+.model-option:has(input:checked) {
+  border-color: var(--violet);
+  background: var(--chip);
+}
+.model-option:has(input:focus-visible) {
   outline: 2px solid var(--violet);
   outline-offset: 2px;
+}
+.model-option input {
+  flex-shrink: 0;
+  margin-top: 4px;
+  accent-color: var(--violet);
+}
+#model-picker:disabled .model-option {
+  opacity: 0.65;
+  cursor: default;
+}
+.model-description {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+.model-name,
+.model-summary-name {
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.model-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.model-pill {
+  display: inline-block;
+  padding: 3px 8px;
+  border: 1px solid var(--sheet-line);
+  border-radius: 999px;
+  background: var(--chip);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
 }
 #model-help {
   margin: 16px 0 0;

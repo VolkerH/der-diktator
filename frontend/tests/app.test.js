@@ -86,6 +86,7 @@ function chatServer() {
           id: "phonon-2",
           name: "Phonon-2",
           languages: "English",
+          language_labels: ["English"],
           live: true,
           download_mb: 164,
           installed: true,
@@ -96,8 +97,20 @@ function chatServer() {
           id: "parakeet-v3",
           name: "Parakeet v3",
           languages: "German, English",
+          language_labels: ["German", "English", "+23 languages"],
           live: false,
           download_mb: 671,
+          installed: false,
+          state: "missing",
+          message: "",
+        },
+        {
+          id: "whisper-large-v3-turbo",
+          name: "Whisper large-v3-turbo",
+          languages: "German, English and many other languages",
+          language_labels: ["German", "English", "Multilingual"],
+          live: false,
+          download_mb: 1622,
           installed: false,
           state: "missing",
           message: "",
@@ -450,8 +463,7 @@ test("connection failure preserves existing text", async (t) => {
 test("Parakeet download is explicit, activation disables live text, and requests retain its identity", async (t) => {
   const app = await appEnvironment(t);
   const picker = app.element("model-picker");
-  picker.value = "parakeet-v3";
-  await picker.emit("change");
+  await selectModel(app, "parakeet-v3");
   assert.equal(app.element("record").disabled, true);
   assert.match(app.element("model-action").textContent, /Download.*671/);
   assert.deepEqual(app.server.modelRequests, []);
@@ -468,8 +480,7 @@ test("Parakeet download is explicit, activation disables live text, and requests
   await app.element("stop").emit("click");
   await waitForIdle(app);
   assert.deepEqual(app.server.requestedModels, ["parakeet-v3"]);
-  picker.value = "phonon-2";
-  await picker.emit("change");
+  await selectModel(app, "phonon-2");
   await app.element("model-action").emit("click");
   await waitForIdle(app);
   assert.equal(app.element("live-mode").checked, true);
@@ -478,8 +489,7 @@ test("Parakeet download is explicit, activation disables live text, and requests
 
 test("model action failures are visible and can be retried without losing text", async (t) => {
   const app = await appEnvironment(t, (server) => server.add("Keep these words."));
-  app.element("model-picker").value = "parakeet-v3";
-  await app.element("model-picker").emit("change");
+  await selectModel(app, "parakeet-v3");
   app.server.failModelAction = true;
   await app.element("model-action").emit("click");
   assert.match(app.element("model-error").textContent, /Download failed/);
@@ -501,13 +511,13 @@ test("startup selects persisted Parakeet while loading and becomes ready without
     },
     false,
   );
-  assert.equal(app.element("model-picker").value, "parakeet-v3");
+  assert.equal(selectedModel(app), "parakeet-v3");
   assert.equal(app.element("record").disabled, true);
   app.server.models.active = "parakeet-v3";
   app.server.models.models[1].state = "ready";
   app.intervals[0]();
   await waitForIdle(app);
-  assert.equal(app.element("model-picker").value, "parakeet-v3");
+  assert.equal(selectedModel(app), "parakeet-v3");
   assert.equal(app.element("live-mode").checked, false);
 });
 
@@ -524,4 +534,54 @@ test("a different tab switching models cannot change the model of a recorded fal
   for (let i = 0; i < 10; i++) await setImmediate();
   assert.deepEqual(app.server.requestedModels, ["phonon-2"]);
   assert.equal(app.element("record").disabled, true);
+});
+
+function modelRadios(app) {
+  return app.element("model-options").children.map((option) => option.children[0]);
+}
+
+async function selectModel(app, id) {
+  const radio = modelRadios(app).find((radio) => radio.value === id);
+  assert.ok(radio, `Missing model option ${id}`);
+  radio.checked = true;
+  await radio.emit("change");
+}
+
+function selectedModel(app) {
+  return modelRadios(app).find((radio) => radio.checked)?.value;
+}
+
+test("Whisper pills explain capabilities in the picker and sidebar; activation uses batch transcription", async (t) => {
+  const app = await appEnvironment(t);
+  const option = app.element("model-options").children[2];
+  const labels = option.children[1].children[1].children.map((pill) => pill.textContent);
+  assert.deepEqual(labels, [
+    "German",
+    "English",
+    "Multilingual",
+    "After recording",
+    "Download: 1.62 GB",
+  ]);
+  await selectModel(app, "whisper-large-v3-turbo");
+  assert.deepEqual(
+    app.element("model-summary-pills").children.map((pill) => pill.textContent),
+    labels,
+  );
+  assert.equal(app.element("model-summary-name").textContent, "Whisper large-v3-turbo");
+  assert.equal(app.element("model-action").textContent, "Download (1.62 GB)");
+  assert.equal(app.element("record").disabled, true);
+  assert.deepEqual(app.server.modelRequests, []);
+  await app.element("model-action").emit("click");
+  await app.element("model-action").emit("click");
+  await waitForIdle(app);
+  assert.equal(app.element("live-mode").disabled, true);
+  assert.equal(app.element("live-mode").checked, false);
+  assert.equal(app.element("model-options").children[2], option);
+  await app.element("record").emit("click");
+  await selectModel(app, "phonon-2");
+  assert.equal(selectedModel(app), "whisper-large-v3-turbo");
+  assert.equal(app.sockets.length, 0);
+  await app.element("stop").emit("click");
+  await waitForIdle(app);
+  assert.deepEqual(app.server.requestedModels, ["whisper-large-v3-turbo"]);
 });

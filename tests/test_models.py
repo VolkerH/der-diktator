@@ -3,15 +3,18 @@
 import asyncio
 import hashlib
 import json
+import sys
+import threading
 from array import array
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
 
-from diktator.inference.backends import Backend, audio_windows
+from diktator.inference.backends import Backend, WhisperBackend, audio_windows, create_backend
 from diktator.inference.manager import ModelConflict, ModelManager
 from diktator.inference.server import create_engine
 from diktator.inference.store import (
@@ -20,6 +23,7 @@ from diktator.inference.store import (
     ModelStore,
     exclusive_lock,
     models_directory,
+    required_files,
     write_verified_file,
 )
 from diktator.models import ModelId
@@ -35,11 +39,7 @@ def anyio_backend() -> str:
 def install_fixture(store: ModelStore, model: ModelId) -> None:
     directory = store.path(model)
     directory.mkdir(parents=True, exist_ok=True)
-    names = (
-        ["config.json", "packed_manifest.json", "model.fermion"]
-        if model == "phonon-2"
-        else ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"]
-    )
+    names = required_files(model)
     for name in names:
         (directory / name).write_bytes(b"fixture")
     (directory / "installed.json").write_text(
@@ -324,7 +324,8 @@ async def test_engine_routes_do_not_download_on_startup_and_validate_model_ident
 
 
 @pytest.mark.anyio
-async def test_web_proxy_model_routes_and_conflicts() -> None:
+@pytest.mark.parametrize("model", ["parakeet-v3", "whisper-large-v3-turbo"])
+async def test_web_proxy_model_routes_and_conflicts(model: str) -> None:
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -333,9 +334,9 @@ async def test_web_proxy_model_routes_and_conflicts() -> None:
 
     async with client_for(handler) as client:
         for path in (
-            "/api/models/parakeet-v3/activate",
-            "/api/models/parakeet-v3/download",
-            "/api/transcribe?model=parakeet-v3",
+            f"/api/models/{model}/activate",
+            f"/api/models/{model}/download",
+            f"/api/transcribe?model={model}",
         ):
             response = await client.post(
                 path, content=make_wav(), headers={"Content-Type": "audio/wav"}
@@ -344,13 +345,15 @@ async def test_web_proxy_model_routes_and_conflicts() -> None:
             assert response.json()["detail"] == "Finish the current recording first."
         assert (await client.post("/api/models/unknown/download")).status_code == 422
     assert len(requests) == 3
-    assert requests[-1].url.params["model"] == "parakeet-v3"
+    assert requests[-1].url.params["model"] == model
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("model", ["parakeet-v3", "whisper-large-v3-turbo"])
 async def test_download_cancellation_cleans_staging_and_releases_lock(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    model: ModelId,
 ) -> None:
     started = asyncio.Event()
 
@@ -359,14 +362,15 @@ async def test_download_cancellation_cleans_staging_and_releases_lock(
         started.set()
         await asyncio.Event().wait()
 
-    monkeypatch.setattr("diktator.inference.store.download_parakeet", stalled)
+    download = "download_whisper" if model == "whisper-large-v3-turbo" else "download_parakeet"
+    monkeypatch.setattr(f"diktator.inference.store.{download}", stalled)
     manager = ModelManager(ModelStore(tmp_path))
-    manager.download("parakeet-v3")
+    manager.download(model)
     await started.wait()
     await manager.close()
-    assert not (tmp_path / ".parakeet-v3.download").exists()
+    assert not (tmp_path / f".{model}.download").exists()
     with exclusive_lock(tmp_path / ".install.lock"):
-        assert not manager.store.installed("parakeet-v3")
+        assert not manager.store.installed(model)
 
 
 @pytest.mark.anyio
@@ -428,3 +432,149 @@ async def test_child_that_ignores_terminate_is_killed_and_reaped() -> None:
     assert await process.stdout.readline() == b"ready\n"
     await asyncio.wait_for(stop_process(process, grace_seconds=0.01), timeout=2)
     assert process.returncode is not None and process.returncode < 0
+
+
+@pytest.mark.anyio
+async def test_whisper_local_int8_loading_and_lazy_inference_stay_on_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = threading.get_ident()
+    worker_ids: list[int] = []
+    fail = False
+    decode_calls = 0
+
+    class Waveform:
+        def __init__(self, samples: array[int], dtype: str) -> None:
+            assert dtype == "float32"
+            self.samples = samples
+
+        def __truediv__(self, scale: float) -> list[float]:
+            return [sample / scale for sample in self.samples]
+
+    class NativeModel:
+        def __init__(self, path: str, **options: object) -> None:
+            worker_ids.append(threading.get_ident())
+            assert path == str(tmp_path)
+            assert options == {
+                "device": "cpu",
+                "compute_type": "int8",
+                "cpu_threads": 4,
+                "num_workers": 1,
+                "local_files_only": True,
+            }
+
+        def transcribe(
+            self, audio: object, **options: object
+        ) -> tuple[Iterator[SimpleNamespace], None]:
+            nonlocal decode_calls
+            decode_calls += 1
+            worker_ids.append(threading.get_ident())
+            assert isinstance(audio, list) and audio[-1] == 0.5
+            assert options["task"] == "transcribe"
+            assert options["multilingual"] is True
+            assert options["vad_filter"] is True
+
+            def segments() -> Iterator[SimpleNamespace]:
+                worker_ids.append(threading.get_ident())
+                yield SimpleNamespace(text=" Hallo, ")
+                if fail:
+                    raise RuntimeError("later segment failed")
+                yield SimpleNamespace(text=" this is English. ")
+
+            return segments(), None
+
+    monkeypatch.setitem(sys.modules, "faster_whisper", SimpleNamespace(WhisperModel=NativeModel))
+    monkeypatch.setitem(sys.modules, "numpy", SimpleNamespace(asarray=Waveform, float32="float32"))
+    backend = create_backend("whisper-large-v3-turbo")
+    assert isinstance(backend, WhisperBackend)
+    try:
+        await backend.load(tmp_path)
+        assert backend.alive() and backend.stream_endpoint is None
+        assert await backend.transcribe(make_wav()) == ""
+        assert decode_calls == 0
+        audio = make_wav()[:-2] + b"\x00\x40"
+        assert await backend.transcribe(audio) == "Hallo, this is English."
+        fail = True
+        with pytest.raises(RuntimeError, match="later segment"):
+            await backend.transcribe(audio)
+        assert len(set(worker_ids)) == 1 and owner not in worker_ids
+    finally:
+        await backend.close()
+    assert not backend.alive()
+
+
+@pytest.mark.anyio
+async def test_whisper_download_install_activate_and_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from diktator.inference import store as store_module
+
+    payloads = {
+        "model.bin": b"model weights",
+        "config.json": b'{"lang_ids": [50259]}',
+        "preprocessor_config.json": b'{"feature_size": 128}',
+        "tokenizer.json": b'{"model": {"vocab": {"hello": 0}}}',
+        "vocabulary.json": b'["hello"]',
+    }
+    specs = tuple(
+        ModelFile(name, len(data), hashlib.sha256(data).hexdigest())
+        for name, data in payloads.items()
+    )
+    monkeypatch.setattr(store_module, "WHISPER_FILES", specs)
+    visited: list[str] = []
+    original_client = httpx.AsyncClient
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert store_module.WHISPER_REVISION in request.url.path
+        assert store_module.WHISPER_REPO in request.url.path
+        name = request.url.path.rsplit("/", 1)[1]
+        visited.append(name)
+        return httpx.Response(200, content=payloads[name])
+
+    def client(**options: object) -> httpx.AsyncClient:
+        return original_client(transport=httpx.MockTransport(respond))
+
+    monkeypatch.setattr(store_module.httpx, "AsyncClient", client)
+    store = ModelStore(tmp_path)
+    backend = FakeBackend()
+    backend.stream_endpoint = None
+    backend.finish.set()
+    manager = ModelManager(store, lambda _: backend)
+    model: ModelId = "whisper-large-v3-turbo"
+    await manager.start()
+    assert visited == []
+    manager.download(model)
+    assert manager.job is not None
+    await manager.job
+    assert set(visited) == payloads.keys()
+    assert store.installed(model)
+    manager.activate(model)
+    await manager.job
+    assert manager.active == model and store.preference() == model
+    assert await manager.transcribe(model, make_wav()) == "Hallo, this is mixed dictation."
+    with pytest.raises(ModelConflict, match=r"Whisper.*Turn off Live text"):
+        async with manager.stream(model):
+            pytest.fail("Whisper has no live protocol")
+    await manager.close()
+    restarted = ModelManager(store, lambda _: FakeBackend())
+    await restarted.start()
+    assert restarted.job is not None
+    await restarted.job
+    assert restarted.active == model
+    await restarted.close()
+    (store.path(model) / "tokenizer.json").unlink()
+    assert not store.installed(model)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("payload", [b"<!DOCTYPE html>", b"{}", b"null", b"[]"])
+async def test_download_rejects_invalid_or_empty_json(tmp_path: Path, payload: bytes) -> None:
+    async def chunks() -> AsyncIterator[bytes]:
+        yield payload
+
+    with pytest.raises(ValueError):
+        await write_verified_file(
+            chunks(), tmp_path / "config.json", ModelFile("config.json", None, None)
+        )

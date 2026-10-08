@@ -21,6 +21,8 @@ from diktator.models import ModelId, model_info
 CATALOG_VERSION = 1
 PARAKEET_REPO = "csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
 PARAKEET_REVISION = "2bda32ec70b097a55adaa07d9a7173915b43cc78"
+WHISPER_REPO = "dropbox-dash/faster-whisper-large-v3-turbo"
+WHISPER_REVISION = "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"
 
 
 @dataclass(frozen=True)
@@ -28,6 +30,7 @@ class ModelFile:
     name: str
     size: int | None
     sha256: str | None
+    max_bytes: int = 200_000
 
 
 # Published LFS hashes at the pinned upstream revision. Tokens are a small Git
@@ -50,6 +53,29 @@ PARAKEET_FILES = (
     ),
     ModelFile("tokens.txt", None, None),
 )
+
+# The weight digest is published in the LFS pointer. JSON files come from the
+# same immutable revision and are bounded and parsed before installation.
+WHISPER_FILES = (
+    ModelFile(
+        "model.bin",
+        1617884929,
+        "e76620f83d5f5b69efd3d87e3dc180c1bd21df9fbebacfd4335e5e1efcc018da",
+    ),
+    ModelFile("config.json", None, None),
+    ModelFile("preprocessor_config.json", None, None),
+    ModelFile("tokenizer.json", None, None, max_bytes=4_000_000),
+    ModelFile("vocabulary.json", None, None, max_bytes=2_000_000),
+)
+
+
+def required_files(model_id: str) -> set[str]:
+    model_info(model_id)
+    if model_id == "parakeet-v3":
+        return {item.name for item in PARAKEET_FILES}
+    if model_id == "whisper-large-v3-turbo":
+        return {item.name for item in WHISPER_FILES}
+    return {"config.json", "packed_manifest.json", "model.fermion"}
 
 
 def models_directory() -> Path:
@@ -89,11 +115,7 @@ class ModelStore:
             if manifest["version"] != CATALOG_VERSION or manifest["model"] != model_id:
                 return False
             files = manifest["files"]
-            required = (
-                {item.name for item in PARAKEET_FILES}
-                if model_id == "parakeet-v3"
-                else {"config.json", "packed_manifest.json", "model.fermion"}
-            )
+            required = required_files(model_id)
             return (
                 isinstance(files, dict)
                 and required <= files.keys()
@@ -135,8 +157,10 @@ class ModelStore:
                 async with asyncio.timeout(3600):
                     if model_id == "phonon-2":
                         await download_phonon(stage, report)
-                    else:
+                    elif model_id == "parakeet-v3":
                         await download_parakeet(stage, report)
+                    else:
+                        await download_whisper(stage, report)
                 files = {p.name: p.stat().st_size for p in stage.iterdir() if p.is_file()}
                 (stage / "installed.json").write_text(
                     json.dumps(
@@ -162,7 +186,7 @@ async def write_verified_file(chunks: AsyncIterator[bytes], path: Path, spec: Mo
     with path.open("wb") as output:
         async for chunk in chunks:
             count += len(chunk)
-            if count > (spec.size if spec.size is not None else 200_000):
+            if count > (spec.size if spec.size is not None else spec.max_bytes):
                 raise ValueError(f"Unexpected size for {spec.name}. Retry the download.")
             digest.update(chunk)
             output.write(chunk)
@@ -174,15 +198,38 @@ async def write_verified_file(chunks: AsyncIterator[bytes], path: Path, spec: Mo
         rows = path.read_text().splitlines()
         if len(rows) != 8193 or rows[0] != "<unk> 0" or rows[-1].rsplit(" ", 1)[-1] != "8192":
             raise ValueError("The downloaded vocabulary is incomplete.")
+    if spec.name.endswith(".json"):
+        contents = json.loads(path.read_text())
+        if not isinstance(contents, (dict, list)) or not contents:
+            raise ValueError(f"The downloaded {spec.name} is incomplete.")
 
 
 async def download_parakeet(stage: Path, report: Callable[[str], None]) -> None:
+    await download_files(
+        stage, report, "Parakeet v3", PARAKEET_REPO, PARAKEET_REVISION, PARAKEET_FILES
+    )
+
+
+async def download_whisper(stage: Path, report: Callable[[str], None]) -> None:
+    await download_files(
+        stage, report, "Whisper large-v3-turbo", WHISPER_REPO, WHISPER_REVISION, WHISPER_FILES
+    )
+
+
+async def download_files(
+    stage: Path,
+    report: Callable[[str], None],
+    name: str,
+    repo: str,
+    revision: str,
+    files: tuple[ModelFile, ...],
+) -> None:
     async with httpx.AsyncClient(
         follow_redirects=True, timeout=httpx.Timeout(60, connect=15)
     ) as client:
-        for index, spec in enumerate(PARAKEET_FILES, start=1):
-            report(f"Downloading Parakeet v3 (file {index} of {len(PARAKEET_FILES)})…")
-            url = f"https://huggingface.co/{PARAKEET_REPO}/resolve/{PARAKEET_REVISION}/{spec.name}"
+        for index, spec in enumerate(files, start=1):
+            report(f"Downloading {name} (file {index} of {len(files)})…")
+            url = f"https://huggingface.co/{repo}/resolve/{revision}/{spec.name}"
             async with client.stream("GET", url) as response:
                 response.raise_for_status()
                 await write_verified_file(response.aiter_bytes(), stage / spec.name, spec)

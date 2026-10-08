@@ -155,7 +155,7 @@ class ModelManager:
         backend = self.require(model_id)
         if backend.stream_endpoint is None:
             raise ModelConflict(
-                "Parakeet supports transcription after recording. Turn off Live text."
+                f"{model_info(model_id).name} transcribes after recording. Turn off Live text."
             )
         self.streaming = True
         try:

@@ -12,8 +12,9 @@ and keep everything on your own machine.</p>
 
 Der Diktator is a small web app for capturing spoken notes, drafts, and ideas as
 text. Run it on a home server, open it in the browser on your phone or laptop,
-tap the microphone, and speak. Speech is transcribed on your server’s CPU using **Phonon-2** for English or
-**Parakeet v3** for German, English, and 23 other European languages. Choose and
+tap the microphone, and speak. Speech is transcribed on your server’s CPU using
+**Phonon-2** for English, or **Parakeet v3** and **Whisper large-v3-turbo** for
+German, English, and other languages. Choose and
 download a model in the browser. Your transcripts and recordings are stored on
 the server as plain files. No audio or text is sent to a cloud service.
 
@@ -46,11 +47,12 @@ words: in German, a _Diktat_ is a dictation.
 
 - **Dictate from any device.** A responsive web app for phone, tablet, and
   desktop browsers. Nothing to install on the device.
-- **Two speech models.** Choose Phonon-2 for English or Parakeet v3 for German
-  and multilingual dictation. Download missing weights with one button.
+- **Three speech models.** Choose Phonon-2, Parakeet v3, or Whisper large-v3-turbo.
+  Language, recording mode, and download-size labels help you compare them.
+  Download missing weights from the browser.
 - **Live transcription with Phonon-2.** Text appears while you speak and is
-  finalised when you stop. Parakeet transcribes the recording after you stop;
-  **Live text** is disabled for that model.
+  finalised when you stop. Parakeet and Whisper transcribe after you stop;
+  **Live text** is disabled for those models.
 - **Chats.** Each dictation is a chat: one editable transcript plus every
   recording made for it. Start new chats, reopen old ones, or delete them.
 - **Dictate at the cursor.** Recording again never replaces your text. The new
@@ -68,10 +70,12 @@ words: in German, a _Diktat_ is a dictation.
 ## How to use it
 
 1. **Choose a speech model.** Open **Speech models** at the bottom of the sidebar
-   (on a phone, open the ☰ menu first). Select **Phonon-2** or **Parakeet v3**,
+   (on a phone, open the ☰ menu first). Select a model,
    and click **Download** if needed. Then click **Use model** and wait for the
    ready badge. Downloads and loading run in the background; failures show a retry
    message. The server remembers the last successfully activated model.
+   See [Choosing and downloading a model](#choosing-and-downloading-a-model)
+   for the full walkthrough.
 2. **Tap the microphone** and speak. With **Live text** on, words appear as you
    talk; provisional words can still change. On a computer, Space starts and
    stops recording too.
@@ -111,11 +115,13 @@ it, then click **Use model**. Starting
 the services does not download model weights. With WSL, use your Windows browser:
 WSL forwards `localhost` to Windows. Model loading can take some time.
 
-Phonon-2 downloads about 164 MB; Parakeet v3 INT8 downloads about 671 MB. Allow
+Phonon-2 downloads about 164 MB; Parakeet v3 INT8 about 671 MB;
+Whisper large-v3-turbo about 1.62 GB. Allow
 additional disk space for temporary downloads, unpacking, and Python dependencies.
 A failed download can be retried. A retry starts the incomplete download again.
-To download from the command line instead, use `make download-model` for Phonon-2
-or `make download-model MODEL=parakeet-v3`. Both use the same model store as the GUI.
+To download from the command line instead, use `make download-model` for Phonon-2,
+`make download-model MODEL=parakeet-v3`, or
+`make download-model MODEL=whisper-large-v3-turbo`. All use the same model store as the GUI.
 
 To run the services separately, use `make engine` in one terminal and `make web`
 in another. After updating the app, restart it and refresh the browser: the web
@@ -235,10 +241,92 @@ location already exists.
 
 ## Speech models
 
-| Model                     | Languages                                        | Recording mode                            |
-| ------------------------- | ------------------------------------------------ | ----------------------------------------- |
-| Phonon-2                  | English                                          | Live text or transcription after stopping |
-| Parakeet TDT 0.6B v3 INT8 | German, English, and 23 other European languages | Transcription after stopping              |
+| Model                     | Languages                                        | Recording mode                            | Approximate download |
+| ------------------------- | ------------------------------------------------ | ----------------------------------------- | -------------------- |
+| Phonon-2                  | English                                          | Live text or transcription after stopping | 164 MB               |
+| Parakeet TDT 0.6B v3 INT8 | German, English, and 23 other European languages | Transcription after stopping              | 671 MB               |
+| Whisper large-v3-turbo    | German, English, and many other languages        | Transcription after stopping              | 1.62 GB              |
+
+### Choosing and downloading a model
+
+**1. Open Speech models.** The button sits at the bottom of the sidebar, outside
+the current chat. On a phone, open the ☰ menu first. You can change models without
+starting a new chat or losing your transcript.
+
+**2. Compare the labels and select a model.** Each option shows its properties
+as small pills:
+
+- **German**, **English**, and the additional-language label describe language
+  support. Language detection is automatic; these labels are not language switches.
+- **Live text** means text can appear while you speak. **After recording** means
+  transcription starts once you press Stop.
+- **Download: …** is the approximate size of the model files transferred to the
+  server. Runtime memory and Python dependencies need additional space.
+
+Selecting an option lets you inspect it. Click **Use model** to activate it once
+it is installed.
+
+<!-- screenshot:model-picker:start -->
+
+<img src="docs/screenshot-model-picker.png" alt="Choose a model by its language, recording mode, and download-size pills." width="520" />
+
+_Choose a model by its language, recording mode, and download-size pills. Screenshot of the app with demonstration state._
+
+<!-- screenshot:model-picker:end -->
+
+**3. Click Download if the model is missing.** The button shows the download
+size before you start. Downloads run on the server and report which file is
+being fetched. **Downloading model…** means the download is running; it does not
+mean your speech is being transcribed. Starting the app never downloads model
+weights automatically.
+
+<!-- screenshot:model-download:start -->
+
+<img src="docs/screenshot-model-download.png" alt="The download status reports the current model file." width="520" />
+
+_The download status reports the current model file. Screenshot of the app with demonstration state._
+
+<!-- screenshot:model-download:end -->
+
+**4. Click Use model after the download finishes.** Wait for **Loading model…**
+to change to **Ready**, then close the dialog and record. The sidebar repeats
+the selected model's name and capability labels. Whisper and Parakeet switch off
+the **Live text** control; their transcript arrives after you stop recording.
+The last successfully activated model is loaded again when the server restarts.
+
+<!-- screenshot:model-ready:start -->
+
+<img src="docs/screenshot-model-ready.png" alt="The sidebar shows Whisper ready, with its languages and recording mode." width="300" />
+
+_The sidebar shows Whisper ready, with its languages and recording mode. Screenshot of the app with demonstration state._
+
+<!-- screenshot:model-ready:end -->
+
+### Understanding the status
+
+| Status                | What it means / what to do                                                                                                                   |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Download a model      | The selected model is missing. Open Speech models and click Download.                                                                        |
+| Downloading model…    | Model files are being downloaded. Wait for completion.                                                                                       |
+| Choose Use model      | The files are installed. Click Use model to load them.                                                                                       |
+| Loading model…        | The server is preparing the model. Wait for Ready.                                                                                           |
+| Ready                 | You can record with the selected model.                                                                                                      |
+| Transcribing…         | The server is processing audio with the selected model.                                                                                      |
+| Model needs attention | Downloading or loading failed, or the engine stopped. Open Speech models to read the error and retry. This is not a transcription indicator. |
+| Engine unavailable    | The browser cannot reach the model service. Check the server terminal and restart with `make run` if needed.                                 |
+
+For a failed download, check internet access and available disk space, then
+click **Download** again. A retry starts that model's incomplete download over.
+For a loading failure, check the server log and click **Use model** again.
+After updating the app, restart `make run` to install runtime dependency changes,
+then refresh the browser.
+
+### Language recognition and model storage
+
+Whisper large-v3-turbo uses faster-whisper with CTranslate2 INT8 CPU inference.
+It supports German, English, and many other languages, with transcription after
+recording stops. Language detection runs for each segment; speech detection skips
+silence. INT8 is applied when loading the model and does not reduce the download.
 
 Parakeet uses automatic language recognition. Mixed German/English dictation is a
 useful application, but accuracy for language switches and technical vocabulary
@@ -266,7 +354,10 @@ have verified the new installation, you can remove the old cache yourself.
 Model files are obtained from fixed sources: Parakeet weights and tokens from a
 pinned revision of the [sherpa-onnx model conversion](https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8),
 with SHA-256 verification of the three weight files; Phonon uses Fermion's pinned
-archive verification. Loading uses local files and works offline after setup.
+archive verification. Whisper uses a pinned revision of the
+[faster-whisper conversion](https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo),
+with SHA-256 verification of the weights and validated JSON companion files.
+Loading uses local files and works offline after setup.
 
 ## How it works
 
@@ -323,6 +414,21 @@ encoding, microphone cleanup, partial corrections, stream failure, cursor
 insertion, chats, and the recording flow. Real microphone behaviour, model
 accuracy, and live latency need checks in a browser on the target machine.
 
+### Updating the model screenshots
+
+The capture script opens the actual frontend with demonstration API responses.
+It captures the picker, a download in progress, and the ready state, then inserts
+the images into the walkthrough above. It needs no running server and does not
+download model weights or access saved chats.
+
+```bash
+uv run scripts/capture_model_screenshots.py --install-browser  # once
+uv run scripts/capture_model_screenshots.py
+```
+
+This uses an isolated script environment with Playwright. Run it on a machine
+that permits Chromium to start; restricted sandboxes may block browser startup.
+
 ### Git in the restricted workspace
 
 This workspace initially contains an empty, read-only `.git` directory, so the
@@ -358,6 +464,9 @@ the INT8 ONNX conversion distributed by the sherpa-onnx maintainers.
 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) is Apache-2.0. See the
 [Parakeet model card](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) and
 [conversion/runtime documentation](https://k2-fsa.github.io/sherpa/onnx/pretrained_models/offline-transducer/nemo-transducer-models.html).
+
+Whisper is by OpenAI. Its weights and the
+[faster-whisper runtime](https://github.com/SYSTRAN/faster-whisper) are MIT licensed.
 
 References: [WSL localhost networking](https://learn.microsoft.com/en-us/windows/wsl/networking),
 [Fermion speech API](https://www.fermionresearch.com/docs/speech/),

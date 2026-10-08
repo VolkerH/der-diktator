@@ -41,6 +41,8 @@
           aria-controls="model-settings"
         >
           <span>Speech models</span>
+          <span id="model-summary-name" class="model-summary-name"></span>
+          <span id="model-summary-pills" class="model-pills"></span>
           <span id="engine-status" class="engine-pill">Connecting…</span>
         </button>
       </aside>
@@ -125,10 +127,10 @@
       </header>
       <p class="settings-intro">Choose the speech model used for all chats on this server.</p>
       <div class="model-controls">
-        <label for="model-picker">Speech model</label>
-        <select id="model-picker" aria-describedby="model-help" disabled>
-          <option>Connecting…</option>
-        </select>
+        <fieldset id="model-picker" aria-describedby="model-help" disabled>
+          <legend>Speech model</legend>
+          <div id="model-options" class="model-options"></div>
+        </fieldset>
         <button id="model-action" class="chip accent" type="button" disabled>Download model</button>
       </div>
       <p id="model-help" role="status" aria-live="polite">Loading model information…</p>

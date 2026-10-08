@@ -1,4 +1,4 @@
-"""CPU adapters: isolated Fermion server and lazily imported sherpa-onnx."""
+"""CPU adapters with lazily imported native inference dependencies."""
 
 import asyncio
 import importlib
@@ -7,7 +7,7 @@ import os
 import sys
 import wave
 from array import array
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Protocol, cast
@@ -208,7 +208,86 @@ class ParakeetBackend:
         self.pool.shutdown(wait=True)
 
 
+class WhisperRecognizer(Protocol):
+    def transcribe(
+        self,
+        audio: object,
+        *,
+        task: str,
+        multilingual: bool,
+        vad_filter: bool,
+        condition_on_previous_text: bool,
+    ) -> tuple[Iterable[RecognitionResult], object]: ...
+
+
+class WhisperBackend:
+    """Local faster-whisper model, decoded in INT8 on one CPU worker.
+
+    Iterating segments performs inference, so both creation and consumption of
+    the lazy iterator stay on the worker owned by the model manager.
+    """
+
+    stream_endpoint = None
+
+    def __init__(self, threads: int = 4) -> None:
+        self.threads = threads
+        self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="whisper")
+        self.recognizer: WhisperRecognizer | None = None
+
+    def _load(self, directory: Path) -> None:
+        whisper = importlib.import_module("faster_whisper")
+        self.recognizer = cast(
+            WhisperRecognizer,
+            whisper.WhisperModel(
+                str(directory),
+                device="cpu",
+                compute_type="int8",
+                cpu_threads=self.threads,
+                num_workers=1,
+                local_files_only=True,
+            ),
+        )
+
+    async def load(self, directory: Path) -> None:
+        await asyncio.get_running_loop().run_in_executor(self.pool, self._load, directory)
+
+    def alive(self) -> bool:
+        return self.recognizer is not None
+
+    def _transcribe(self, audio: bytes) -> str:
+        if self.recognizer is None:
+            raise RuntimeError("Whisper is not loaded.")
+        samples = pcm_samples(audio)
+        if not any(samples):
+            return ""
+        np = importlib.import_module("numpy")
+        waveform = np.asarray(samples, dtype=np.float32) / 32768.0
+        segments, _info = self.recognizer.transcribe(
+            waveform,
+            task="transcribe",
+            multilingual=True,
+            vad_filter=True,
+            condition_on_previous_text=False,
+        )
+        return " ".join(text for segment in segments if (text := segment.text.strip()))
+
+    async def transcribe(self, audio: bytes) -> str:
+        return await asyncio.get_running_loop().run_in_executor(self.pool, self._transcribe, audio)
+
+    async def close(self) -> None:
+        def release() -> None:
+            self.recognizer = None
+
+        await asyncio.get_running_loop().run_in_executor(self.pool, release)
+        self.pool.shutdown(wait=True)
+
+
 def create_backend(model_id: ModelId) -> Backend:
     if model_id == "phonon-2":
         return PhononBackend(port=int(os.environ.get("DIKTATOR_PHONON_PORT", "8011")))
-    return ParakeetBackend(threads=max(1, int(os.environ.get("DIKTATOR_CPU_THREADS", "4"))))
+    threads = max(1, int(os.environ.get("DIKTATOR_CPU_THREADS", "4")))
+    if model_id == "parakeet-v3":
+        return ParakeetBackend(threads=threads)
+    if model_id == "whisper-large-v3-turbo":
+        return WhisperBackend(threads=threads)
+    raise ValueError("Unknown speech model.")
