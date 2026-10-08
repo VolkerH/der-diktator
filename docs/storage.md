@@ -26,11 +26,10 @@ This foundation preserves the existing last-writer-wins text replacement and
 server-generated POST IDs. Conditional writes and retry-safe client IDs are a
 separate rollout; clients should not assume those guarantees are available yet.
 
-
 Audio references store paths relative to the data root, in the authorized chat's
 folder with a hexadecimal filename and `.wav` suffix. Playback uses the stored
 path and rejects absolute paths, traversal and symlinks. The storage layout is
 independent of the actor. Missing audio does not remove metadata.
 
 For directory ownership, migration, backup and retention operations, see the
-[README](../README.md#storage-and-migration).
+[README](../README.md#storage-and-configuration).
