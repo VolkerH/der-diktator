@@ -1,6 +1,7 @@
 """File-backed SQLite, ownership, import and file boundary acceptance tests."""
 
 import json
+import os
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta, timezone
@@ -576,6 +577,8 @@ def test_released_baseline_fixture_opens_without_upgrade(tmp_path: Path) -> None
 
 @pytest.mark.parametrize("suffix", ["?one", "?two", "#hash", "%20 space ü"])
 def test_database_path_preserves_special_characters(tmp_path: Path, suffix: str) -> None:
+    if os.name == "nt" and "?" in suffix:
+        pytest.skip("Windows filenames cannot contain question marks")
     root = tmp_path / f"chats{suffix}"
     root.mkdir()
     path = root / DATABASE_NAME
@@ -592,6 +595,7 @@ def test_database_path_preserves_special_characters(tmp_path: Path, suffix: str)
     assert not (tmp_path / "chats").exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows filenames cannot contain question marks")
 def test_independently_locked_special_character_directories_are_isolated(tmp_path: Path) -> None:
     roots = [tmp_path / "chats?one", tmp_path / "chats?two"]
     locks = [DataDirectoryLock(root) for root in roots]
