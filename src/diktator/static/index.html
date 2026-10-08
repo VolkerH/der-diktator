@@ -249,12 +249,13 @@
               <span id="save-state" class="save-state"></span>
             </span>
             <div class="sheet-actions">
-              <button id="copy-preamble" class="chip" type="button" disabled>
+              <button id="share" class="chip" type="button" disabled>
                 <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <rect x="5" y="3" width="14" height="18" rx="2" />
-                  <path d="M9 8h6M9 12h6M9 16h3" />
+                  <path
+                    d="M12 14V3M8 7l4-4 4 4M7 10H6a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1h-1"
+                  />
                 </svg>
-                Copy with preamble
+                Share…
               </button>
               <button id="copy" class="chip accent" type="button" disabled>
                 <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -278,8 +279,8 @@
     >
       <header class="settings-heading"><h2 id="preferences-title">Preamble preferences</h2></header>
       <p id="preferences-scope" class="settings-intro">
-        Added above your transcript when you use Copy with preamble. Saved on this server for all
-        your devices.
+        Added above your transcript when you include the preamble in Share…. Saved on this server
+        for all your devices.
       </p>
       <div class="field">
         <label for="copy-preamble-input">Copy preamble</label>
@@ -318,16 +319,30 @@
       aria-describedby="prepared-status"
     >
       <header class="settings-heading">
-        <h2 id="prepared-title">Copy with preamble</h2>
+        <h2 id="prepared-title">Prepare your draft</h2>
         <button id="prepared-close" class="chip" type="button">Close</button>
       </header>
+      <p id="share-help" class="settings-intro">
+        Pick an app in your device's share window. Der Diktator can't confirm delivery, and closing
+        this dialog doesn't cancel a share already started.
+      </p>
       <div class="field">
-        <label for="prepared-text">Prepared text</label>
+        <div class="field-heading">
+          <label for="prepared-text">Prepared text</label>
+          <label id="share-options" class="inline-check" for="share-preamble">
+            <input id="share-preamble" type="checkbox" />
+            Include saved preamble
+          </label>
+        </div>
         <textarea id="prepared-text" class="export-text" rows="10" readonly></textarea>
       </div>
       <div class="dialog-actions">
         <p id="prepared-status" class="dialog-status" role="status" aria-live="polite"></p>
-        <button id="prepared-copy" class="chip accent" type="button">Copy prepared text</button>
+        <button id="prepared-download" class="chip" type="button" disabled>Download</button>
+        <button id="prepared-copy" class="chip accent" type="button">Copy</button>
+        <button id="prepared-share" class="chip accent" type="button" hidden disabled>
+          Share to app
+        </button>
       </div>
     </dialog>
     <dialog id="model-settings" class="model-settings" aria-labelledby="model-settings-title">

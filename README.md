@@ -547,6 +547,9 @@ References: [WSL localhost networking](https://learn.microsoft.com/en-us/windows
 [Fermion speech API](https://www.fermionresearch.com/docs/speech/),
 [Fermion streaming protocol](https://www.fermionresearch.com/docs/speech-streaming/).
 
-Copy with preamble prepares your current edited draft through the backend. Preamble preferences
-are saved for the shared local user profile in SQLite. See the [preferences and export API](docs/preferences-export-api.md)
-for conditional saves, limits and client responsibilities.
+Share… opens a preview of your current edited draft with Copy, Download and, when supported,
+Share to app. Include saved preamble is remembered on the server for your local user profile
+across devices. The main Copy button still copies your draft directly. Preamble preferences
+let you edit the introduction. See the [preferences and export API](docs/preferences-export-api.md)
+for conditional saves and limits, and the [native-sharing contract](docs/native-sharing.md)
+for handoff outcomes and client responsibilities.

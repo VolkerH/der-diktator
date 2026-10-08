@@ -1617,6 +1617,33 @@ textarea:read-only {
   font-size: 14px;
   line-height: 1.45;
 }
+.field-heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px 16px;
+}
+.field-heading > label:first-child {
+  font-size: 14px;
+  font-weight: 600;
+}
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  color: var(--chip-ink);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.inline-check input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--violet);
+}
 .field-actions {
   display: flex;
   flex-wrap: wrap;
