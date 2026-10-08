@@ -231,15 +231,21 @@ function chatServer() {
       const existing = chat.recordings.find((clip) => clip.id === recordingId);
       if (existing) {
         return Response.json(existing, {
-          headers: { "Chat-ETag": `"chat-${chat.id}-${chat.revision}"` },
+          headers: {
+            "Chat-ETag": `"chat-${chat.id}-${chat.revision}"`,
+            "Chat-Revision": String(chat.revision),
+          },
         });
       }
       const recording = { id: recordingId, created: chat.updated, duration_seconds: 2 };
       chat.revision++;
       chat.recordings.push(recording);
       return Response.json(recording, {
-        status: 200,
-        headers: { "Chat-ETag": `"chat-${chat.id}-${chat.revision}"` },
+        status: 201,
+        headers: {
+          "Chat-ETag": `"chat-${chat.id}-${chat.revision}"`,
+          "Chat-Revision": String(chat.revision),
+        },
       });
     }
     if (rest.endsWith("/transcribe")) {
@@ -1155,6 +1161,43 @@ test("successful upload requires no chat GET and cannot freshen a stale text val
   assert.equal(stored.text, "Remote edit");
   assert.equal(app.element("transcript").value, "Original Stored recording.");
   assert.equal(app.element("text-conflict").hidden, false);
+});
+
+/** A recording another tab stored, unseen by this one. */
+function addRemoteRecording(stored) {
+  stored.recordings.push({ id: "f".repeat(32), created: stored.updated, duration_seconds: 3 });
+  stored.revision++;
+}
+
+test("an upload after a change elsewhere keeps the old chat validator for deletion", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  const stored = app.server.chats.get(id(1));
+  addRemoteRecording(stored);
+  // A failed text save keeps the upload as this tab's only acknowledgement.
+  const fetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url).endsWith("/text")) throw new TypeError("Saving the text failed");
+    return fetch(url, options);
+  });
+  app.element("live-mode").checked = false;
+  await app.element("record").emit("click");
+  await app.element("stop").emit("click");
+  await waitForIdle(app);
+  assert.equal(stored.recordings.length, 2);
+  assert.equal(app.element("clips").children.length, 1);
+  await deleteRow(app, 0);
+  assert.equal(app.server.chats.size, 1, "the unseen recording is not deleted");
+  assert.match(app.element("error").textContent, /changed elsewhere/);
+});
+
+test("a text save shows recordings added elsewhere before taking up their validator", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const app = await appEnvironment(t, (server) => server.add("Original"));
+  addRemoteRecording(app.server.chats.get(id(1)));
+  await editAndSave(t, app, "Edited here");
+  assert.equal(app.element("clips").children.length, 1);
+  await deleteRow(app, 0);
+  assert.equal(app.server.chats.size, 0);
 });
 
 test("a late refresh cannot replace the sidebar while navigation GET is pending", async (t) => {

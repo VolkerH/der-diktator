@@ -935,6 +935,12 @@
                 "schema": {
                   "type": "string"
                 }
+              },
+              "Chat-Revision": {
+                "description": "The parent Chat `revision` that `Chat-ETag` validates. A client adopts `Chat-ETag` only when this upload is the sole change since the version it last acknowledged.",
+                "schema": {
+                  "type": "integer"
+                }
               }
             }
           },
@@ -1034,6 +1040,12 @@
                 "schema": {
                   "type": "string"
                 }
+              },
+              "Chat-Revision": {
+                "description": "The parent Chat `revision` that `Chat-ETag` validates. A client adopts `Chat-ETag` only when this upload is the sole change since the version it last acknowledged.",
+                "schema": {
+                  "type": "integer"
+                }
               }
             }
           },
@@ -1103,6 +1115,12 @@
                 "description": "Opaque whole-chat validator captured atomically with the upload. This header validates the parent Chat, not the Recording response body.",
                 "schema": {
                   "type": "string"
+                }
+              },
+              "Chat-Revision": {
+                "description": "The parent Chat `revision` that `Chat-ETag` validates. A client adopts `Chat-ETag` only when this upload is the sole change since the version it last acknowledged.",
+                "schema": {
+                  "type": "integer"
                 }
               }
             },

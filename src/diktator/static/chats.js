@@ -3,7 +3,7 @@ import { ApiRequestError } from "./errors.js";
 /** @typedef {{ id: string, created: string, duration_seconds: number }} Recording */
 /** @typedef {{ id: string, created: string, updated: string, text: string, recordings: Recording[], revision: number, text_revision: number, etag: string | null, textEtag: string | null }} Chat */
 /** @typedef {{ id: string, title: string, updated: string, recording_count: number, etag: string }} ChatSummary */
-/** @typedef {{ recording: Recording, chatEtag: string | null }} RecordingUpload */
+/** @typedef {{ recording: Recording, chatEtag: string | null, chatRevision: number | null }} RecordingUpload */
 
 /** @param {string} path @param {RequestInit} [options] */
 async function request(path, options = {}) {
@@ -57,7 +57,12 @@ export const chatApi = {
       headers: { "Content-Type": "audio/wav" },
       body: audio,
     });
-    return { recording: body, chatEtag: headers.get("Chat-ETag") };
+    const revision = headers.get("Chat-Revision");
+    return {
+      recording: body,
+      chatEtag: headers.get("Chat-ETag"),
+      chatRevision: revision === null ? null : Number(revision),
+    };
   },
   /** @param {string} id @param {string} recordingId */
   recordingUrl: (id, recordingId) => `/api/chats/${id}/recordings/${recordingId}`,

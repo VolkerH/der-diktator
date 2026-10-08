@@ -78,6 +78,7 @@ class RecordingUpload:
 
     recording: Recording
     chat_etag: str
+    chat_revision: int
     created: bool
 
 
@@ -316,7 +317,8 @@ class ChatService:
         digest = hashlib.sha256(audio).hexdigest()
         with self._mutation_lock:
             with session_scope(self.engine) as session:
-                parent_etag = chat_etag(self._chat(session, actor_id, chat_id))
+                parent = self._chat(session, actor_id, chat_id)
+                parent_etag, parent_revision = chat_etag(parent), parent.revision
                 existing = session.get(RecordingRow, recording_id)
                 if existing is not None:
                     if existing.chat_id != chat_id:
@@ -338,7 +340,12 @@ class ChatService:
                         row.audio_sha256 = stored_hash
                 if stored_hash != digest:
                     raise idempotency_conflict()
-                return RecordingUpload(recording=recording, chat_etag=parent_etag, created=False)
+                return RecordingUpload(
+                    recording=recording,
+                    chat_etag=parent_etag,
+                    chat_revision=parent_revision,
+                    created=False,
+                )
             recording = Recording(
                 id=recording_id, created=_now(), duration_seconds=duration_seconds
             )
@@ -354,7 +361,7 @@ class ChatService:
                     # inside this write transaction and preserve any later stored value.
                     chat.updated = max(chat.updated, _now())
                     chat.revision += 1
-                    parent_etag = chat_etag(chat)
+                    parent_etag, parent_revision = chat_etag(chat), chat.revision
                     session.add(
                         RecordingRow(
                             id=recording.id,
@@ -372,7 +379,12 @@ class ChatService:
                 except OSError:
                     log.exception("Uncommitted recording cleanup failed: %s", path)
                 raise
-            return RecordingUpload(recording=recording, chat_etag=parent_etag, created=True)
+            return RecordingUpload(
+                recording=recording,
+                chat_etag=parent_etag,
+                chat_revision=parent_revision,
+                created=True,
+            )
 
     def recording_audio(self, actor_id: str, chat_id: str, recording_id: str) -> bytes:
         if not IDENTIFIER.fullmatch(recording_id):

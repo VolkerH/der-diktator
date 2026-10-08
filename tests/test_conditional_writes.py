@@ -483,6 +483,7 @@ async def test_upload_parent_validator_is_an_atomic_snapshot(tmp_path: Path, met
             assert response.status_code == 201
             assert response.json()["id"] == captured[0].recording.id
             assert response.headers["chat-etag"] == captured[0].chat_etag
+            assert response.headers["chat-revision"] == str(created.json()["revision"] + 1)
             assert response.headers["chat-etag"] != created.headers["etag"]
             assert "etag" not in response.headers  # Recording is not a Chat representation.
             assert "text-etag" not in response.headers  # Uploads never acknowledge client text.
@@ -494,6 +495,7 @@ async def test_upload_parent_validator_is_an_atomic_snapshot(tmp_path: Path, met
                 assert retry.json() == response.json()
                 assert retry.headers["chat-etag"] == current.headers["etag"]
                 assert retry.headers["chat-etag"] == captured[1].chat_etag
+                assert retry.headers["chat-revision"] == str(current.json()["revision"])
         stale = await client.put(
             f"/api/chats/{CHAT_ID}/text",
             json={"text": "Old draft"},

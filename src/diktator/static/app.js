@@ -360,6 +360,13 @@ function setSaveState(text) {
   saveState.textContent = text;
 }
 
+/** Add acknowledged recordings that this tab does not show yet, keeping its order.
+ * @param {Chat} target @param {Recording[]} recordings */
+function addRecordings(target, recordings) {
+  const known = new Set(target.recordings.map((clip) => clip.id));
+  target.recordings.push(...recordings.filter((clip) => !known.has(clip.id)));
+}
+
 /** A new chat is created on the server the first time it needs to store something. */
 async function ensureChat() {
   if (chat) return chat;
@@ -427,10 +434,16 @@ async function writeText(generation) {
     // Acknowledge the submitted snapshot; edits made during the request remain dirty.
     target.text = saved.text;
     target.updated = saved.updated;
-    target.etag = saved.etag;
     target.textEtag = saved.textEtag;
-    target.revision = saved.revision;
     target.text_revision = saved.text_revision;
+    // The response is a complete Chat: show recordings added elsewhere before taking up
+    // the whole-chat validator that covers them.
+    addRecordings(target, saved.recordings);
+    if (saved.revision >= target.revision) {
+      target.etag = saved.etag;
+      target.revision = saved.revision;
+    }
+    renderClips();
     textDirty = transcript.value !== text;
     setSaveState(textDirty ? "Editing…" : "Saved");
     await refreshChats();
@@ -623,16 +636,20 @@ async function storeRecording(audio) {
       recordingId = newId();
       recordingIds.set(audio, recordingId);
     }
-    const { recording: stored, chatEtag } = await chatApi.addRecording(
-      target.id,
-      audio,
-      recordingId,
-    );
+    const {
+      recording: stored,
+      chatEtag,
+      chatRevision,
+    } = await chatApi.addRecording(target.id, audio, recordingId);
     if (generation !== navigationGeneration) return { chatId: target.id, recording: stored };
-    // This acknowledges the upload's parent version, never unseen remote text.
-    // Keep the original textEtag so a stale local draft still conflicts on save.
-    target.etag = chatEtag;
-    target.recordings.push(stored);
+    // Chat-ETag also covers anything changed elsewhere since this tab's version. Take it
+    // up only when this upload is the sole change, so deletion still detects unseen
+    // changes. The text validator is kept, so a stale draft still conflicts on save.
+    if (chatEtag && chatRevision === target.revision + 1) {
+      target.etag = chatEtag;
+      target.revision = chatRevision;
+    }
+    addRecordings(target, [stored]);
     if (unsaved === audio) discardUnsaved();
     renderClips();
     void refreshChats();

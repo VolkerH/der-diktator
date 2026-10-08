@@ -79,10 +79,10 @@ test("recording upload reads the explicit parent validator without treating the 
   const recording = { id: "b".repeat(32), created: "2026-10-08T10:00:00Z", duration_seconds: 1 };
   t.mock.method(globalThis, "fetch", async () =>
     Response.json(recording, {
-      headers: { "Chat-ETag": '"opaque-parent"', ETag: '"recording-only"' },
+      headers: { "Chat-ETag": '"opaque-parent"', "Chat-Revision": "3", ETag: '"recording-only"' },
     }),
   );
   const uploaded = await chatApi.addRecording("a".repeat(32), new Blob(), recording.id);
-  assert.deepEqual(uploaded, { recording, chatEtag: '"opaque-parent"' });
+  assert.deepEqual(uploaded, { recording, chatEtag: '"opaque-parent"', chatRevision: 3 });
   assert.equal(uploaded.recording.etag, undefined);
 });

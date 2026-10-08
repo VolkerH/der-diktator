@@ -300,6 +300,12 @@ def create_app(
             "This header validates the parent Chat, not the Recording response body.",
             "schema": {"type": "string"},
         },
+        "Chat-Revision": {
+            "description": "The parent Chat `revision` that `Chat-ETag` validates. A client "
+            "adopts `Chat-ETag` only when this upload is the sole change since the version it "
+            "last acknowledged.",
+            "schema": {"type": "integer"},
+        },
     }
 
     @app.post(
@@ -320,6 +326,7 @@ def create_app(
             store().upload_recording, actor_id, chat_id, audio, info.duration_seconds
         )
         response.headers["Chat-ETag"] = result.chat_etag
+        response.headers["Chat-Revision"] = str(result.chat_revision)
         return result.recording
 
     @app.put(
@@ -349,6 +356,7 @@ def create_app(
         )
         response.status_code = 201 if result.created else 200
         response.headers["Chat-ETag"] = result.chat_etag
+        response.headers["Chat-Revision"] = str(result.chat_revision)
         return result.recording
 
     @app.get("/api/chats/{chat_id}/recordings/{recording_id}", responses=error_responses(404, 422))

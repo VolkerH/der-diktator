@@ -37,7 +37,9 @@ drops queued saves and retains the editor draft. “Load latest” requires disc
 “Copy my version” preserves the draft. Navigation after any failed save requires explicit discard
 confirmation. Deleting another sidebar chat does not navigate: it must not prompt for, save or
 discard the current draft or retained audio. Deleting the current chat suspends new autosaves,
-waits for submitted saves to finish, and uses the acknowledged whole-chat validator. Failed
+waits for submitted saves to finish, and uses the acknowledged whole-chat validator. A client
+acknowledges a whole-chat validator only together with everything it covers: a complete `Chat`
+response (whose recordings it shows), or an upload that was the only change (see below). Failed
 deletion preserves the draft and retained audio; successful deletion discards them. Closing-page
 saves carry `If-Match` and are skipped for conflicted drafts and during current-chat deletion.
 Drafts and retained recording buffers are tab-local; closing the tab does not persist unsaved material.
@@ -61,9 +63,13 @@ a new recording ID and returns 201.
 Both recording upload routes return an explicit `Chat-ETag` header: the whole-chat validator
 captured atomically with the upload transaction, or with the matching retry lookup. They do
 not send that value in the standard `ETag` header, because the returned body is a Recording.
-An upload acknowledges audio storage and the resulting parent version, not text the client
-has never read. Clients retain their existing text validator and draft; a later text save must
-still conflict if another client changed the text. No full-chat GET is needed after upload.
+`Chat-Revision` carries the parent `revision` that `Chat-ETag` validates. That version may
+include changes made elsewhere, so a client adopts `Chat-ETag` only when `Chat-Revision` is
+exactly one more than the revision it last acknowledged, i.e. its own upload was the only
+change. Otherwise it keeps its previous chat validator, and a later conditional delete returns
+412 instead of removing changes the client never saw. Clients retain their existing text
+validator and draft; a later text save must still conflict if another client changed the text.
+No full-chat GET is needed after upload.
 
 Legacy recording IDs are discoverable in `GET /api/chats/{id}` and can be reused in PUT retries;
 recovery of nullable hashes does not depend on accidental random-ID collisions.
