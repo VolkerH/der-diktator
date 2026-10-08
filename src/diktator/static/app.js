@@ -573,6 +573,10 @@ async function deleteChat(id) {
     await refreshChats();
   } catch (error) {
     showError(error);
+    // A sidebar entry changed elsewhere: list its current version so a retry can succeed.
+    if (!isCurrent && error instanceof ApiRequestError && error.code === "revision_conflict") {
+      await refreshChats();
+    }
   } finally {
     deletingChatId = null;
     busy = false;

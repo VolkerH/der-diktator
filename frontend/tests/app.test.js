@@ -1049,7 +1049,7 @@ for (const failure of ["network", "conflict"]) {
   });
 }
 
-test("sidebar deletion rejects an entry changed since its list was read", async (t) => {
+test("sidebar deletion rejects an entry changed since its list was read, then retries its current version", async (t) => {
   const app = await appEnvironment(t, (server) => {
     server.add("First");
     server.add("Second");
@@ -1059,6 +1059,8 @@ test("sidebar deletion rejects an entry changed since its list was read", async 
   assert.equal(app.server.chats.size, 2);
   assert.match(app.element("error").textContent, /changed elsewhere/);
   assert.equal(app.element("transcript").value, "First");
+  await deleteRow(app, 1);
+  assert.equal(app.server.chats.size, 1, "the refreshed entry can be deleted on retry");
 });
 
 for (const changed of [false, true]) {
