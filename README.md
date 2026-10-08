@@ -261,7 +261,10 @@ default. Network filesystems are outside the supported placement contract.
 When the default location is unused, startup moves chats from earlier versions
 in `~/.diktator/chats` or `~/.phonon/chats`. The move runs under the ownership
 lock and resumes after interruption using `.legacy-migration.json`. It preserves
-the lock file and never merges another populated data directory.
+the lock file and never merges another populated data directory. The marker
+identifies the selected source after a partial move has populated the target.
+Copying to a staging path and durably finalizing it before removing the source
+also protects moves across filesystems.
 
 Startup imports each legacy `chat.json` once, preserving IDs, text, timestamps
 and recording metadata. It keeps the JSON as recovery material. SQLite becomes
@@ -285,6 +288,9 @@ A database from a newer application version causes startup to refuse. These snap
 contain database data; a complete backup includes audio too. Stop the web app
 and copy the entire data directory when making a complete backup. Legacy JSON
 is recovery material from import time, and does not track subsequent edits.
+
+The current HTTP persistence behavior is documented in
+[Storage API behavior](docs/storage.md).
 
 ## Speech models
 

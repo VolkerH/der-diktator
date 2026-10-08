@@ -148,13 +148,7 @@ wire format, offsets, anchors and merge policy remain gated by
 [ADR 0005](adr/0005-collaborative-editing-protocol.md). These are shared contracts to settle before
 implementation, not choices for individual clients.
 
-## Current chat persistence contract
-
-The SQLite foundation retains the existing HTTP routes and `Chat`, `ChatSummary`
-and `Recording` JSON shapes. The backend supplies the seeded local actor through
-an internal dependency; requests cannot choose an actor. Every chat-scoped read
-or mutation checks membership. Creator metadata does not grant access, and
-missing and inaccessible chats share `chat_not_found` responses.
+## Chat recency
 
 Creation sets `created` and `updated` to the same UTC timestamp. Every successful
 text replacement and recording upload advances `updated`; reading and listing
@@ -162,14 +156,3 @@ chats do not. Lists sort by `updated` descending, with chat ID as the tie breake
 Recordings sort by creation time and ID. Legacy import preserves the original
 creation and update instants and the import-time transcript independently of a
 chat's later deletion.
-
-Recording metadata is committed after the WAV is durably finalized. A failed
-commit rolls back the row and attempts to remove the new file. Chat deletion
-commits before folder cleanup; cleanup failures are logged and abandoned audio
-is reconciled on startup. A recording row with unavailable audio returns
-`recording_not_found`, and restoring its original WAV requires no API change.
-Database sessions and blocking file work execute outside the event loop.
-
-This foundation preserves the existing last-writer-wins text replacement and
-server-generated POST IDs. Conditional writes and retry-safe client IDs are a
-separate rollout; clients should not assume those guarantees are available yet.

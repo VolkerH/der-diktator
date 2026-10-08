@@ -2,15 +2,14 @@
 
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from dataclasses import replace
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 import httpx
 import pytest
 
 from diktator.app import create_app
-from diktator.config import Settings, default_data_directory
+from diktator.config import Settings
+from tests.helpers import isolated_settings
 from tests.test_audio import make_wav
 
 pytestmark = pytest.mark.anyio
@@ -27,10 +26,7 @@ async def client_for(
     handler: Callable[[httpx.Request], httpx.Response],
     settings: Settings | None = None,
 ) -> AsyncIterator[httpx.AsyncClient]:
-    with TemporaryDirectory(prefix="diktator-test-") as directory:
-        settings = settings or Settings()
-        if settings.data_directory == default_data_directory():
-            settings = replace(settings, data_directory=Path(directory))
+    with isolated_settings(settings) as settings:
         app = create_app(settings, transport=httpx.MockTransport(handler))
         async with (
             app.router.lifespan_context(app),

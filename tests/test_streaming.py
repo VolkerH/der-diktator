@@ -4,17 +4,17 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 import pytest
 from fastapi import FastAPI
 from starlette.types import Message, Scope
 
 from diktator.app import create_app
-from diktator.config import Settings, default_data_directory
+from diktator.config import Settings
 from diktator.streaming import EngineStream, StreamConnector, stream_url
+from tests.helpers import isolated_settings
 
 pytestmark = pytest.mark.anyio
 
@@ -89,10 +89,7 @@ async def browser_for(
         finally:
             engine.closed = True
 
-    with TemporaryDirectory(prefix="diktator-test-") as directory:
-        settings = settings or Settings()
-        if settings.data_directory == default_data_directory():
-            settings = replace(settings, data_directory=Path(directory))
+    with isolated_settings(settings) as settings:
         app = create_app(settings, stream_connector=connector or connect)
         incoming: asyncio.Queue[Message] = asyncio.Queue()
         outgoing: asyncio.Queue[Message] = asyncio.Queue()
