@@ -39,6 +39,16 @@ class RecordingPolicy(BaseModel):
         ):
             if not math.isfinite(value) or value <= 0:
                 raise ValueError("Timeout budgets must be positive finite seconds.")
+        # Browser timer APIs use a signed 32-bit millisecond delay. A finite
+        # operator budget can still overflow that clock and fire immediately.
+        client_deadlines = (
+            2 * self.upload_timeout_seconds
+            + self.batch_timeout_seconds
+            + 3 * self.client_timeout_margin_seconds,
+            self.live_finalization_timeout_seconds + 2 * self.client_timeout_margin_seconds,
+        )
+        if max(client_deadlines) > 2_147_483.647:
+            raise ValueError("Combined browser deadlines exceed the supported timer range.")
         return self
 
     @computed_field

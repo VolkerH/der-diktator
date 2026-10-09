@@ -53,7 +53,12 @@ class ModelManager:
 
     @property
     def busy(self) -> bool:
-        return self.streaming or (self.inference is not None and not self.inference.done())
+        return (
+            self.streaming
+            or self.shutdown is not None
+            or (self.stream_cleanup is not None and not self.stream_cleanup.done())
+            or (self.inference is not None and not self.inference.done())
+        )
 
     @property
     def working(self) -> bool:

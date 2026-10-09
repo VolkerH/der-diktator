@@ -88,6 +88,7 @@ class EngineClient:
             # Only transcription accepts audio; these codes cannot describe a model request.
             if audio is None and failure.code in {
                 "invalid_audio",
+                "upload_timeout",
                 "audio_too_large",
                 "unsupported_audio",
             }:

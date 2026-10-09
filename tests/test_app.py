@@ -326,3 +326,16 @@ async def test_routing_and_asset_errors_use_the_envelope_and_preserve_headers() 
         assert response.status_code == 405
         assert response.json()["code"] == "method_not_allowed"
         assert "GET" in response.headers["allow"]
+
+
+async def test_upload_deadline_code_cannot_describe_model_operations() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            408, json={"detail": "private upstream details", "code": "upload_timeout"}
+        )
+
+    async with client_for(handler) as client:
+        for method, path in [("GET", "/api/models"), ("POST", "/api/models/phonon-2/download")]:
+            response = await client.request(method, path)
+            assert response.status_code == 502
+            assert response.json()["code"] == "engine_error"

@@ -1,5 +1,5 @@
 import { request } from "./request.js";
-import { recordingPolicy, recordingTimeoutMs } from "./recording-policy.js";
+import { recordingPolicy, recordingTimeoutMs, uploadTimeoutMs } from "./recording-policy.js";
 
 /** @typedef {{ id: string, created: string, duration_seconds: number }} Recording */
 /** A title observation carries its parent ordering revision without acknowledging the whole Chat.
@@ -73,11 +73,16 @@ export const chatApi = {
     }),
   /** @param {string} id @param {Blob} audio @param {string} recordingId @returns {Promise<RecordingUpload>} */
   addRecording: async (id, audio, recordingId) => {
-    const { body, headers } = await request(`/api/chats/${id}/recordings/${recordingId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "audio/wav" },
-      body: audio,
-    });
+    const deadline = await uploadTimeoutMs();
+    const { body, headers } = await request(
+      `/api/chats/${id}/recordings/${recordingId}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "audio/wav" },
+        body: audio,
+      },
+      deadline,
+    );
     const revision = headers.get("Chat-Revision");
     return {
       recording: body,

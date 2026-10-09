@@ -30,8 +30,19 @@ export function recordingTimeoutMs(policy, operation) {
       ? policy.upload_timeout_seconds
       : operation === "live"
         ? policy.live_finalization_timeout_seconds + policy.client_timeout_margin_seconds
-        : policy.upload_timeout_seconds +
+        : policy.upload_timeout_seconds * 2 +
           policy.batch_timeout_seconds +
           policy.client_timeout_margin_seconds * 2;
   return Math.ceil((seconds + policy.client_timeout_margin_seconds) * 1000);
+}
+
+/** Saving captured or attached audio remains available without an inference engine.
+ * @returns {Promise<number>} */
+export async function uploadTimeoutMs() {
+  const { body } = await request("/api/settings");
+  const seconds = body?.upload_timeout_seconds;
+  const margin = body?.client_timeout_margin_seconds;
+  if (!Number.isFinite(seconds) || seconds <= 0 || !Number.isFinite(margin) || margin <= 0)
+    throw new Error("The upload deadline is unavailable. Keep the recording and retry saving.");
+  return Math.ceil((seconds + margin) * 1000);
 }

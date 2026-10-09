@@ -126,6 +126,15 @@ class Settings:
     max_text_characters: int = 1_000_000
     data_directory: Path = field(default_factory=default_data_directory)
 
+    def __post_init__(self) -> None:
+        # Revalidate injected instances too, including model_construct() callers.
+        if not isinstance(self.recording_policy, RecordingPolicy):
+            raise TypeError("recording_policy must be a validated RecordingPolicy.")
+        validated = RecordingPolicy.model_validate(
+            {key: getattr(self.recording_policy, key) for key in RecordingPolicy.model_fields}
+        )
+        object.__setattr__(self, "recording_policy", validated)
+
     @property
     def max_duration_seconds(self) -> int:
         return self.recording_policy.hard_limit_seconds

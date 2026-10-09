@@ -311,6 +311,8 @@ function chatServer() {
         client_timeout_margin_seconds: 10,
         preference_etag: '"preferences-test"',
       });
+    if (url === "/api/settings")
+      return json({ upload_timeout_seconds: 180, client_timeout_margin_seconds: 10 });
     if (url === "/api/models") return json(server.models);
     if (url.startsWith("/api/models/")) {
       server.modelRequests.push(url);
@@ -3737,4 +3739,22 @@ test("settings shows application limits and opens models without discarding its 
   assert.equal(app.element("model-settings").open, true);
   assert.equal(app.element("preferences-dialog").open, true);
   assert.equal(app.element("copy-preamble-input").value, "Retained draft");
+});
+
+test("policy disagreement prevents both microphone access and live admission", async (t) => {
+  const app = await appEnvironment(t);
+  const fetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", async (url, options) =>
+    url === "/api/recording-policy"
+      ? Response.json(
+          { detail: "Recording policy differs between services.", code: "configuration_mismatch" },
+          { status: 503 },
+        )
+      : fetch(url, options),
+  );
+  await app.element("record").emit("click");
+  assert.equal(app.state.starts, 0);
+  assert.equal(app.sockets.length, 0);
+  assert.equal(app.element("record").disabled, false);
+  assert.match(app.element("error").textContent, /Recording policy differs/);
 });

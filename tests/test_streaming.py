@@ -539,3 +539,85 @@ async def test_engine_disconnect_before_configuration_releases_stream_without_er
             assert connection.outgoing.empty()
         assert not manager.streaming
         assert native.sent.empty()
+
+
+@pytest.mark.parametrize(
+    "termination",
+    [
+        "capture_disconnect",
+        "after_end_disconnect",
+        "timeout",
+        "native_error",
+        "normal_done",
+        "connect_error",
+    ],
+)
+async def test_engine_route_distinguishes_native_done_from_uncertain_teardown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    termination: str,
+) -> None:
+    from diktator.inference import server
+    from tests.test_live_ownership import assert_admission_is_closed, ready_manager
+
+    manager, backend = ready_manager(tmp_path)
+    native = FakeEngine()
+
+    @asynccontextmanager
+    async def native_connection(_url: str) -> AsyncIterator[EngineStream]:
+        if termination == "connect_error":
+            raise OSError("native socket lost")
+        yield native
+
+    monkeypatch.setattr(server, "connect_engine", native_connection)
+    app = server.create_engine(
+        manager, Settings(recording_policy=RecordingPolicy(live_finalization_timeout_seconds=0.01))
+    )
+
+    async def confirm_stop() -> None:
+        await backend.stop_started.wait()
+        assert backend.native_pending
+        await assert_admission_is_closed(manager)
+        backend.allow_stop.set()
+
+    verifier = asyncio.create_task(confirm_stop()) if termination != "normal_done" else None
+    try:
+        async with engine_connector(app)("ws://engine") as connection:
+            assert isinstance(connection, AsgiEngineStream)
+            if termination != "connect_error":
+                await connection.send('{"sample_rate":16000,"format":"pcm_s16le"}')
+                assert json.loads(await native.sent.get()) == {
+                    "sample_rate": 16000,
+                    "format": "pcm_s16le",
+                }
+                await connection.send(b"\0\0")
+                assert await native.sent.get() == b"\0\0"
+                if termination != "capture_disconnect":
+                    await connection.send('{"type":"end"}')
+                    assert json.loads(await native.sent.get()) == {"type": "end"}
+            if termination == "normal_done":
+                await native.incoming.put('{"type":"done","text":"complete"}')
+                assert json.loads(await connection.recv())["type"] == "done"
+            elif termination == "native_error":
+                await native.incoming.put('{"type":"error","message":"native failure"}')
+                assert json.loads(await connection.recv())["code"] == "engine_error"
+            elif termination in {"timeout", "connect_error"}:
+                assert json.loads(await connection.recv())["code"] == (
+                    "engine_timeout" if termination == "timeout" else "engine_unavailable"
+                )
+            else:
+                await connection.incoming.put({"type": "websocket.disconnect", "code": 1001})
+            if verifier is not None:
+                await asyncio.wait_for(verifier, timeout=2)
+        if termination == "normal_done":
+            assert manager.backend is backend and backend.close_calls == 0
+            assert not manager.busy
+        else:
+            assert backend.close_calls == 1 and not backend.native_pending
+            assert manager.backend is None and not manager.busy
+    finally:
+        if verifier is not None:
+            verifier.cancel()
+            await asyncio.gather(verifier, return_exceptions=True)
+        backend.allow_stop.set()
+        await manager.close()
