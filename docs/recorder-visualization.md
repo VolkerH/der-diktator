@@ -8,8 +8,11 @@ microphone illustration. No external image service or runtime dependency is used
 
 The final requested direction is **right to left**, matching the old level meter
 and superseding the direction in the issue comment. Microphone RMS levels modulate
-a vertical wave; point x coordinates and dot sizes stay fixed. This is an audio
-level visualization, not a plot of raw PCM. Silence leaves the cloud still.
+a vertical wave crossing the cloud in 0.8 seconds, overlaid with a gentle
+expansion and contraction driven by a smoothed speech envelope. Expansion is
+bounded at 7.5%; vertical wave displacement at 2.5% of the artwork span. Dot sizes
+stay fixed. This is an audio
+level visualization, not a plot of raw PCM. Silence lets the cloud settle back to rest.
 
 `recorder-theme.js` contains the default artwork, ink color, and dot size.
 `RecorderVisualization(canvas, theme)` accepts the same typed data for another
@@ -29,4 +32,5 @@ status announcements, and the elapsed-time display remain available without a
 canvas context. The decorative canvas remains hidden from assistive technology.
 
 Validation: run `npm run check`. The visualization tests check travel direction,
-silence, bounded history, reduced motion, hidden tabs, and resource cleanup.
+silence, expansion and contraction, bounded history, reduced motion, hidden tabs,
+and resource cleanup.

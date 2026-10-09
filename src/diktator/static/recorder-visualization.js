@@ -1,17 +1,24 @@
 import { stippleTheme } from "./recorder-theme.js";
 
-const TRAVEL_MS = 2400;
+const TRAVEL_MS = 800;
 
 /** A bounded microphone-level history. New speech enters on the right. */
 export class WaveHistory {
   constructor() {
     /** @type {{time: number, value: number}[]} */
     this.samples = [];
+    this.envelope = 0;
+    this.levelTime = 0;
   }
 
   /** @param {number} level @param {number} time */
   push(level, time) {
     const amplitude = Number.isFinite(level) ? Math.sqrt(Math.max(0, level - 0.002) * 8) : 0;
+    const target = Math.min(1, amplitude);
+    const elapsed = this.samples.length ? Math.max(0, time - this.levelTime) : 60;
+    const response = target > this.envelope ? 100 : 240;
+    this.envelope += (target - this.envelope) * (1 - Math.exp(-elapsed / response));
+    this.levelTime = time;
     this.samples.push({
       time,
       value: Math.min(1, amplitude) * Math.sin((time / 1000) * Math.PI * 6),
@@ -21,7 +28,7 @@ export class WaveHistory {
     }
   }
 
-  /** Vertical displacement only; the cloud's horizontal positions never change.
+  /** Travelling vertical component, combined with a global breath by the renderer.
    * @param {number} x normalized horizontal coordinate
    * @param {number} time monotonic milliseconds
    */
@@ -41,8 +48,16 @@ export class WaveHistory {
     return last.value * Math.max(0, 1 - (target - last.time) / 120);
   }
 
+  /** Smooth expansion with speech, relaxing back to rest in silence.
+   * @param {number} time */
+  breath(time) {
+    return this.envelope * Math.exp(-Math.max(0, time - this.levelTime - 80) / 240);
+  }
+
   clear() {
     this.samples = [];
+    this.envelope = 0;
+    this.levelTime = 0;
   }
 }
 
@@ -64,7 +79,7 @@ export class RecorderVisualization {
     this.refresh = () => {
       if (this.frame) cancelAnimationFrame(this.frame);
       this.frame = 0;
-      if (document.hidden) this.history.clear();
+      if (document.hidden || this.motion?.matches) this.history.clear();
       this.draw(performance.now());
       if (this.recording && !this.motion?.matches && !document.hidden) {
         this.frame = requestAnimationFrame((time) => this.animate?.(time));
@@ -118,9 +133,10 @@ export class RecorderVisualization {
     const ox = (width - span) / 2;
     const oy = (height - span) / 2;
     const moving = this.recording && !this.motion?.matches;
+    const expansion = moving ? this.history.breath(time) * 0.075 : 0;
     // Sample once per column instead of searching the history for every dot.
     const offsets = Array.from({ length: 129 }, (_, i) =>
-      moving ? this.history.at(i / 128, time) * span * 0.055 : 0,
+      moving ? this.history.at(i / 128, time) * span * 0.025 : 0,
     );
     ctx.fillStyle = this.theme.ink;
     for (const [x, y, ink] of this.theme.points) {
@@ -130,7 +146,13 @@ export class RecorderVisualization {
       const radius = Math.max(0.48, this.theme.dotSize * (span / 520) * (0.25 + ink * 0.55) * 0.5);
       ctx.globalAlpha = 0.18 + ink * 0.72;
       ctx.beginPath();
-      ctx.arc(ox + x * span, oy + y * span + dy, radius, 0, Math.PI * 2);
+      ctx.arc(
+        ox + (x + (x - 0.5) * expansion) * span,
+        oy + (y + (y - 0.5) * expansion) * span + dy,
+        radius,
+        0,
+        Math.PI * 2,
+      );
       ctx.fill();
     }
     ctx.globalAlpha = 1;

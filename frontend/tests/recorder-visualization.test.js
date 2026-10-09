@@ -13,10 +13,10 @@ test("a microphone disturbance travels right to left and leaves silence behind",
   const peak = history.at(1, 80);
   assert.ok(peak > 0.8);
   assert.equal(history.at(0.5, 80), 0);
-  assert.equal(history.at(0.5, 1280), peak);
-  assert.equal(history.at(0, 2480), peak);
-  assert.equal(history.at(1, 1280), 0);
-  assert.equal(history.at(0, 2700), 0);
+  assert.equal(history.at(0.5, 480), peak);
+  assert.equal(history.at(0, 880), peak);
+  assert.equal(history.at(1, 480), 0);
+  assert.equal(history.at(0, 1100), 0);
 });
 
 test("silence is still, history is bounded, and a new take can clear old speech", () => {
@@ -30,6 +30,21 @@ test("silence is still, history is bounded, and a new take can clear old speech"
   assert.ok(Math.abs(history.at(1, 600080)) <= 1);
   history.clear();
   assert.equal(history.at(1, 600080), 0);
+});
+
+test("speech expands the cloud smoothly and silence lets it contract", () => {
+  const history = new WaveHistory();
+  assert.equal(history.breath(0), 0);
+  history.push(0.1, 60);
+  const attack = history.breath(60);
+  history.push(0.1, 120);
+  const sustained = history.breath(120);
+  assert.ok(attack > 0 && attack < sustained && sustained < 1);
+  history.push(0, 180);
+  assert.ok(history.breath(180) > 0 && history.breath(180) < sustained);
+  assert.ok(history.breath(2000) < 0.001);
+  history.clear();
+  assert.equal(history.breath(2000), 0);
 });
 
 test("animation pauses for reduced motion and hidden tabs, and releases resources", (t) => {
