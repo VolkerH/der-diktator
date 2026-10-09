@@ -248,7 +248,8 @@ function chatServer() {
         live_finalization_timeout_seconds: 180,
         client_timeout_margin_seconds: 10,
       });
-    if (url === "/api/settings") return Response.json({ upload_timeout_seconds: 180, client_timeout_margin_seconds: 10 });
+    if (url === "/api/settings")
+      return Response.json({ upload_timeout_seconds: 180, client_timeout_margin_seconds: 10 });
     const method = options.method ?? "GET";
     const titleEtag = (chat) => `"title-${chat.id}-${chat.title_revision}"`;
     const json = (body, status = 200) =>

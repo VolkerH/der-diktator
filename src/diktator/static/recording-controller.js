@@ -21,6 +21,7 @@ export class RecordingController {
     if (
       !Number.isInteger(snapshot.recording_interval_seconds) ||
       snapshot.recording_interval_seconds < 60 ||
+      snapshot.recording_interval_seconds % 60 !== 0 ||
       snapshot.recording_interval_seconds > snapshot.hard_limit_seconds
     )
       throw new Error("The recording policy returned an invalid interval.");

@@ -1699,6 +1699,7 @@ recordButton.addEventListener("click", async () => {
         },
         {
           finishTimeoutMs: recordingTimeoutMs(policy, "live"),
+          maxFrameBytes: policy.max_stream_frame_bytes,
         },
       );
       activeStream = stream;
