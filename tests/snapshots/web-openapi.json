@@ -453,6 +453,25 @@
         }
       }
     },
+    "/api/settings": {
+      "get": {
+        "summary": "Get Settings",
+        "description": "Read non-secret limits enforced by the running application. Operator fields are read-only. The revision identifies this snapshot, not engine policy agreement.",
+        "operationId": "get_settings_api_settings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EffectiveSettings"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/preferences": {
       "get": {
         "summary": "Get Preferences",
@@ -2756,6 +2775,87 @@
         "type": "object",
         "required": ["text"],
         "title": "DraftExport"
+      },
+      "EffectiveLimit": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": ["recording_seconds", "audio_bytes", "text_characters"],
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "value": {
+            "type": "integer",
+            "title": "Value"
+          },
+          "unit": {
+            "type": "string",
+            "enum": ["seconds", "bytes", "characters"],
+            "title": "Unit"
+          },
+          "source": {
+            "type": "string",
+            "const": "application_configuration",
+            "title": "Source",
+            "default": "application_configuration"
+          },
+          "editable": {
+            "type": "boolean",
+            "const": false,
+            "title": "Editable",
+            "default": false
+          },
+          "restart_required": {
+            "type": "boolean",
+            "const": true,
+            "title": "Restart Required",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": ["id", "label", "value", "unit"],
+        "title": "EffectiveLimit",
+        "description": "A running limit; changes require operator configuration and a new process."
+      },
+      "EffectiveSettings": {
+        "properties": {
+          "profile_scope": {
+            "type": "string",
+            "const": "shared_local_profile",
+            "title": "Profile Scope",
+            "default": "shared_local_profile"
+          },
+          "operator_editable": {
+            "type": "boolean",
+            "const": false,
+            "title": "Operator Editable",
+            "default": false
+          },
+          "model_selection": {
+            "type": "string",
+            "const": "instance_model_api",
+            "title": "Model Selection",
+            "default": "instance_model_api"
+          },
+          "policy_revision": {
+            "type": "string",
+            "title": "Policy Revision"
+          },
+          "limits": {
+            "items": {
+              "$ref": "#/components/schemas/EffectiveLimit"
+            },
+            "type": "array",
+            "title": "Limits"
+          }
+        },
+        "type": "object",
+        "required": ["policy_revision", "limits"],
+        "title": "EffectiveSettings",
+        "description": "Safe for any current client; contains no filesystem paths or network addresses."
       },
       "ExportPreviewRequest": {
         "properties": {

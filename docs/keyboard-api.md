@@ -71,7 +71,7 @@ provide the native navigation, visible focus and return-focus conventions.
 [ChatGPT search](https://help.openai.com/en/articles/10056348-how-do-i-search-my-chat-history-in-chatgpt)
 uses Ctrl/Cmd+K. This app offers a consistent Ctrl+Shift+number family instead
 of taking that browser shortcut. Main actions are 1 new chat, 2 search, 3 editor,
-4 start/stop, 5 sidebar, 6 models, 7 preamble, 8 share, 9 copy, 0 help. Previous/next
+4 start/stop, 5 sidebar, 6 models, 7 Settings, 8 share, 9 copy, 0 help. Previous/next
 chat focus uses Ctrl+Shift+Up/Down. Optional actions default disabled, with
 native controls always available.
 

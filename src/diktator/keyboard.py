@@ -24,7 +24,7 @@ KEYBOARD_ACTIONS = [
         ("toggle_recording", "Start / stop recording", "Ctrl+Shift+4"),
         ("focus_sidebar", "Focus chats and groups", "Ctrl+Shift+5"),
         ("speech_models", "Speech models", "Ctrl+Shift+6"),
-        ("preamble_preferences", "Preamble preferences", "Ctrl+Shift+7"),
+        ("preamble_preferences", "Settings", "Ctrl+Shift+7"),
         ("share", "Share draft", "Ctrl+Shift+8"),
         ("copy", "Copy draft", "Ctrl+Shift+9"),
         ("keyboard_help", "Keyboard shortcuts", "Ctrl+Shift+0"),

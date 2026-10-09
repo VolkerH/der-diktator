@@ -22,6 +22,37 @@ export function exportControls(snapshot, announce) {
     document.getElementById("share-preamble")
   );
   const open = button("preferences-open");
+  const settingsShare = /** @type {HTMLInputElement} */ (
+    document.getElementById("settings-share-preamble")
+  );
+  const limits = /** @type {HTMLElement} */ (document.getElementById("settings-limits"));
+  for (const [link, target] of [
+    ["settings-keyboard", "keyboard-open"],
+    ["settings-models", "model-settings-open"],
+  ]) {
+    button(link).addEventListener("click", () => button(target)?.click());
+    const targetDialog = document.getElementById(
+      target === "keyboard-open" ? "keyboard-dialog" : "model-settings",
+    );
+    targetDialog?.addEventListener("close", () => {
+      if (preferencesDialog.open) button(link).focus();
+    });
+  }
+  async function loadLimits() {
+    limits.textContent = "Loading limits…";
+    try {
+      const { body } = await request("/api/settings");
+      limits.textContent =
+        body.limits
+          .map(
+            /** @param {{label: string, value: number, unit: string}} limit */ (limit) =>
+              `${limit.label}: ${limit.value.toLocaleString()} ${limit.unit}`,
+          )
+          .join(". ") + ".";
+    } catch {
+      limits.textContent = "Limits could not be loaded. Close and reopen Settings to retry.";
+    }
+  }
   const save = button("preferences-save");
   const reset = button("preferences-reset");
   const reload = button("preferences-reload");
@@ -34,6 +65,9 @@ export function exportControls(snapshot, announce) {
   );
   const input = area("copy-preamble-input");
   const preview = area("preferences-preview");
+  const example = /** @type {HTMLDetailsElement} */ (
+    document.getElementById("preferences-example")
+  );
   const output = area("prepared-text");
   const preferenceError = /** @type {HTMLElement} */ (document.getElementById("preferences-error"));
   const preferenceStatus = /** @type {HTMLElement} */ (
@@ -314,6 +348,7 @@ export function exportControls(snapshot, announce) {
         : "Using a custom preamble. This wording stays until you change it."
       : "";
     input.readOnly = preferencePending || !preferences;
+    settingsShare.disabled = preferencePending || !preferences;
     save.disabled = preferencePending || !preferences || !etag || preferenceConflict;
     reset.disabled = preferencePending || !preferences;
     previewButton.disabled = preferencePending || !preferences;
@@ -334,6 +369,8 @@ export function exportControls(snapshot, announce) {
       input.value = /** @type {Preferences} */ (preferences).copy_preamble;
       input.maxLength = /** @type {Preferences} */ (preferences).max_copy_preamble_characters;
       preview.value = "";
+      example.open = false;
+      settingsShare.checked = /** @type {Preferences} */ (preferences).share_include_preamble;
       preferenceConflict = false;
       input.focus();
     } catch (error) {
@@ -353,6 +390,7 @@ export function exportControls(snapshot, announce) {
     preview.value = "";
     preferencesDialog.showModal();
     void loadPreferences();
+    void loadLimits();
   });
   button("preferences-cancel").addEventListener("click", () => preferencesDialog.close());
   preferencesDialog.addEventListener("close", () => {
@@ -361,7 +399,7 @@ export function exportControls(snapshot, announce) {
     open.focus();
   });
   reload.addEventListener("click", () => {
-    if (window.confirm("Replace your unsaved preamble with the latest saved preference?"))
+    if (window.confirm("Replace your unsaved settings with the latest saved preferences?"))
       void loadPreferences();
   });
   reset.addEventListener("click", () => {
@@ -385,6 +423,7 @@ export function exportControls(snapshot, announce) {
       const { body } = await post("/api/exports/preview", { copy_preamble: preamble });
       if (generation === preferenceGeneration && input.value === preamble) {
         preview.value = body.text;
+        example.open = true;
         preferenceError.hidden = true;
       }
     } catch (error) {
@@ -402,12 +441,13 @@ export function exportControls(snapshot, announce) {
       await request("/api/preferences", {
         method: "PATCH",
         headers: { "Content-Type": "application/json", "If-Match": etag },
-        body: JSON.stringify(
-          followDefault ? { reset: ["copy_preamble"] } : { copy_preamble: input.value },
-        ),
+        body: JSON.stringify({
+          ...(followDefault ? { reset: ["copy_preamble"] } : { copy_preamble: input.value }),
+          share_include_preamble: settingsShare.checked,
+        }),
       });
       if (generation !== preferenceGeneration) return;
-      announce("Preamble saved for this user profile.");
+      announce("Settings saved for the shared local profile.");
       preferencesDialog.close();
     } catch (error) {
       if (generation !== preferenceGeneration) return;

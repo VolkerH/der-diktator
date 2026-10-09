@@ -558,7 +558,8 @@ References: [WSL localhost networking](https://learn.microsoft.com/en-us/windows
 
 Share… opens a preview of your current edited draft with Copy, Download and, when supported,
 Share to app. Include saved preamble is remembered on the server for your local user profile
-across devices. The main Copy button still copies your draft directly. Preamble preferences
-let you edit the introduction. See the [preferences and export API](docs/preferences-export-api.md)
+across devices. The main Copy button still copies your draft directly. Settings lets you edit the introduction and default sharing format, open keyboard
+shortcuts and speech models, and see the running application limits. Preferences
+are shared across clients of the local profile. See the [settings contract](docs/settings-api.md). See the [preferences and export API](docs/preferences-export-api.md)
 for conditional saves and limits, and the [native-sharing contract](docs/native-sharing.md)
 for handoff outcomes and client responsibilities.

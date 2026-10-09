@@ -2960,6 +2960,10 @@ function exportServer(t) {
     failSave: null,
   };
   t.mock.method(globalThis, "fetch", async (url, options = {}) => {
+    if (url === "/api/settings")
+      return Response.json({
+        limits: [{ label: "Recording duration", value: 600, unit: "seconds" }],
+      });
     if (!String(url).startsWith("/api/preferences") && !String(url).startsWith("/api/exports"))
       return underlying(url, options);
     server.requests.push([url, options]);
@@ -3065,7 +3069,10 @@ test("preamble preference editing previews on the server, cancels and saves with
   await app.element("preferences-reset").emit("click");
   assert.equal(input.value, "Default preamble");
   await app.element("preferences-save").emit("click");
-  assert.deepEqual(JSON.parse(exports.requests.at(-1)[1].body), { reset: ["copy_preamble"] });
+  assert.deepEqual(JSON.parse(exports.requests.at(-1)[1].body), {
+    reset: ["copy_preamble"],
+    share_include_preamble: false,
+  });
 });
 
 for (const failure of ["conflict", "network"])
@@ -3351,6 +3358,7 @@ test("typing text equal to the default saves custom text; Use default is explici
   await app.element("preferences-save").emit("click");
   assert.deepEqual(JSON.parse(server.requests.at(-1)[1].body), {
     copy_preamble: "Default preamble",
+    share_include_preamble: false,
   });
 });
 
@@ -3672,4 +3680,45 @@ test("drops cannot replace pending or retained failed uploads", async (t) => {
   assert.equal(uploads, 1);
   assert.equal(app.element("clips").children.length, 1);
   assert.equal(app.element("transcript").value, "Keep text");
+});
+
+test("settings saves the shared share default and keeps both fields on conflict", async (t) => {
+  const app = await appEnvironment(t);
+  const server = exportServer(t);
+  await app.element("preferences-open").emit("click");
+  await settle();
+  assert.equal(app.element("settings-share-preamble").checked, false);
+  app.element("settings-share-preamble").checked = true;
+  app.element("copy-preamble-input").value = "My settings draft";
+  server.failSave = "conflict";
+  await app.element("preferences-save").emit("click");
+  assert.equal(app.element("settings-share-preamble").checked, true);
+  assert.equal(app.element("copy-preamble-input").value, "My settings draft");
+  assert.equal(server.sharePreamble, false);
+  assert.equal(app.element("preferences-save").disabled, true);
+});
+
+test("settings saves sharing default atomically with its preamble", async (t) => {
+  const app = await appEnvironment(t);
+  const server = exportServer(t);
+  await app.element("preferences-open").emit("click");
+  await settle();
+  app.element("settings-share-preamble").checked = true;
+  await app.element("preferences-save").emit("click");
+  assert.equal(server.sharePreamble, true);
+  assert.equal(app.element("preferences-dialog").open, false);
+});
+
+test("settings shows application limits and opens models without discarding its draft", async (t) => {
+  const app = await appEnvironment(t);
+  exportServer(t);
+  await app.element("preferences-open").emit("click");
+  await settle();
+  assert.equal(app.element("settings-limits").textContent, "Recording duration: 600 seconds.");
+  app.element("copy-preamble-input").value = "Retained draft";
+  await app.element("settings-models").emit("click");
+  await settle();
+  assert.equal(app.element("model-settings").open, true);
+  assert.equal(app.element("preferences-dialog").open, true);
+  assert.equal(app.element("copy-preamble-input").value, "Retained draft");
 });

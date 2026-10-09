@@ -139,7 +139,7 @@
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M4 6h10M4 10h7M4 14h5M13 20l1-4 6-6 3 3-6 6z" />
           </svg>
-          Preamble preferences
+          Settings
         </button>
         <button
           id="model-settings-open"
@@ -294,10 +294,10 @@
       aria-labelledby="preferences-title"
       aria-describedby="preferences-scope"
     >
-      <header class="settings-heading"><h2 id="preferences-title">Preamble preferences</h2></header>
+      <header class="settings-heading"><h2 id="preferences-title">Settings</h2></header>
       <p id="preferences-scope" class="settings-intro">
-        Added above your transcript when you include the preamble in Share…. Saved on this server
-        for all your devices.
+        Preferences are saved on this server for the shared local profile, across its devices.
+        Changes apply when you next copy or share.
       </p>
       <div class="field">
         <label for="copy-preamble-input">Copy preamble</label>
@@ -315,10 +315,38 @@
           <button id="preferences-reset" class="chip" type="button" disabled>Use default</button>
         </div>
       </div>
-      <div class="field">
-        <label for="preferences-preview">Prepared example</label>
+      <details id="preferences-example" class="field">
+        <summary>Prepared example</summary>
+        <label class="visually-hidden" for="preferences-preview">Prepared example text</label>
         <textarea id="preferences-preview" class="export-text" rows="6" readonly></textarea>
+      </details>
+      <div class="field">
+        <label class="inline-check" for="settings-share-preamble">
+          <input id="settings-share-preamble" type="checkbox" />
+          Include the saved preamble by default when sharing
+        </label>
       </div>
+      <section class="field" aria-labelledby="settings-controls-title">
+        <h3 id="settings-controls-title">Keyboard and speech models</h3>
+        <p class="field-hint">
+          These controls have their own Save or model actions. Your settings draft stays here.
+        </p>
+        <button id="settings-keyboard" class="chip" type="button" aria-haspopup="dialog">
+          Keyboard shortcuts
+        </button>
+        <button id="settings-models" class="chip" type="button" aria-haspopup="dialog">
+          Speech models
+        </button>
+      </section>
+      <section class="field" aria-labelledby="settings-limits-title">
+        <h3 id="settings-limits-title">Recording and transcript limits</h3>
+        <p id="settings-limits" class="field-hint" role="status">Loading limits…</p>
+        <p class="field-hint">
+          These are limits enforced by the application service. The speech engine may impose
+          additional limits. They are managed by the operator. Changes require a restart. Recording
+          extensions are not available yet.
+        </p>
+      </section>
       <p id="preferences-error" class="error" role="alert" hidden></p>
       <div class="dialog-actions">
         <p id="preferences-status" class="dialog-status" role="status" aria-live="polite"></p>
