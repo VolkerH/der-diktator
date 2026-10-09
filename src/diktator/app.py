@@ -76,8 +76,14 @@ def create_app(
     settings = settings or Settings.from_environment()
     client = httpx.AsyncClient(
         base_url=settings.engine_url,
-        timeout=settings.recording_policy.batch_timeout_seconds
-        + settings.recording_policy.client_timeout_margin_seconds,
+        timeout=httpx.Timeout(
+            connect=5,
+            pool=5,
+            read=settings.recording_policy.batch_timeout_seconds
+            + settings.recording_policy.client_timeout_margin_seconds,
+            write=settings.recording_policy.upload_timeout_seconds
+            + settings.recording_policy.client_timeout_margin_seconds,
+        ),
         transport=transport,
         trust_env=False,
     )

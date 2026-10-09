@@ -93,7 +93,9 @@ fields and preference validation are delivered with the complete interval featur
 
 Upload timeouts return 408 `upload_timeout`. The engine's batch timeout returns
 504 `engine_timeout` while its shielded native task continues to own the model.
-The web's upstream batch read/write waits use the batch budget plus one margin.
+The web's upstream batch read wait uses the batch budget plus one margin, while
+its write wait uses the upload budget plus one margin. Connect/pool waits are five
+seconds.
 The browser's direct batch deadline permits two upload phases, one batch phase
 and three margins: `2 * upload + batch + 3 * margin`. Stored-clip inference uses
 that same conservative deadline. Each upload's browser wait is `upload + margin`.

@@ -369,3 +369,27 @@ async def test_engine_batch_timeout_preserves_native_reservation(tmp_path: Path)
     finally:
         backend.finish.set()
         await manager.close()
+
+
+async def test_upstream_http_waits_use_distinct_upload_and_batch_budgets(tmp_path: Path) -> None:
+    policy = RecordingPolicy(upload_timeout_seconds=300, batch_timeout_seconds=60)
+    calls: list[httpx.Request] = []
+
+    def upstream(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/recording-policy":
+            return httpx.Response(200, json=policy.model_dump())
+        calls.append(request)
+        assert request.extensions["timeout"] == {
+            "connect": 5,
+            "pool": 5,
+            "write": 310.0,
+            "read": 70.0,
+        }
+        return httpx.Response(200, json={"text": "complete"})
+
+    async with web_client(tmp_path, upstream, policy) as (client, _app):
+        response = await client.post(
+            "/api/transcribe", content=make_wav(), headers={"Content-Type": "audio/wav"}
+        )
+        assert response.status_code == 200
+        assert len(calls) == 1
