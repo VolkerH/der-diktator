@@ -13,6 +13,7 @@ export class MicrophoneRecorder {
     this.chunks = [];
     this.sampleCount = 0;
     this.stopped = false;
+    this.lastStopReason = "manual";
     this.extensionRequestId = 0;
     this.extensionUncertain = false;
     /** @type {(() => void) | null} */
@@ -34,6 +35,7 @@ export class MicrophoneRecorder {
     this.chunks = [];
     this.sampleCount = 0;
     this.stopped = false;
+    this.lastStopReason = "manual";
     this.stopping = null;
     this.extensionUncertain = false;
     const hardMaxSamples = budget.hardLimitSeconds * SAMPLE_RATE;
@@ -69,6 +71,7 @@ export class MicrophoneRecorder {
           this.onLevel?.(event.data.level);
         } else if (event.data.type === "stopped") {
           this.stopped = true;
+          this.lastStopReason = event.data.reason;
           this.onExtended?.(false);
           this.onExtended = null;
           this.onStopped?.();
@@ -155,7 +158,11 @@ export class MicrophoneRecorder {
   async release() {
     for (const track of this.stream?.getTracks() ?? []) track.stop();
     this.stream = null;
-    this.node?.disconnect();
+    if (this.node) {
+      this.node.port.onmessage = null;
+      this.node.port.close?.();
+      this.node.disconnect();
+    }
     this.node = null;
     this.onStopped = null;
     this.onExtended?.(false);

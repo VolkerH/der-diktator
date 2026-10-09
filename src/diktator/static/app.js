@@ -88,6 +88,8 @@ const extensionButton = /** @type {HTMLButtonElement} */ (
 const recordingWarning = /** @type {HTMLElement} */ (document.getElementById("recording-warning"));
 const remainingTime = /** @type {HTMLElement} */ (document.getElementById("recording-remaining"));
 const beep = new RecordingBeep();
+/** @type {string | null} */
+let captureNotice = null;
 const capture = new RecordingController({
   warn: () => {
     recordingWarning.hidden = false;
@@ -97,15 +99,15 @@ const capture = new RecordingController({
   },
   automaticStop: (reason) => {
     if (reason === "capture_queue_overflow")
-      showError(
-        new Error(
-          "Capture stopped because this tab could not keep up. The captured audio will be saved for recovery.",
-        ),
-      );
+      captureNotice =
+        "Capture stopped because this tab could not keep up. The captured audio is kept for recovery.";
     void stopRecording(true);
   },
 });
-recorder.onWarning = (/** @type {string} */ message) => showError(new Error(message));
+recorder.onWarning = (/** @type {string} */ message) => {
+  captureNotice = message;
+  showError(new Error(message));
+};
 recorder.onAutomaticStop = (/** @type {string} */ reason) => capture.automaticStop(reason);
 function updateRecordingDeadline() {
   if (!recording) {
@@ -1453,7 +1455,7 @@ async function storeRecording(audio) {
       recording: stored,
       chatEtag,
       chatRevision,
-    } = await chatApi.addRecording(target.id, audio, recordingId);
+    } = await chatApi.addRecording(target.id, audio, recordingId, capture.snapshot);
     if (generation !== navigationGeneration) return { chatId: target.id, recording: stored };
     // Chat-ETag also covers anything changed elsewhere since this tab's version. Take it
     // up only when this upload is the sole change, so deletion still detects unseen
@@ -1482,14 +1484,14 @@ async function storeAndInsert(audio, text, recoverLive = false) {
     try {
       if (recoverLive) {
         status.textContent = "Waiting for the model to recover… Your recording is kept.";
-        const policy = await recordingPolicy();
+        const policy = capture.snapshot || (await recordingPolicy());
         await waitForModelReady(recordingModel, recordingTimeoutMs(policy, "batch"));
       }
       status.textContent = "Transcribing your recording…";
       text =
         stored instanceof Error
-          ? await chatApi.transcribe(audio, recordingModel)
-          : await chatApi.transcribeRecording(stored.chatId, stored.recording.id, recordingModel);
+          ? await chatApi.transcribe(audio, recordingModel, capture.snapshot)
+          : await chatApi.transcribeRecording(stored.chatId, stored.recording.id, recordingModel, capture.snapshot);
     } catch (error) {
       if (stored instanceof Error) {
         const detail = error instanceof Error ? error.message : "Transcription failed.";
@@ -1681,6 +1683,7 @@ recordButton.addEventListener("click", async () => {
       hardLimitSeconds: policy.hard_limit_seconds,
     };
     recordingWarning.hidden = true;
+    captureNotice = null;
     if (liveMode.checked) {
       status.textContent = "Connecting live transcription…";
       const stream = new LiveTranscriber(
@@ -1695,8 +1698,7 @@ recordButton.addEventListener("click", async () => {
           }
         },
         {
-          finishTimeoutMs:
-            recordingTimeoutMs(policy, "live"),
+          finishTimeoutMs: recordingTimeoutMs(policy, "live"),
         },
       );
       activeStream = stream;
@@ -1743,6 +1745,7 @@ recordButton.addEventListener("click", async () => {
   } finally {
     busy = false;
     updateControls();
+    if (recording && recorder.stopped) capture.automaticStop(recorder.lastStopReason);
   }
 });
 
@@ -1783,6 +1786,8 @@ async function stopRecording(automatic = false) {
     activeStream = null;
     capture.reset();
     await beep.release();
+    if (captureNotice) showError(new Error(captureNotice));
+    if (automatic) status.textContent = `Recording stopped automatically. ${status.textContent}`;
     busy = false;
     updateControls();
     renderChats();

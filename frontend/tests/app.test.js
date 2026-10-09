@@ -248,6 +248,7 @@ function chatServer() {
         live_finalization_timeout_seconds: 180,
         client_timeout_margin_seconds: 10,
       });
+    if (url === "/api/settings") return Response.json({ upload_timeout_seconds: 180, client_timeout_margin_seconds: 10 });
     const method = options.method ?? "GET";
     const titleEtag = (chat) => `"title-${chat.id}-${chat.title_revision}"`;
     const json = (body, status = 200) =>
@@ -511,15 +512,16 @@ async function appEnvironment(t, setup = () => {}, waitReady = true) {
   const sockets = [];
   const copied = [];
   const windowListeners = new Map();
-  const state = { starts: 0, stops: 0, onSamples: null };
+  const state = { starts: 0, stops: 0, onSamples: null, onStart: null };
   const intervals = [];
   const samples = new Float32Array([0.5, -0.5]);
   const wav = new Blob([encodeWav(samples)], { type: "audio/wav" });
-  t.mock.method(MicrophoneRecorder.prototype, "start", async (onSamples = null) => {
+  t.mock.method(MicrophoneRecorder.prototype, "start", async function (onSamples = null) {
     state.starts++;
     if (server.microphoneError)
       throw new DOMException("microphone unavailable", server.microphoneError);
     state.onSamples = onSamples;
+    state.onStart?.(this);
   });
   t.mock.method(MicrophoneRecorder.prototype, "stop", async () => {
     state.stops++;
@@ -3767,6 +3769,141 @@ test("settings shows application limits and opens models without discarding its 
   assert.equal(app.element("model-settings").open, true);
   assert.equal(app.element("preferences-dialog").open, true);
   assert.equal(app.element("copy-preamble-input").value, "Retained draft");
+});
+
+test("recording policy failure prevents microphone capture and permits a later retry", async (t) => {
+  const app = await appEnvironment(t);
+  app.element("live-mode").checked = false;
+  const fetch = globalThis.fetch;
+  let unavailable = true;
+  t.mock.method(globalThis, "fetch", async (url, options) =>
+    url === "/api/recording-policy" && unavailable
+      ? Response.json(
+          { detail: "The engine policy differs.", code: "configuration_mismatch" },
+          { status: 503 },
+        )
+      : fetch(url, options),
+  );
+  await app.element("record").emit("click");
+  assert.equal(app.state.starts, 0);
+  assert.match(app.element("error").textContent, /engine policy differs/);
+  unavailable = false;
+  await app.element("record").emit("click");
+  assert.equal(app.state.starts, 1);
+  await app.element("stop").emit("click");
+  assert.equal(app.state.stops, 1);
+});
+
+test("one-minute capture warns immediately and extensions use the frozen original interval", async (t) => {
+  const app = await appEnvironment(t);
+  app.element("live-mode").checked = false;
+  const fetch = globalThis.fetch;
+  let interval = 60;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (url !== "/api/recording-policy") return response;
+    return Response.json({
+      ...(await response.json()),
+      recording_interval_seconds: interval,
+      hard_limit_seconds: 180,
+    });
+  });
+  const budgets = [];
+  t.mock.method(MicrophoneRecorder.prototype, "extend", async (seconds) => {
+    budgets.push(seconds);
+    return true;
+  });
+  await app.element("record").emit("click");
+  assert.equal(app.element("recording-warning").hidden, false);
+  interval = 120;
+  await app.element("extend-recording").emit("click");
+  assert.equal(app.element("recording-warning").hidden, true);
+  await app.element("extend-recording").emit("click");
+  assert.deepEqual(budgets, [120, 180]);
+  assert.equal(app.element("extend-recording").disabled, true);
+  await app.element("stop").emit("click");
+  assert.equal(app.state.stops, 1);
+});
+
+test("an unrelated settings save preserves a constrained interval request", async (t) => {
+  const app = await appEnvironment(t);
+  const exports = exportServer(t);
+  const fetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (url !== "/api/preferences" || options?.method === "PATCH") return response;
+    return Response.json(
+      {
+        ...(await response.json()),
+        recording_interval_seconds: 600,
+        requested_recording_interval_seconds: 2400,
+        recording_interval_constrained: true,
+        recording_interval_constraint_reason: "The operator limit is 10 minutes.",
+        max_recording_interval_seconds: 600,
+      },
+      { headers: { ETag: exports.etag } },
+    );
+  });
+  await app.element("preferences-open").emit("click");
+  await settle();
+  assert.equal(app.element("recording-interval").value, "10");
+  assert.match(app.element("recording-interval-help").textContent, /40 minutes/);
+  app.element("copy-preamble-input").value = "Another preamble";
+  await app.element("preferences-save").emit("click");
+  const change = JSON.parse(
+    exports.requests.find(([, options]) => options.method === "PATCH")[1].body,
+  );
+  assert.equal(Object.hasOwn(change, "recording_interval_seconds"), false);
+});
+
+test("the original capture keeps its client wait budgets across a policy change", async (t) => {
+  const app = await appEnvironment(t);
+  app.element("live-mode").checked = false;
+  const fetch = globalThis.fetch;
+  let reads = 0;
+  let budget = 240;
+  const timeoutCalls = [];
+  t.mock.method(AbortSignal, "timeout", (milliseconds) => {
+    timeoutCalls.push(milliseconds);
+    return new AbortController().signal;
+  });
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (url !== "/api/recording-policy") return response;
+    reads++;
+    return Response.json({
+      ...(await response.json()),
+      upload_timeout_seconds: budget,
+      batch_timeout_seconds: budget,
+    });
+  });
+  await app.element("record").emit("click");
+  budget = 600;
+  await app.element("stop").emit("click");
+  await waitForIdle(app);
+  assert.equal(reads, 1, "original inference uses its frozen client snapshot");
+  assert.ok(timeoutCalls.includes(250000), "frozen upload wait");
+  assert.ok(timeoutCalls.includes(750000), "frozen batch wait including upload and margins");
+  await app.element("clips").children[0].children[1].emit("click");
+  await waitForIdle(app);
+  assert.equal(reads, 2, "explicit later inference obtains current policy");
+});
+
+test("a worklet stop during startup is reconciled and the retained prefix is finalized once", async (t) => {
+  const app = await appEnvironment(t);
+  app.element("live-mode").checked = false;
+  app.state.onStart = (recorder) => {
+    recorder.stopped = true;
+    recorder.lastStopReason = "capture_queue_overflow";
+    recorder.onAutomaticStop("capture_queue_overflow");
+  };
+  await app.element("record").emit("click");
+  await waitForIdle(app);
+  assert.equal(app.state.starts, 1);
+  assert.equal(app.state.stops, 1);
+  assert.equal(app.element("record").hidden, false);
+  assert.match(app.element("error").textContent, /tab could not keep up/);
+  assert.match(app.element("status").textContent, /Recording stopped automatically/);
 });
 
 test("policy disagreement prevents both microphone access and live admission", async (t) => {

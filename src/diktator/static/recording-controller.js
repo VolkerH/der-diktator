@@ -1,4 +1,4 @@
-/** @typedef {{hard_limit_seconds: number, recording_interval_seconds: number, policy_revision: string, upload_timeout_seconds: number, batch_timeout_seconds: number, live_finalization_timeout_seconds: number, client_timeout_margin_seconds: number, preference_etag: string}} RecordingSnapshot */
+/** @typedef {{protocol_version: number, max_audio_bytes: number, max_pcm_bytes: number, max_stream_frame_bytes: number, hard_limit_seconds: number, recording_interval_seconds: number, policy_revision: string, upload_timeout_seconds: number, batch_timeout_seconds: number, live_finalization_timeout_seconds: number, client_timeout_margin_seconds: number, preference_etag: string}} RecordingSnapshot */
 
 /** A recording freezes policy, model and its original interval until completion. */
 export class RecordingController {
