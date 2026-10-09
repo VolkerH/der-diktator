@@ -1,0 +1,107 @@
+{
+  "method": "Accelerated synthetic source in real AudioWorklet; no real microphone/model/mobile acceptance",
+  "browser": "153.0.8010.12",
+  "measurement": "CDP JS heap/backing storage and sampled renderer VmRSS; native Blob allocations included in RSS, no exact total-process peak claim",
+  "results": [
+    {
+      "rate": 16000,
+      "duration": 1800,
+      "reason": "deadline",
+      "samples": 28800000,
+      "retainedBytes": 57600000,
+      "wavBytes": 57600044,
+      "wavDataBytes": 57600000,
+      "seconds": 20.986,
+      "releasedChunks": 0,
+      "baseline": {
+        "usedSize": 618264,
+        "totalSize": 1048576,
+        "embedderHeapUsedSize": 305008,
+        "backingStorageSize": 6
+      },
+      "peak": {
+        "usedSize": 3112656,
+        "totalSize": 4456448,
+        "embedderHeapUsedSize": 3354432,
+        "backingStorageSize": 57609576
+      },
+      "baseline_renderer_rss_bytes": 310460416,
+      "peak_renderer_rss_bytes": 514727936
+    },
+    {
+      "rate": 16000,
+      "duration": 3600,
+      "reason": "deadline",
+      "samples": 57600000,
+      "retainedBytes": 115200000,
+      "wavBytes": 115200044,
+      "wavDataBytes": 115200000,
+      "seconds": 41.90459999990463,
+      "releasedChunks": 0,
+      "baseline": {
+        "usedSize": 618264,
+        "totalSize": 1048576,
+        "embedderHeapUsedSize": 303664,
+        "backingStorageSize": 6
+      },
+      "peak": {
+        "usedSize": 4466380,
+        "totalSize": 8003584,
+        "embedderHeapUsedSize": 4463088,
+        "backingStorageSize": 115209576
+      },
+      "baseline_renderer_rss_bytes": 298061824,
+      "peak_renderer_rss_bytes": 628948992
+    },
+    {
+      "rate": 48000,
+      "duration": 1800,
+      "reason": "deadline",
+      "samples": 28800000,
+      "retainedBytes": 57600000,
+      "wavBytes": 57600044,
+      "wavDataBytes": 57600000,
+      "seconds": 20.566699999928474,
+      "releasedChunks": 0,
+      "baseline": {
+        "usedSize": 618264,
+        "totalSize": 1048576,
+        "embedderHeapUsedSize": 303664,
+        "backingStorageSize": 6
+      },
+      "peak": {
+        "usedSize": 3100552,
+        "totalSize": 4456448,
+        "embedderHeapUsedSize": 3355576,
+        "backingStorageSize": 57609576
+      },
+      "baseline_renderer_rss_bytes": 298070016,
+      "peak_renderer_rss_bytes": 504709120
+    },
+    {
+      "rate": 48000,
+      "duration": 3600,
+      "reason": "deadline",
+      "samples": 57600000,
+      "retainedBytes": 115200000,
+      "wavBytes": 115200044,
+      "wavDataBytes": 115200000,
+      "seconds": 41.10479999995231,
+      "releasedChunks": 0,
+      "baseline": {
+        "usedSize": 618264,
+        "totalSize": 1048576,
+        "embedderHeapUsedSize": 303664,
+        "backingStorageSize": 6
+      },
+      "peak": {
+        "usedSize": 4488720,
+        "totalSize": 6955008,
+        "embedderHeapUsedSize": 4460712,
+        "backingStorageSize": 115209675
+      },
+      "baseline_renderer_rss_bytes": 298065920,
+      "peak_renderer_rss_bytes": 639078400
+    }
+  ]
+}

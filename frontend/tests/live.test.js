@@ -110,3 +110,14 @@ test("cancelling a recording closes the connection without a failure notificatio
   assert.equal(socket.closeCount, 1);
   assert.deepEqual(failures, []);
 });
+
+test("live audio follows a lower operator frame budget without losing the tail", async (t) => {
+  const { client, socket } = await connected(t, { maxFrameBytes: 4 });
+  client.sendSamples(new Float32Array([0.5, -0.5, 0.25, -0.25, 1]));
+  const frames = socket.sent.filter((item) => item instanceof ArrayBuffer);
+  assert.deepEqual(
+    frames.map((frame) => frame.byteLength),
+    [4, 4, 2],
+  );
+  assert.equal(new DataView(frames[2]).getInt16(0, true), 32767);
+});

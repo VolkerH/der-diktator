@@ -32,12 +32,20 @@ function audioEnvironment(t, { failModule = false, empty = false, fallback = fal
     }
   }
   class FakeNode {
-    constructor() {
+    constructor(_context, _name, options) {
+      state.processorOptions = options.processorOptions;
       this.port = {
         onmessage: null,
         postMessage: (message) => {
           if (message.type !== "stop") return;
-          if (!empty) this.port.onmessage({ data: { type: "samples", samples } });
+          if (!empty)
+            this.port.onmessage({
+              data: {
+                type: "samples",
+                pcm: new Int16Array([...samples].map((sample) => sample * 32767)),
+                level: 0.5,
+              },
+            });
           this.port.onmessage({ data: { type: "stopped" } });
         },
       };
@@ -122,9 +130,9 @@ test("a 48 kHz context is resampled to the engine's 16 kHz format", async (t) =>
   const recorder = new MicrophoneRecorder();
   await recorder.start();
   const header = new DataView(await (await recorder.stop()).arrayBuffer());
-  assert.equal(state.resampled, true);
+  assert.equal(state.processorOptions.sampleRate, 48_000);
   assert.equal(header.getUint32(24, true), 16_000);
-  assert.equal(header.getUint32(40, true), 4);
+  assert.equal(header.getUint32(40, true), 12);
 });
 
 test("live callbacks receive the final PCM flush while a complete WAV is retained", async (t) => {
@@ -138,13 +146,61 @@ test("live callbacks receive the final PCM flush while a complete WAV is retaine
   assert.equal(recording.size, 44 + chunks[0].length * 2);
 });
 
-test("unsupported live sample rate releases the microphone and offers batch recording", async (t) => {
+test("native-rate live capture uses the same bounded worklet conversion", async (t) => {
   const state = audioEnvironment(t, { fallback: true });
   const recorder = new MicrophoneRecorder();
-  await assert.rejects(
-    recorder.start(() => {}),
-    /Turn off Live transcription/,
-  );
-  assert.equal(state.trackStops, 1);
-  assert.equal(state.contextCloses, 1);
+  const samples = [];
+  await recorder.start((chunk) => samples.push(chunk), {
+    intervalSeconds: 1800,
+    hardLimitSeconds: 3600,
+  });
+  assert.equal(state.processorOptions.sampleRate, 48_000);
+  assert.equal(state.processorOptions.maxSamples, 1800 * 16000);
+  assert.equal(state.processorOptions.hardMaxSamples, 3600 * 16000);
+  await recorder.stop();
+  assert.equal(samples.length, 1);
+});
+
+test("missing stop acknowledgement preserves the received audio with an explicit warning", async (t) => {
+  audioEnvironment(t);
+  const recorder = new MicrophoneRecorder();
+  await recorder.start();
+  const warnings = [];
+  recorder.onWarning = (message) => warnings.push(message);
+  recorder.node.port.onmessage({
+    data: { type: "samples", pcm: new Int16Array([1, 2, 3]), level: 0 },
+  });
+  recorder.node.port.postMessage = () => {};
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const stopped = recorder.stop();
+  t.mock.timers.tick(2000);
+  const blob = await stopped;
+  assert.equal(blob.size, 50);
+  assert.match(warnings[0], /last unconfirmed audio may be missing/);
+  assert.equal(recorder.context, null);
+});
+
+test("an extension timeout cannot be mistaken for a later acknowledgement", async (t) => {
+  audioEnvironment(t);
+  const recorder = new MicrophoneRecorder();
+  await recorder.start();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const extension = recorder.extend(1200);
+  t.mock.timers.tick(2000);
+  assert.equal(await extension, false);
+  assert.equal(await recorder.extend(1800), false);
+  recorder.node.port.onmessage({ data: { type: "extended", requestId: 1, accepted: true } });
+  assert.equal(await recorder.extend(1800), false);
+  await recorder.release();
+});
+
+test("simultaneous stop requests share finalization and release the cached WAV afterwards", async (t) => {
+  audioEnvironment(t);
+  const recorder = new MicrophoneRecorder();
+  await recorder.start();
+  const first = recorder.stop();
+  const second = recorder.stop();
+  assert.equal(first, second);
+  await first;
+  assert.equal(recorder.stopping, null);
 });

@@ -60,3 +60,43 @@ text controls can normalize CRLF. Clients provide device permissions, user gestu
 copy fallback while preserving editor text and selection. Keep preference drafts on errors;
 only explicit reset means follow-default, even when custom text equals the default wording.
 Application preferences are persisted by the backend, not solely in browser storage.
+
+## Recording intervals
+
+`recording_interval_seconds` is a shared profile preference for the next
+recording, stored as a nullable requested value in SQLite. The product default
+is 1800 seconds. A PATCH must use an integer multiple of 60 between 60 and the
+current operator ceiling, inclusive. Strings, booleans, fractional values and
+null are invalid. Omitting the field preserves it; `reset: ["recording_interval_seconds"]`
+resumes following the backend default. Setting and resetting together is invalid.
+The existing required `If-Match` and atomic 428/412 behavior apply.
+
+The response separates `requested_recording_interval_seconds` from effective
+`recording_interval_seconds`. The latter is the lesser of the requested value
+(or product default) and the current operator ceiling. It includes
+`default_recording_interval_seconds`, `effective_default_recording_interval_seconds`,
+`recording_interval_is_default`,
+`recording_interval_constrained`, `recording_interval_constraint_reason`, and
+`min_recording_interval_seconds`, `max_recording_interval_seconds`,
+`recording_interval_step_seconds`. A constraint reason is null when unconstrained.
+
+Reducing the operator ceiling never rewrites a saved requested interval. The
+shorter effective value and reason are visible; raising the ceiling can restore
+the saved interval. A new explicit write above the ceiling returns 422
+`invalid_recording_interval` and changes nothing. Unrelated preference updates
+still work while the saved interval is constrained. Reads create no preference
+row. The strong ETag includes these derived fields and defaults, so policy or
+product-default changes invalidate prior validators even without a row revision
+change.
+
+Read the agreed recording policy before opening the microphone and freeze the
+returned interval and limits for that capture. A saved preference affects the
+next recording. Settings must preserve dirty drafts on conflict and show any
+operator constraint; saving an unrelated preference must not silently replace
+a constrained requested interval with its displayed effective value.
+
+The effective default is resolved by the backend under the current operator ceiling,
+including when a custom interval is selected. Use default previews this published
+value and resets the stored override. The complete preference ETag covers this
+field, so changes to the product default or ceiling invalidate old validators.
+An empty interval input uses required-field inline validation before any PATCH.

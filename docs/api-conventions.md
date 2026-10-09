@@ -26,34 +26,35 @@ information and internal diagnostics. Clients must also tolerate legacy/intermed
 
 The error codes below are implemented:
 
-| Code                                       | HTTP | Meaning / client action                                                           |
-| ------------------------------------------ | ---- | --------------------------------------------------------------------------------- |
-| `chat_not_found`                           | 404  | Missing or inaccessible chat; show the same message for both.                     |
-| `recording_not_found`                      | 404  | Recording missing from an accessible chat, or its audio file is missing.          |
-| `audio_too_large`                          | 413  | Upload exceeds the byte limit; reduce it.                                         |
-| `unsupported_audio`                        | 415  | Unsupported media type; use the documented audio format.                          |
-| `invalid_audio`                            | 400  | Invalid audio or violated audio constraints; correct the input.                   |
-| `model_busy`                               | 409  | Inference or another model operation occupies the engine; wait and refresh state. |
-| `model_loading` / `model_deleting`         | 409  | Model lifecycle transition; refresh state before retrying.                        |
-| `model_not_active` / `model_not_installed` | 409  | Activate/download the requested model; waiting alone is insufficient.             |
-| `live_transcription_unsupported`           | 409  | Choose a supported mode/model; never silently change audio-retention policy.      |
-| `model_conflict`                           | 409  | Legacy/unclassified model conflict; refresh state, do not assume busy.            |
-| `engine_unavailable`                       | 503  | Engine unreachable/unavailable; check health and reconcile any submitted work.    |
-| `engine_error`                             | 502  | Upstream failure or invalid response; outcome may be uncertain.                   |
-| `engine_timeout`                           | 504  | Timed out waiting for the engine; work may still be running.                      |
-| `invalid_search_query`                     | 422  | Search exceeds 256 code points or 16 distinct terms; shorten it.                  |
-| `group_not_found`                          | 404  | Missing or inaccessible group; retain the draft and choose an owned destination.  |
-| `invalid_group_name`                       | 422  | Use 1–80 Unicode characters without controls or line breaks.                      |
-| `invalid_title`                            | 422  | Invalid title string; use 1–120 characters without controls or line breaks.       |
-| `storage_error`                            | 500  | Chat creation/listing or private group storage failed; retain drafts and retry.   |
-| `validation_error`                         | 422  | Invalid request fields; correct them.                                             |
-| `revision_conflict`                        | 412  | Preserve the draft, fetch current state and reconcile.                            |
-| `precondition_required`                    | 428  | Read the resource and supply its validator before writing.                        |
-| `invalid_export`                           | 400  | Enter non-whitespace draft/preamble text.                                         |
-| `text_too_large`                           | 413  | Reduce the draft to the configured transcript limit.                              |
-| `preferences_unavailable`                  | 503  | Preferences cannot be read; retain the draft and retry later.                     |
-| `persistence_failed`                       | 503  | Preference write failed; refetch before retrying.                                 |
-| `idempotency_conflict`                     | 409  | Same key, different input; reconcile the original operation.                      |
+| Code                                       | HTTP | Meaning / client action                                                                 |
+| ------------------------------------------ | ---- | --------------------------------------------------------------------------------------- |
+| `chat_not_found`                           | 404  | Missing or inaccessible chat; show the same message for both.                           |
+| `recording_not_found`                      | 404  | Recording missing from an accessible chat, or its audio file is missing.                |
+| `audio_too_large`                          | 413  | Upload exceeds the byte limit; reduce it.                                               |
+| `unsupported_audio`                        | 415  | Unsupported media type; use the documented audio format.                                |
+| `invalid_audio`                            | 400  | Invalid audio or violated audio constraints; correct the input.                         |
+| `model_busy`                               | 409  | Inference or another model operation occupies the engine; wait and refresh state.       |
+| `model_loading` / `model_deleting`         | 409  | Model lifecycle transition; refresh state before retrying.                              |
+| `model_not_active` / `model_not_installed` | 409  | Activate/download the requested model; waiting alone is insufficient.                   |
+| `live_transcription_unsupported`           | 409  | Choose a supported mode/model; never silently change audio-retention policy.            |
+| `model_conflict`                           | 409  | Legacy/unclassified model conflict; refresh state, do not assume busy.                  |
+| `engine_unavailable`                       | 503  | Engine unreachable/unavailable; check health and reconcile any submitted work.          |
+| `engine_error`                             | 502  | Upstream failure or invalid response; outcome may be uncertain.                         |
+| `engine_timeout`                           | 504  | Timed out waiting for the engine; work may still be running.                            |
+| `invalid_search_query`                     | 422  | Search exceeds 256 code points or 16 distinct terms; shorten it.                        |
+| `group_not_found`                          | 404  | Missing or inaccessible group; retain the draft and choose an owned destination.        |
+| `invalid_group_name`                       | 422  | Use 1–80 Unicode characters without controls or line breaks.                            |
+| `invalid_title`                            | 422  | Invalid title string; use 1–120 characters without controls or line breaks.             |
+| `storage_error`                            | 500  | Chat creation/listing or private group storage failed; retain drafts and retry.         |
+| `validation_error`                         | 422  | Invalid request fields; correct them.                                                   |
+| `revision_conflict`                        | 412  | Preserve the draft, fetch current state and reconcile.                                  |
+| `precondition_required`                    | 428  | Read the resource and supply its validator before writing.                              |
+| `invalid_export`                           | 400  | Enter non-whitespace draft/preamble text.                                               |
+| `text_too_large`                           | 413  | Reduce the draft to the configured transcript limit.                                    |
+| `invalid_recording_interval`               | 422  | The requested interval exceeds the current operator ceiling; choose a shorter interval. |
+| `preferences_unavailable`                  | 503  | Preferences cannot be read; retain the draft and retry later.                           |
+| `persistence_failed`                       | 503  | Preference write failed; refetch before retrying.                                       |
+| `idempotency_conflict`                     | 409  | Same key, different input; reconcile the original operation.                            |
 
 For authenticated chat access, missing and inaccessible resources have the same public 404 status
 and body, without distinguishing context. Apply this to chat-scoped audio, history and subscriptions

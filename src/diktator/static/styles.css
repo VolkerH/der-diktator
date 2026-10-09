@@ -1926,3 +1926,28 @@ textarea:read-only {
   font-size: 16px;
   min-height: 44px;
 }
+
+#recording-warning {
+  margin: 0 0 16px;
+  color: #ffe0a3;
+  font-size: 0.9rem;
+}
+.clock {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+#recording-remaining {
+  font-size: 0.8rem;
+  color: #d7cef4;
+}
+#recording-interval {
+  width: 100%;
+  padding: 10px;
+  color: inherit;
+  background: var(--sheet);
+  border: 1px solid #b9b0d8;
+  border-radius: 8px;
+}

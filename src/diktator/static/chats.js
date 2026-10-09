@@ -71,9 +71,8 @@ export const chatApi = {
       body: JSON.stringify({ text }),
       keepalive,
     }),
-  /** @param {string} id @param {Blob} audio @param {string} recordingId @returns {Promise<RecordingUpload>} */
-  addRecording: async (id, audio, recordingId) => {
-    const deadline = await uploadTimeoutMs();
+  /** @param {string} id @param {Blob} audio @param {string} recordingId @param {import("./recording-policy.js").RecordingPolicy | null} [snapshot] @returns {Promise<RecordingUpload>} */
+  addRecording: async (id, audio, recordingId, snapshot = null) => {
     const { body, headers } = await request(
       `/api/chats/${id}/recordings/${recordingId}`,
       {
@@ -81,7 +80,7 @@ export const chatApi = {
         headers: { "Content-Type": "audio/wav" },
         body: audio,
       },
-      deadline,
+      snapshot ? recordingTimeoutMs(snapshot, "upload") : await uploadTimeoutMs(),
     );
     const revision = headers.get("Chat-Revision");
     return {
@@ -92,9 +91,9 @@ export const chatApi = {
   },
   /** @param {string} id @param {string} recordingId */
   recordingUrl: (id, recordingId) => `/api/chats/${id}/recordings/${recordingId}`,
-  /** @param {string} id @param {string} recordingId @param {string} [model] @returns {Promise<string>} */
-  transcribeRecording: async (id, recordingId, model = "phonon-2") => {
-    const policy = await recordingPolicy();
+  /** @param {string} id @param {string} recordingId @param {string} [model] @param {import("./recording-policy.js").RecordingPolicy | null} [snapshot] @returns {Promise<string>} */
+  transcribeRecording: async (id, recordingId, model = "phonon-2", snapshot = null) => {
+    const policy = snapshot ?? (await recordingPolicy());
     return transcriptText(
       (
         await request(
@@ -105,9 +104,9 @@ export const chatApi = {
       ).body,
     );
   },
-  /** Transcribe audio that could not be stored. @param {Blob} audio @param {string} [model] @returns {Promise<string>} */
-  transcribe: async (audio, model = "phonon-2") => {
-    const policy = await recordingPolicy();
+  /** Transcribe audio that could not be stored. @param {Blob} audio @param {string} [model] @param {import("./recording-policy.js").RecordingPolicy | null} [snapshot] @returns {Promise<string>} */
+  transcribe: async (audio, model = "phonon-2", snapshot = null) => {
+    const policy = snapshot ?? (await recordingPolicy());
     return transcriptText(
       (
         await request(

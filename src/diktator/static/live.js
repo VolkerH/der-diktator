@@ -43,7 +43,7 @@ export class LiveTranscriber {
   /**
    * @param {(text: string) => void} onText
    * @param {(error: Error) => void} onFailure
-   * @param {{ socketFactory?: (url: string) => WebSocket, readyTimeoutMs?: number, finishTimeoutMs?: number }} [options]
+   * @param {{ socketFactory?: (url: string) => WebSocket, readyTimeoutMs?: number, finishTimeoutMs?: number, maxFrameBytes?: number }} [options]
    */
   constructor(onText, onFailure, options = {}) {
     this.onText = onText;
@@ -51,6 +51,9 @@ export class LiveTranscriber {
     this.socketFactory = options.socketFactory ?? ((url) => new WebSocket(url));
     this.readyTimeoutMs = options.readyTimeoutMs ?? 10_000;
     this.finishTimeoutMs = options.finishTimeoutMs ?? 200_000;
+    this.maxFrameBytes = options.maxFrameBytes ?? 65536;
+    if (!Number.isInteger(this.maxFrameBytes) || this.maxFrameBytes < 2 || this.maxFrameBytes % 2)
+      throw new Error("Invalid live frame budget.");
     this.transcript = new LiveTranscript();
     /** @type {WebSocket | null} */
     this.socket = null;
@@ -161,7 +164,9 @@ export class LiveTranscriber {
           "Live transcription cannot keep up. Your recording is still being captured.",
         );
       }
-      this.socket.send(encodePcm16(samples));
+      for (let start = 0; start < samples.length; start += this.maxFrameBytes / 2) {
+        this.socket.send(encodePcm16(samples.subarray(start, start + this.maxFrameBytes / 2)));
+      }
     } catch (error) {
       this.fail(error instanceof Error ? error : new Error("Live audio could not be sent."));
     }

@@ -521,7 +521,7 @@
           "hard_limit_seconds": {
             "type": "integer",
             "title": "Hard Limit Seconds",
-            "default": 600
+            "default": 3600
           },
           "wav_container_allowance_bytes": {
             "type": "integer",
@@ -536,7 +536,7 @@
           "upload_timeout_seconds": {
             "type": "number",
             "title": "Upload Timeout Seconds",
-            "default": 180.0
+            "default": 1044.0
           },
           "batch_timeout_seconds": {
             "type": "number",

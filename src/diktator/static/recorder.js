@@ -1,6 +1,6 @@
-import { encodeWav, joinSamples, MAX_DURATION_SECONDS, rms, SAMPLE_RATE } from "./audio.js";
+import { encodeWav, SAMPLE_RATE } from "./audio.js";
 
-/** Capture microphone PCM and release all microphone resources on every exit path. */
+/** PCM16 retention and worklet sample budgets bound capture at every native rate. */
 export class MicrophoneRecorder {
   constructor() {
     /** @type {MediaStream | null} */
@@ -9,22 +9,36 @@ export class MicrophoneRecorder {
     this.context = null;
     /** @type {AudioWorkletNode | null} */
     this.node = null;
-    /** @type {Float32Array[]} */
+    /** @type {Int16Array[]} */
     this.chunks = [];
     this.sampleCount = 0;
+    this.stopped = false;
+    this.lastStopReason = "manual";
+    this.extensionRequestId = 0;
+    this.extensionUncertain = false;
     /** @type {(() => void) | null} */
     this.onStopped = null;
-    /** Receives the RMS level of each captured chunk, for a level meter.
-     * @type {((level: number) => void) | null} */
+    /** @type {((reason: string) => void) | null} */
+    this.onAutomaticStop = null;
+    /** @type {((level: number) => void) | null} */
     this.onLevel = null;
+    /** @type {((message: string, kind: "extension" | "integrity") => void) | null} */
+    this.onWarning = null;
+    /** @type {((accepted: boolean) => void) | null} */
+    this.onExtended = null;
+    /** @type {Promise<Blob> | null} */
+    this.stopping = null;
   }
-
-  /** Live callbacks receive mono 16 kHz chunks, including the final worklet flush.
-   * @param {((samples: Float32Array) => void) | null} [onSamples]
-   */
-  async start(onSamples = null) {
+  /** @param {((samples: Float32Array) => void) | null} [onSamples]
+   * @param {{intervalSeconds: number, hardLimitSeconds: number}} [budget] */
+  async start(onSamples = null, budget = { intervalSeconds: 600, hardLimitSeconds: 600 }) {
     this.chunks = [];
     this.sampleCount = 0;
+    this.stopped = false;
+    this.lastStopReason = "manual";
+    this.stopping = null;
+    this.extensionUncertain = false;
+    const hardMaxSamples = budget.hardLimitSeconds * SAMPLE_RATE;
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
@@ -34,27 +48,40 @@ export class MicrophoneRecorder {
       } catch {
         this.context = new AudioContext();
       }
-      if (onSamples && this.context.sampleRate !== SAMPLE_RATE) {
-        throw new Error(
-          "This browser cannot capture at 16 kHz for live transcription. Turn off Live transcription and record again.",
-        );
-      }
       await this.context.audioWorklet.addModule("/assets/recorder-worklet.js");
-      this.node = new AudioWorkletNode(this.context, "diktator-recorder");
-      const maxSamples = this.context.sampleRate * MAX_DURATION_SECONDS;
+      this.node = new AudioWorkletNode(this.context, "diktator-recorder", {
+        processorOptions: {
+          sampleRate: this.context.sampleRate,
+          maxSamples: budget.intervalSeconds * SAMPLE_RATE,
+          hardMaxSamples,
+        },
+      });
       this.node.port.onmessage = (event) => {
         if (event.data.type === "samples") {
-          const samples = /** @type {Float32Array} */ (event.data.samples);
-          const remaining = maxSamples - this.sampleCount;
-          if (remaining > 0) {
-            const chunk = samples.subarray(0, remaining);
-            this.chunks.push(chunk);
-            this.sampleCount += chunk.length;
-            onSamples?.(chunk);
-            this.onLevel?.(rms(chunk));
+          const pcm = /** @type {Int16Array} */ (event.data.pcm);
+          if (this.sampleCount + pcm.length > hardMaxSamples) return;
+          this.chunks.push(pcm);
+          this.sampleCount += pcm.length;
+          this.node?.port.postMessage({ type: "ack" });
+          if (onSamples) {
+            const samples = new Float32Array(pcm.length);
+            for (let i = 0; i < pcm.length; i++) samples[i] = pcm[i] / 32768;
+            onSamples(samples);
           }
+          this.onLevel?.(event.data.level);
         } else if (event.data.type === "stopped") {
+          this.stopped = true;
+          this.lastStopReason = event.data.reason;
+          this.onExtended?.(false);
+          this.onExtended = null;
           this.onStopped?.();
+          if (event.data.reason !== "manual") this.onAutomaticStop?.(event.data.reason);
+        } else if (
+          event.data.type === "extended" &&
+          event.data.requestId === this.extensionRequestId
+        ) {
+          this.onExtended?.(Boolean(event.data.accepted));
+          this.onExtended = null;
         }
       };
       const source = this.context.createMediaStreamSource(this.stream);
@@ -67,63 +94,84 @@ export class MicrophoneRecorder {
       throw error;
     }
   }
-
-  /** @returns {Promise<Blob>} */
-  async stop() {
-    const context = this.context;
-    const node = this.node;
-    if (!context || !node) throw new Error("No recording is active.");
-    try {
-      await new Promise((resolve, reject) => {
-        const timeout = setTimeout(
-          () => reject(new Error("Microphone capture did not stop.")),
-          2000,
+  /** @param {number} seconds @returns {Promise<boolean>} */
+  async extend(seconds) {
+    if (!this.node || this.stopped || this.stopping || this.onExtended || this.extensionUncertain)
+      return false;
+    const requestId = ++this.extensionRequestId;
+    return await new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        this.onExtended = null;
+        this.extensionUncertain = true;
+        this.onWarning?.(
+          "The extension could not be confirmed. Capture will stop at the displayed deadline.",
+          "extension",
         );
-        this.onStopped = () => {
-          clearTimeout(timeout);
-          resolve(undefined);
-        };
-        node.port.postMessage({ type: "stop" });
-      });
-      const samples = joinSamples(this.chunks, context.sampleRate * MAX_DURATION_SECONDS);
-      if (samples.length === 0) throw new Error("No audio was captured. Check your microphone.");
-      // Release the device before resampling a potentially long recording.
-      for (const track of this.stream?.getTracks() ?? []) track.stop();
-      this.stream = null;
-      const resampled = await resample(samples, context.sampleRate);
-      return new Blob([encodeWav(resampled)], { type: "audio/wav" });
+        resolve(false);
+      }, 2000);
+      this.onExtended = (accepted) => {
+        clearTimeout(timeout);
+        resolve(accepted);
+      };
+      this.node?.port.postMessage({ type: "extend", requestId, maxSamples: seconds * SAMPLE_RATE });
+    });
+  }
+  /** @returns {Promise<Blob>} */
+  stop() {
+    if (this.stopping) return this.stopping;
+    this.stopping = this.finish();
+    return this.stopping;
+  }
+  /** @returns {Promise<Blob>} */
+  async finish() {
+    if (!this.context || !this.node) throw new Error("No recording is active.");
+    try {
+      if (!this.stopped)
+        await new Promise((resolve) => {
+          const timeout = setTimeout(() => {
+            this.node?.disconnect();
+            this.onWarning?.(
+              "The audio thread did not confirm stopping. The received audio is saved; the last unconfirmed audio may be missing.",
+              "integrity",
+            );
+            resolve(undefined);
+          }, 2000);
+          this.onStopped = () => {
+            clearTimeout(timeout);
+            resolve(undefined);
+          };
+          this.node?.port.postMessage({ type: "stop" });
+        });
+      if (!this.sampleCount) throw new Error("No audio was captured. Check your microphone.");
+      const header = encodeWav(new Float32Array());
+      const view = new DataView(header);
+      view.setUint32(4, 36 + this.sampleCount * 2, true);
+      view.setUint32(40, this.sampleCount * 2, true);
+      // Blob copies bounded PCM chunks; no full-duration join or resampling buffer.
+      return new Blob(
+        [header, ...this.chunks.map((chunk) => /** @type {ArrayBuffer} */ (chunk.buffer))],
+        { type: "audio/wav" },
+      );
     } finally {
       this.chunks = [];
       await this.release();
     }
   }
-
   async release() {
     for (const track of this.stream?.getTracks() ?? []) track.stop();
     this.stream = null;
-    this.node?.disconnect();
+    if (this.node) {
+      this.node.port.onmessage = null;
+      this.node.port.close?.();
+      this.node.disconnect();
+    }
     this.node = null;
     this.onStopped = null;
+    this.onExtended?.(false);
+    this.onExtended = null;
+    this.chunks = [];
     if (this.context && this.context.state !== "closed") await this.context.close();
     this.context = null;
+    this.stopping = null;
   }
-}
-
-/** Use the browser's audio resampler when the microphone context has another rate.
- * @param {Float32Array} samples
- * @param {number} sourceRate
- * @returns {Promise<Float32Array>}
- */
-async function resample(samples, sourceRate) {
-  if (sourceRate === SAMPLE_RATE) return samples;
-  const length = Math.max(1, Math.round((samples.length * SAMPLE_RATE) / sourceRate));
-  const context = new OfflineAudioContext(1, length, SAMPLE_RATE);
-  const buffer = context.createBuffer(1, samples.length, sourceRate);
-  buffer.getChannelData(0).set(samples);
-  const source = context.createBufferSource();
-  source.buffer = buffer;
-  source.connect(context.destination);
-  source.start();
-  const result = await context.startRendering();
-  return result.getChannelData(0);
 }

@@ -3236,10 +3236,28 @@
             ],
             "title": "Keyboard Bindings"
           },
+          "recording_interval_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "multipleOf": 60.0,
+                "minimum": 60.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recording Interval Seconds"
+          },
           "reset": {
             "items": {
               "type": "string",
-              "enum": ["copy_preamble", "share_include_preamble", "keyboard_bindings"]
+              "enum": [
+                "copy_preamble",
+                "share_include_preamble",
+                "keyboard_bindings",
+                "recording_interval_seconds"
+              ]
             },
             "type": "array",
             "title": "Reset"
@@ -3311,6 +3329,60 @@
             "title": "Keyboard Binding Pattern",
             "default": "Ctrl+Shift+(digit, ArrowUp or ArrowDown)"
           },
+          "recording_interval_seconds": {
+            "type": "integer",
+            "title": "Recording Interval Seconds",
+            "default": 1800
+          },
+          "requested_recording_interval_seconds": {
+            "type": "integer",
+            "title": "Requested Recording Interval Seconds",
+            "default": 1800
+          },
+          "default_recording_interval_seconds": {
+            "type": "integer",
+            "title": "Default Recording Interval Seconds"
+          },
+          "effective_default_recording_interval_seconds": {
+            "type": "integer",
+            "title": "Effective Default Recording Interval Seconds"
+          },
+          "recording_interval_is_default": {
+            "type": "boolean",
+            "title": "Recording Interval Is Default",
+            "default": true
+          },
+          "recording_interval_constrained": {
+            "type": "boolean",
+            "title": "Recording Interval Constrained",
+            "default": false
+          },
+          "recording_interval_constraint_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recording Interval Constraint Reason"
+          },
+          "min_recording_interval_seconds": {
+            "type": "integer",
+            "title": "Min Recording Interval Seconds",
+            "default": 60
+          },
+          "max_recording_interval_seconds": {
+            "type": "integer",
+            "title": "Max Recording Interval Seconds",
+            "default": 3600
+          },
+          "recording_interval_step_seconds": {
+            "type": "integer",
+            "title": "Recording Interval Step Seconds",
+            "default": 60
+          },
           "revision": {
             "type": "integer",
             "title": "Revision",
@@ -3358,7 +3430,7 @@
           "hard_limit_seconds": {
             "type": "integer",
             "title": "Hard Limit Seconds",
-            "default": 600
+            "default": 3600
           },
           "wav_container_allowance_bytes": {
             "type": "integer",
@@ -3373,7 +3445,7 @@
           "upload_timeout_seconds": {
             "type": "number",
             "title": "Upload Timeout Seconds",
-            "default": 180.0
+            "default": 1044.0
           },
           "batch_timeout_seconds": {
             "type": "number",
@@ -3394,6 +3466,37 @@
             "type": "string",
             "title": "Preference Etag"
           },
+          "recording_interval_seconds": {
+            "type": "integer",
+            "title": "Recording Interval Seconds"
+          },
+          "requested_recording_interval_seconds": {
+            "type": "integer",
+            "title": "Requested Recording Interval Seconds"
+          },
+          "default_recording_interval_seconds": {
+            "type": "integer",
+            "title": "Default Recording Interval Seconds"
+          },
+          "recording_interval_is_default": {
+            "type": "boolean",
+            "title": "Recording Interval Is Default"
+          },
+          "recording_interval_constrained": {
+            "type": "boolean",
+            "title": "Recording Interval Constrained"
+          },
+          "recording_interval_constraint_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recording Interval Constraint Reason"
+          },
           "client_deadlines_ms": {
             "$ref": "#/components/schemas/ClientDeadlines",
             "readOnly": true
@@ -3412,16 +3515,36 @@
             "type": "string",
             "title": "Policy Revision",
             "readOnly": true
+          },
+          "warning_lead_seconds": {
+            "type": "integer",
+            "title": "Warning Lead Seconds",
+            "description": "Warn this many seconds before each acknowledged deadline.",
+            "readOnly": true
+          },
+          "extension_seconds": {
+            "type": "integer",
+            "title": "Extension Seconds",
+            "description": "Offer only this complete extension within the frozen hard ceiling.",
+            "readOnly": true
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
           "preference_etag",
+          "recording_interval_seconds",
+          "requested_recording_interval_seconds",
+          "default_recording_interval_seconds",
+          "recording_interval_is_default",
+          "recording_interval_constrained",
+          "recording_interval_constraint_reason",
           "client_deadlines_ms",
           "max_pcm_bytes",
           "max_audio_bytes",
-          "policy_revision"
+          "policy_revision",
+          "warning_lead_seconds",
+          "extension_seconds"
         ],
         "title": "PublicRecordingPolicy",
         "description": "Agreed limits with the validator of one read of the shared local preferences."

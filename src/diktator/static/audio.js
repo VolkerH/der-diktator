@@ -1,6 +1,5 @@
 /** The inference server's sample rate. */
 export const SAMPLE_RATE = 16_000;
-export const MAX_DURATION_SECONDS = 600;
 
 /** Raw little-endian PCM for the live stream (without a WAV header).
  * @param {Float32Array} samples

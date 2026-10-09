@@ -10,6 +10,9 @@ const policy = {
   protocol_version: 1,
   policy_revision: "test",
   hard_limit_seconds: 600,
+  recording_interval_seconds: 600,
+  warning_lead_seconds: 60,
+  extension_seconds: 600,
   max_audio_bytes: 20000044,
   max_pcm_bytes: 19200000,
   max_stream_frame_bytes: 65536,
@@ -39,6 +42,13 @@ for (const broken of [
   { ...policy, protocol_version: 0 },
   { ...policy, hard_limit_seconds: 61 },
   { ...policy, batch_timeout_seconds: Infinity },
+  { ...policy, warning_lead_seconds: -1 },
+  { ...policy, warning_lead_seconds: 601 },
+  { ...policy, warning_lead_seconds: undefined },
+  { ...policy, extension_seconds: 0 },
+  { ...policy, extension_seconds: 61 },
+  { ...policy, extension_seconds: 660 },
+  { ...policy, extension_seconds: undefined },
 ])
   test(`unusable capture discovery fails closed: ${JSON.stringify(broken)}`, async (t) => {
     t.mock.method(globalThis, "fetch", async () => Response.json(broken));

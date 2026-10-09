@@ -3,7 +3,7 @@
 import hashlib
 import math
 import os
-from typing import Literal, Self, override
+from typing import Literal, Self, cast, override
 
 from pydantic import BaseModel, ConfigDict, computed_field, model_validator
 
@@ -22,15 +22,40 @@ class RecordingPolicy(BaseModel):
 
     model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
     protocol_version: Literal[1] = 1
-    hard_limit_seconds: int = 600
+    hard_limit_seconds: int = 3600
     # Includes the usual 44-byte header and bounded optional WAV metadata. This
     # preserves the existing 20,000,044-byte upload ceiling at 600 seconds.
     wav_container_allowance_bytes: int = 800_044
     max_stream_frame_bytes: int = 65_536
-    upload_timeout_seconds: float = 180.0
+    upload_timeout_seconds: float = 1044.0
     batch_timeout_seconds: float = 180.0
     live_finalization_timeout_seconds: float = 180.0
     client_timeout_margin_seconds: float = 10.0
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_upload_budget(cls, values: object) -> object:
+        # Preserve the former ceiling's minimum full-body throughput: 20,000,044
+        # bytes per 180 seconds (~0.889 Mbit/s). Explicit budgets remain authoritative.
+        if isinstance(values, dict) and "upload_timeout_seconds" not in values:
+            inputs = cast(dict[str, object], values)
+            ceiling = (
+                inputs["hard_limit_seconds"]
+                if "hard_limit_seconds" in inputs
+                else cls.model_fields["hard_limit_seconds"].default
+            )
+            allowance = (
+                inputs["wav_container_allowance_bytes"]
+                if "wav_container_allowance_bytes" in inputs
+                else cls.model_fields["wav_container_allowance_bytes"].default
+            )
+            if type(ceiling) is int and type(allowance) is int:
+                values = inputs | {
+                    "upload_timeout_seconds": float(
+                        math.ceil((ceiling * 32_000 + allowance) * 180 / 20_000_044)
+                    )
+                }
+        return values
 
     @model_validator(mode="after")
     def valid_budgets(self) -> Self:
@@ -118,13 +143,31 @@ class PublicRecordingPolicy(RecordingPolicy):
     """Agreed limits with the validator of one read of the shared local preferences."""
 
     preference_etag: str
+    recording_interval_seconds: int
+    requested_recording_interval_seconds: int
+    default_recording_interval_seconds: int
+    recording_interval_is_default: bool
+    recording_interval_constrained: bool
+    recording_interval_constraint_reason: str | None
 
     @computed_field
     @property
     @override
     def policy_revision(self) -> str:
-        # The preference validator is a separate contract and cannot change the
-        # web/engine agreement hash. PR2 may add resolved interval fields here.
+        # Preference fields and their validator are separate from the
+        # web/engine agreement hash, which covers only operator policy.
         return RecordingPolicy.model_validate(
             {key: getattr(self, key) for key in RecordingPolicy.model_fields}
         ).policy_revision
+
+    @computed_field
+    @property
+    def warning_lead_seconds(self) -> int:
+        """Warn this many seconds before each acknowledged deadline."""
+        return 60
+
+    @computed_field
+    @property
+    def extension_seconds(self) -> int:
+        """Offer only this complete extension within the frozen hard ceiling."""
+        return self.recording_interval_seconds

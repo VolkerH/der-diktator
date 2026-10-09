@@ -1,14 +1,15 @@
 import { keyboardControls, preserveFocus } from "./keyboard.js";
 import { exportControls } from "./exports.js";
 import { ApiRequestError } from "./errors.js";
-import { MAX_DURATION_SECONDS, wordCount } from "./audio.js";
+import { wordCount } from "./audio.js";
 import { chatApi, spliceText } from "./chats.js";
 import { groupApi } from "./groups.js";
 import { GroupSidebar } from "./group-sidebar.js";
 import { modelPicker, waitForModelReady } from "./models.js";
 import { LiveTranscriber } from "./live.js";
-import { recordingPolicy, recordingTimeoutMs } from "./recording-policy.js";
 import { MicrophoneRecorder } from "./recorder.js";
+import { RecordingController, RecordingBeep } from "./recording-controller.js";
+import { recordingPolicy, recordingTimeoutMs } from "./recording-policy.js";
 
 /** @typedef {import("./chats.js").Chat} Chat */
 /** @typedef {import("./chats.js").ChatSummary} ChatSummary */
@@ -81,6 +82,66 @@ const modelSettingsClose = /** @type {HTMLButtonElement} */ (
 );
 const splashShownAt = performance.now();
 const recorder = new MicrophoneRecorder();
+const extensionButton = /** @type {HTMLButtonElement} */ (
+  document.getElementById("extend-recording")
+);
+const recordingWarning = /** @type {HTMLElement} */ (document.getElementById("recording-warning"));
+const remainingTime = /** @type {HTMLElement} */ (document.getElementById("recording-remaining"));
+const beep = new RecordingBeep();
+/** @type {string | null} */
+let captureNotice = null;
+const capture = new RecordingController({
+  warn: () => {
+    recordingWarning.hidden = false;
+    recordingWarning.textContent = `${capture.snapshot?.warning_lead_seconds === 60 ? "One minute" : `${capture.snapshot?.warning_lead_seconds} seconds`} remaining. Extend the recording or it will stop automatically.`;
+    beep.play();
+  },
+  automaticStop: (reason) => {
+    if (reason === "capture_queue_overflow")
+      captureNotice =
+        "Capture stopped because this tab could not keep up. The captured audio is kept for recovery.";
+    void stopRecording(true);
+  },
+});
+recorder.onWarning = (
+  /** @type {string} */ message,
+  /** @type {"extension" | "integrity"} */ kind,
+) => {
+  if (kind === "extension") {
+    recordingWarning.textContent = message;
+    recordingWarning.hidden = false;
+  } else {
+    captureNotice = message;
+  }
+};
+recorder.onAutomaticStop = (/** @type {string} */ reason) => capture.automaticStop(reason);
+function updateRecordingDeadline() {
+  if (!recording) {
+    remainingTime.textContent = "";
+    extensionButton.hidden = true;
+    return;
+  }
+  const remaining = Math.max(
+    0,
+    Math.ceil(capture.deadlineSeconds - capture.elapsed(recorder.sampleCount)),
+  );
+  remainingTime.textContent = `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")} remaining`;
+  extensionButton.hidden = false;
+  extensionButton.disabled = !capture.canExtend;
+  extensionButton.textContent = `Extend by ${(capture.snapshot?.extension_seconds ?? 0) / 60} min`;
+  extensionButton.title = capture.canExtend
+    ? "Add one full original interval"
+    : "A full original interval cannot fit within the recording limit, or capture is stopping.";
+}
+extensionButton.addEventListener("click", async () => {
+  const extending = capture.extend((seconds) => recorder.extend(seconds));
+  updateRecordingDeadline();
+  if (await extending) {
+    recordingWarning.hidden = true;
+    status.textContent = "Recording extended by one full original interval.";
+  }
+  updateRecordingDeadline();
+});
 /** @type {LiveTranscriber | null} */
 let activeStream = null;
 let recording = false;
@@ -89,14 +150,12 @@ let modelReady = false;
 let modelLive = false;
 let livePreference = liveMode.checked;
 let recordingModel = "phonon-2";
-let recordingCaptureLimitSeconds = MAX_DURATION_SECONDS;
 const models = modelPicker((ready, live) => {
   modelReady = ready;
   modelLive = live;
   if (!recording && !busy) liveMode.checked = live && livePreference;
   updateControls();
 });
-let startedAt = 0;
 /** @type {number | undefined} */
 let timerId;
 /** The open chat; null is a new chat that is stored once it has text or audio.
@@ -1402,7 +1461,7 @@ async function storeRecording(audio) {
       recording: stored,
       chatEtag,
       chatRevision,
-    } = await chatApi.addRecording(target.id, audio, recordingId);
+    } = await chatApi.addRecording(target.id, audio, recordingId, capture.snapshot);
     if (generation !== navigationGeneration) return { chatId: target.id, recording: stored };
     // Chat-ETag also covers anything changed elsewhere since this tab's version. Take it
     // up only when this upload is the sole change, so deletion still detects unseen
@@ -1431,14 +1490,19 @@ async function storeAndInsert(audio, text, recoverLive = false) {
     try {
       if (recoverLive) {
         status.textContent = "Waiting for the model to recover… Your recording is kept.";
-        const policy = await recordingPolicy();
+        const policy = capture.snapshot || (await recordingPolicy());
         await waitForModelReady(recordingModel, recordingTimeoutMs(policy, "batch"));
       }
       status.textContent = "Transcribing your recording…";
       text =
         stored instanceof Error
-          ? await chatApi.transcribe(audio, recordingModel)
-          : await chatApi.transcribeRecording(stored.chatId, stored.recording.id, recordingModel);
+          ? await chatApi.transcribe(audio, recordingModel, capture.snapshot)
+          : await chatApi.transcribeRecording(
+              stored.chatId,
+              stored.recording.id,
+              recordingModel,
+              capture.snapshot,
+            );
     } catch (error) {
       if (stored instanceof Error) {
         const detail = error instanceof Error ? error.message : "Transcription failed.";
@@ -1619,13 +1683,18 @@ recordButton.addEventListener("click", async () => {
   stopPlayback();
   renderClips();
   insertion = captureInsertion();
-  status.textContent = "Waiting for microphone permission…";
+  status.textContent = "Checking recording limits…";
+  const beepReady = beep.prepare();
   try {
-    status.textContent = "Checking recording policy…";
     const policy = await recordingPolicy();
-    // This intermediate release retains the existing ten-minute capture path.
-    // Smaller operator ceilings are safe; longer capture is delivered in PR2.
-    recordingCaptureLimitSeconds = Math.min(600, policy.hard_limit_seconds);
+    capture.prepare(policy, recordingModel);
+    await beepReady;
+    const budget = {
+      intervalSeconds: policy.recording_interval_seconds,
+      hardLimitSeconds: policy.hard_limit_seconds,
+    };
+    recordingWarning.hidden = true;
+    captureNotice = null;
     if (liveMode.checked) {
       status.textContent = "Connecting live transcription…";
       const stream = new LiveTranscriber(
@@ -1639,7 +1708,10 @@ recordButton.addEventListener("click", async () => {
             status.textContent = "Recording continues. Stop to transcribe the complete recording.";
           }
         },
-        { finishTimeoutMs: recordingTimeoutMs(policy, "live") },
+        {
+          finishTimeoutMs: recordingTimeoutMs(policy, "live"),
+          maxFrameBytes: policy.max_stream_frame_bytes,
+        },
       );
       activeStream = stream;
       const url = new URL("/api/stream", window.location.href);
@@ -1647,12 +1719,13 @@ recordButton.addEventListener("click", async () => {
       url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
       await stream.start(url.href);
       status.textContent = "Waiting for microphone permission…";
-      await recorder.start((samples) => stream.sendSamples(samples));
+      await recorder.start((samples) => stream.sendSamples(samples), budget);
     } else {
-      await recorder.start();
+      await recorder.start(null, budget);
     }
     recording = true;
-    startedAt = performance.now();
+    capture.started();
+    updateRecordingDeadline();
     updateTimer(0);
     if (activeStream?.failure) {
       showError(activeStream.failure);
@@ -1663,10 +1736,10 @@ recordButton.addEventListener("click", async () => {
         : "Recording. Stop when you’re ready to transcribe.";
     }
     timerId = window.setInterval(() => {
-      const elapsed = (performance.now() - startedAt) / 1000;
-      updateTimer(Math.min(elapsed, recordingCaptureLimitSeconds));
+      updateTimer(capture.elapsed(recorder.sampleCount));
       pushLevel();
-      if (elapsed >= recordingCaptureLimitSeconds) void stopRecording();
+      capture.tick(recorder.sampleCount);
+      updateRecordingDeadline();
     }, 60);
   } catch (error) {
     activeStream?.cancel();
@@ -1678,26 +1751,34 @@ recordButton.addEventListener("click", async () => {
     } else {
       showError(error);
     }
+    capture.reset();
+    await beep.release();
     status.textContent = "Recording hasn’t started.";
   } finally {
     busy = false;
     updateControls();
+    if (recording && recorder.stopped) capture.automaticStop(recorder.lastStopReason);
   }
 });
 
-async function stopRecording() {
-  if (!recording || busy) return;
+async function stopRecording(automatic = false) {
+  if (!recording || busy || !capture.stopping()) return;
   window.clearInterval(timerId);
   recording = false;
   levels.fill(0);
   drawMeter();
   busy = true;
   updateControls();
-  status.textContent = "Preparing your recording…";
+  status.textContent = automatic
+    ? "Recording stopped automatically. Preparing your recording…"
+    : "Preparing your recording…";
+  recordingWarning.hidden = true;
+  updateRecordingDeadline();
   /** @type {Blob | null} */
   let audio = null;
   try {
     audio = await recorder.stop();
+    capture.finalizing();
     /** @type {string | null} */
     let text = null;
     if (activeStream && !activeStream.failure) {
@@ -1715,6 +1796,15 @@ async function stopRecording() {
   } finally {
     activeStream?.cancel();
     activeStream = null;
+    capture.reset();
+    await beep.release();
+    if (captureNotice)
+      showError(
+        new Error(
+          errorMessage.hidden ? captureNotice : `${errorMessage.textContent} ${captureNotice}`,
+        ),
+      );
+    if (automatic) status.textContent = `Recording stopped automatically. ${status.textContent}`;
     busy = false;
     updateControls();
     renderChats();

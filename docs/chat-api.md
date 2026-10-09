@@ -247,7 +247,7 @@ the chat cannot navigate away from a draft. Both attachment methods send unchang
 existing recording PUT endpoint with `Content-Type: audio/wav`. Browsers may
 report another MIME type or none; the server validates the bytes. The accepted
 format is 16 kHz mono signed 16-bit PCM WAV, within the operator's configured
-byte and duration limits (defaults: 20,000,044 bytes and 600 seconds). There is no
+byte and duration limits (defaults: 116,000,044 bytes and 3600 seconds). There is no
 conversion, resampling, stereo downmixing, or compressed-audio support.
 
 Uploading attaches a clip without modifying text or requiring a ready model.
