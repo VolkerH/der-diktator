@@ -20,9 +20,9 @@ Use **two feature PRs**, with the second based on the first:
 2. **Recording intervals in Settings and bounded capture with warnings/extensions.**
    Deliver the preference, effective snapshot, recorder changes, Settings field,
    countdown/beep and extension control together. The requested default is
-   **1800 seconds**; enable it only in this complete path. Target an initial hard ceiling of **3600 seconds**, validated to permit one
-   full default extension. The earlier
-   7200-second ceiling is a candidate requiring resource measurements, not an
+   **1800 seconds**; enable it only in this complete path. Target an initial hard
+   ceiling of **3600 seconds**, validated to permit one full default extension.
+   A 7200-second ceiling remains a candidate requiring resource measurements, not an
    accepted supported limit. This PR may close #6 when its acceptance is met;
    it leaves operator editing, restart orchestration and relocation in #9 open.
 
@@ -37,9 +37,12 @@ policy tests do not require rebuilding an image or downloading models.
 Define one immutable validated Python recording-policy type, used by the web
 application and engine at startup. It owns the hard duration ceiling, WAV byte
 budget, stream frame budget and batch/finalization timeout budgets. Derive the
-PCM body allowance from `duration_seconds * 16000 * 2`; add and document a bounded
-WAV-container allowance so already accepted short WAVs with metadata do not
-become accidentally invalid. The separate duration check remains authoritative.
+PCM body allowance from `hard_limit_seconds * 16000 * 2`; add a fixed default
+WAV-container allowance of **800,044 bytes**, including the usual 44-byte header
+and bounded metadata. This allowance does not scale with duration: the default
+600-second policy must yield exactly today's **20,000,044-byte** budget, so
+already accepted WAVs with metadata do not become invalid. Document any supported
+allowance override and its bounds. The separate duration check remains authoritative.
 Reject invalid/nonfinite values and incompatible budgets at startup. Keep the
 hard ceiling an integer multiple of 60, at least 60 seconds.
 
@@ -52,26 +55,41 @@ use the same validation. The engine owns enforcement for inference and the web
 owns upload/storage enforcement; sharing a class alone does not prove agreement.
 
 Add typed engine policy discovery and have the web compare enforcement-relevant
-values/revision before accepting new inference. Add a safe public recording
-snapshot, preferably `GET /api/recording-policy`, containing:
+values/revision before accepting new inference. The web sends its agreed revision
+with every internal batch admission (`X-Recording-Policy-Revision`) and live
+admission (`policy_revision` in the internal URL). The engine validates this
+precondition atomically before reserving native work, rejecting a stale revision
+with `configuration_mismatch`, including a restart between discovery and admission.
+Add a safe public recording snapshot, preferably `GET /api/recording-policy`, containing:
 
 - a protocol version and agreed policy revision, hard ceiling, byte/frame budgets;
-- request/upload and live-finalization budgets with units and clear meanings;
-- in PR 2, requested/default/effective interval and whether it was constrained;
+- request/upload and live-finalization budgets with units and clear meanings,
+  plus backend-derived `client_deadlines_ms` for upload, batch and live waiting;
+- in PR 2, requested/default/effective interval and whether it was constrained,
+  plus backend-defined `extension_seconds` and `warning_lead_seconds` (60 seconds);
 - the preference validator identifying the preference snapshot used, without
   creating a preference row or reserving the model.
 
 The web builds this response from one preference read and the effective agreed
 policy. Do not repurpose `/api/settings.policy_revision`: it currently hashes
-only a web settings display. Keep that endpoint compatible and document its
-relationship to the new agreement revision. Expose no addresses, paths or secrets.
+only a web settings display. Keep that endpoint compatible with additive fields:
+publish engine-independent `upload_timeout_seconds`,
+`client_timeout_margin_seconds` and backend-derived `client_upload_timeout_ms`
+there, so audio-save clients can discover their budgets even if engine discovery
+fails. Its display revision covers these added fields but does not attest engine
+agreement. Document this relationship to the new agreement revision. Expose no
+addresses, paths or secrets.
 Model selection stays in the model API; policy discovery is not a model reservation
 or a guarantee that a selected model is still ready when capture begins.
 
 Discovery failure or disagreement prevents the new browser from starting capture.
-Register a stable `configuration_mismatch` error (503) and distinguish it from an
-unreachable engine. Enforce agreement at inference admission as well as discovery,
-so other clients cannot bypass it. A missing/old engine policy capability fails
+Register a stable `configuration_mismatch` error (503) in the shared engine/web
+error registry and as a live terminal-event `code`. Document its recovery:
+the operator must restart both services with matching policy; clients must not
+retry automatically. Distinguish it from an unreachable engine. Enforce agreement
+at inference admission as well as discovery, so other web API clients cannot
+bypass it. Legacy direct engine clients without the optional revision precondition
+remain subject to current hard limits. A missing/old engine policy capability fails
 closed for coordinated recording; it must never be interpreted as a long-duration
 capability. Keep existing short upload/playback/export access usable where no engine
 is required. Existing clients without a snapshot remain subject to server hard
@@ -82,39 +100,54 @@ Do not promise that a snapshot survives a service restart. A disconnect is failu
 not completion; retained audio stays available for recovery. Revalidate batch or
 stored-recording inference against the current policy and give a clear rejection
 if the operator reduced limits since capture. Never silently truncate accepted
-input. A policy revision may be sent by new clients for diagnostic/precondition
-checks, but it is not authentication, retention permission or an idempotency key.
+input. External clients may send a policy revision for diagnostic/precondition
+checks; the required internal admission precondition still applies. A revision is
+not authentication, retention permission or an idempotency key.
 
 ## Interval preferences and frozen capture
 
 Use the existing SQLite preferences service and migration mechanism. Omission of
 `recording_interval_seconds` leaves it unchanged; explicit reset restores following
-the backend default, and null is invalid. Accept whole-minute integers from 60 up
-to the current operator ceiling. Use the existing required `If-Match`, 428/412
-errors and atomic preference updates. A numeric revision alone is insufficient:
-the strong preference ETag must also cover effective defaults and policy-derived
+the backend default, and null is invalid. Accept integer seconds, multiples of 60,
+from 60 up to the current operator ceiling. Use the existing required `If-Match`,
+428/412 errors and atomic preference updates. A numeric revision alone is
+insufficient: the strong preference ETag must also cover effective defaults and policy-derived
 fields, as it already covers keyboard and preamble defaults.
 
-For an operator ceiling below 1800, the effective default is
-`min(1800, hard_limit_seconds)`. Preserve any previously saved requested interval
-when a later restart lowers the ceiling; expose both requested and constrained
-effective values and the reason. New invalid explicit writes are rejected, not
-silently clamped. The Settings dialog must show the effective next-recording
-interval and any constraint. Reads do not rewrite stored preferences, and a
+The effective default is `min(1800, hard_limit_seconds)`. For a saved request,
+the effective interval is `min(requested_recording_interval_seconds, hard_limit_seconds)`.
+Preserve that saved request when a later restart lowers the ceiling; expose both
+requested and constrained effective values and the reason. New invalid explicit
+writes are rejected, not silently clamped. The Settings dialog must show the
+effective next-recording interval and any constraint. Reads do not rewrite stored preferences, and a
 policy/default change must invalidate an old preference validator. A default of
 1800 is a shipped product default only once PR 2's complete path is validated.
 
 Before opening the microphone, fetch the agreed snapshot. Freeze it for this
-recording, including original interval, ceiling, model selection and budgets;
-a subsequent settings save affects the next recording. Start timing at actual
-capture start. Each extension adds exactly the frozen original interval to the
-current deadline. If that whole interval cannot fit below the ceiling, disable
-extension and explain why. Do not shorten an advertised extension.
+recording, including original effective interval, extension amount, warning lead,
+ceiling, model selection and budgets; a subsequent settings save affects the next
+recording. Start timing at actual capture start. The original interval is the
+constrained effective value,
+`min(requested or default, hard_limit_seconds)`, rather than an unconstrained saved
+request. For example, a saved request of 2400 seconds under an 1800-second ceiling
+freezes an 1800-second interval and extension amount. The backend publishes that
+same effective value as `extension_seconds`; each extension adds exactly this
+frozen amount to the current deadline. If that whole interval would put the
+deadline above the frozen ceiling, disable extension and explain why. Do not
+shorten an advertised extension.
 
 The cooperative interval belongs to client capture; server enforcement remains
-sample/byte based at the hard ceiling. A TUI can use the same discovery and
-preference APIs and implement its own presentation. No server session registry
-or WebSocket extension command is necessary for a local soft deadline.
+sample/byte based at the hard ceiling. The typed snapshot publishes every rule
+input a client needs: effective interval, extension amount, warning lead and
+ceiling. The feature API document must list client obligations: freeze these
+inputs at capture start, apply the published extension only when the whole amount
+fits within the frozen ceiling, warn once per deadline using the published lead,
+re-arm on extension, and stop/finalize once at the deadline or sample cap. Clients
+retain capture buffers through finalization and preserve recovery audio after
+failure. A TUI can use the same discovery and preference APIs with arithmetic and
+its own device/presentation handling, without copying application constants.
+No server session registry or WebSocket extension command is necessary for a local
+soft deadline.
 
 ## Capture, warnings and memory
 
@@ -133,8 +166,9 @@ a monotonic clock reconciled with captured samples. Browser suspension cannot
 promise a timely beep, but must not silently drop capture while showing an
 unqualified continuing-recording state once execution resumes.
 
-Warn visibly and accessibly at 60 seconds remaining, including immediately for a
-one-minute interval. Initialize beep capability through the recording gesture,
+Warn visibly and accessibly at the snapshot's `warning_lead_seconds` remaining
+(backend value: 60 seconds), including immediately for a one-minute interval.
+Initialize beep capability through the recording gesture,
 warn once per deadline, and re-arm on extension. Keep the warning when sound is
 muted/suspended. Announce automatic stopping and finalization explicitly.
 
@@ -163,7 +197,9 @@ and reviewing bounded software behavior.
 Replace unrelated 180/190-second browser/web assumptions with documented budgets
 from policy. Distinguish capture duration, upload deadline, batch response wait and
 post-end live finalization. Browser waiting should leave room for an authoritative
-server failure before its own timeout. An increased wait budget is not a claim
+server failure before its own timeout. The backend derives the client deadlines
+from these budgets; clients use the published millisecond values rather than
+duplicating timeout formulas. An increased wait budget is not a claim
 that all models finish long speech within it; record real-model timing separately.
 
 Fix #39 before advertising longer sessions: normal `done` can release the stream

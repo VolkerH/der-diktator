@@ -12,7 +12,10 @@ FastAPI services, one SQLite owner, separate inference/model ownership and brows
 clients over public APIs. No database replacement, generic event bus, queue or
 session framework is warranted by the next recording feature.
 
-[#20–#22](https://github.com/VolkerH/der-diktator/issues/18) delivered the shared
+PRs [#20](https://github.com/VolkerH/der-diktator/pull/20),
+[#21](https://github.com/VolkerH/der-diktator/pull/21) and
+[#22](https://github.com/VolkerH/der-diktator/pull/22)
+(foundation [#18](https://github.com/VolkerH/der-diktator/issues/18)) delivered the shared
 errors, SQLAlchemy/Alembic storage and conditional writes/resource retries.
 `storage.py`, `db/`, `chats.py` and `preferences.py` preserve separate API/persistence
 models, short transactions, actor-scoped access and preferences. The accepted
@@ -56,7 +59,8 @@ that historical browser evidence as a fresh hardware test.
 
 For this reconciliation, focused tests were rerun for API schemas, SQLite settings
 and migrations, data-directory ownership, import recovery, conditional writes and
-read-only effective settings. See the accompanying PR for the exact result.
+read-only effective settings. See [PR #40](https://github.com/VolkerH/der-diktator/pull/40)
+for the exact result.
 The narrow follow-up #39 does not reopen #18's scoped foundation acceptance or
 imply that a generic job system was part of it.
 
