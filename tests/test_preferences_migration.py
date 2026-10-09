@@ -19,7 +19,7 @@ def test_preferences_upgrade_preserves_populated_group_database(tmp_path: Path) 
     config = Config()
     migrations = Path(__file__).parents[1] / "src/diktator/db/migrations"
     config.set_main_option("script_location", str(migrations))
-    assert ScriptDirectory.from_config(config).get_heads() == ["0006_keyboard_bindings"]
+    assert ScriptDirectory.from_config(config).get_heads() == ["0007_recording_interval"]
     engine = open_engine(tmp_path / DATABASE_NAME)
     try:
         with engine.connect().execution_options(write=True) as connection:
@@ -53,7 +53,7 @@ def test_preferences_upgrade_preserves_populated_group_database(tmp_path: Path) 
             assert connection.exec_driver_sql("PRAGMA foreign_key_check").all() == []
             assert (
                 connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar()
-                == "0006_keyboard_bindings"
+                == "0007_recording_interval"
             )
             assert connection.exec_driver_sql("SELECT count(*) FROM preferences").scalar() == 0
         preferences = PreferenceService(engine)

@@ -51,6 +51,7 @@ The error codes below are implemented:
 | `precondition_required`                    | 428  | Read the resource and supply its validator before writing.                        |
 | `invalid_export`                           | 400  | Enter non-whitespace draft/preamble text.                                         |
 | `text_too_large`                           | 413  | Reduce the draft to the configured transcript limit.                              |
+| `invalid_recording_interval` | 422 | The requested interval exceeds the current operator ceiling; choose a shorter interval. |
 | `preferences_unavailable`                  | 503  | Preferences cannot be read; retain the draft and retry later.                     |
 | `persistence_failed`                       | 503  | Preference write failed; refetch before retrying.                                 |
 | `idempotency_conflict`                     | 409  | Same key, different input; reconcile the original operation.                      |

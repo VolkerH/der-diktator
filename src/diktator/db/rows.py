@@ -102,5 +102,6 @@ class PreferenceRow(Base):
     )
     copy_preamble: Mapped[str | None] = mapped_column(Text)
     keyboard_bindings: Mapped[str | None] = mapped_column(Text)
+    recording_interval_seconds: Mapped[int | None] = mapped_column(nullable=True)
     share_include_preamble: Mapped[bool] = mapped_column(default=False, server_default="0")
     revision: Mapped[int] = mapped_column(default=1)

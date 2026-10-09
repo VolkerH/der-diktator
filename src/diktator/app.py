@@ -226,7 +226,9 @@ def create_app(
         return effective_settings(settings)
 
     def preferences() -> PreferenceService:
-        return PreferenceService(app.state.storage.engine)
+        return PreferenceService(
+            app.state.storage.engine, hard_limit_seconds=settings.max_duration_seconds
+        )
 
     @app.get("/api/recording-policy", responses=error_responses(503, 504))
     async def get_recording_policy(actor_id: Actor) -> PublicRecordingPolicy:
