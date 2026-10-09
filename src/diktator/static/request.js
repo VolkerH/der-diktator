@@ -1,9 +1,9 @@
 import { ApiRequestError } from "./errors.js";
 
 /** Share error decoding and a deadline covering both fetch and response-body reads.
- * @param {string} path @param {RequestInit} [options] */
-export async function request(path, options = {}) {
-  const deadline = AbortSignal.timeout(190_000);
+ * @param {string} path @param {RequestInit} [options] @param {number} [timeoutMs] */
+export async function request(path, options = {}, timeoutMs = 190_000) {
+  const deadline = AbortSignal.timeout(timeoutMs);
   const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
   const response = await fetch(path, { ...options, signal });
   const result =

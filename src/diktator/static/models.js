@@ -1,3 +1,5 @@
+import { request } from "./request.js";
+
 import { ApiRequestError } from "./errors.js";
 
 /** @typedef {{ id: string, name: string, languages: string, language_labels?: string[], download_mb: number, live: boolean, installed: boolean, state: string, message: string }} ModelStatus */
@@ -295,4 +297,29 @@ export function modelPicker(onChange) {
       updateActions();
     },
   };
+}
+
+/** Wait for owned live cleanup/reload before submitting one batch fallback.
+ * No inference or activation is retried; terminal failures preserve the clip.
+ * @param {string} modelId @param {number} timeoutMs */
+export async function waitForModelReady(modelId, timeoutMs) {
+  const deadline = performance.now() + timeoutMs;
+  while (true) {
+    const remaining = deadline - performance.now();
+    if (remaining <= 0)
+      throw new Error(
+        "Model recovery is still pending. Keep the clip and retry when the model is ready.",
+      );
+    const { body } = await request("/api/models", {}, Math.min(5000, Math.ceil(remaining)));
+    const state = /** @type {ModelsStatus} */ (body);
+    const model = state?.models?.find((item) => item.id === modelId);
+    if (!model || model.state === "error")
+      throw new Error(model?.message || "Model recovery failed. Use model, then retry the clip.");
+    if (!state.busy && state.active === modelId && model.state === "ready") return;
+    if (!state.busy && model.state !== "loading")
+      throw new Error("This model is no longer active. Choose Use model, then retry the clip.");
+    await new Promise((resolve) => {
+      setTimeout(resolve, Math.min(250, remaining));
+    });
+  }
 }

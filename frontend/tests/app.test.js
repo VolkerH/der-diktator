@@ -297,6 +297,27 @@ function chatServer() {
       group.revision++;
       return groupJson(group);
     }
+    if (url === "/api/recording-policy")
+      return json({
+        protocol_version: 1,
+        policy_revision: "test-policy",
+        hard_limit_seconds: 600,
+        max_audio_bytes: 20000044,
+        max_pcm_bytes: 19200000,
+        max_stream_frame_bytes: 65536,
+        upload_timeout_seconds: 180,
+        batch_timeout_seconds: 180,
+        live_finalization_timeout_seconds: 180,
+        client_timeout_margin_seconds: 10,
+        client_deadlines_ms: { upload: 190000, batch: 570000, live: 200000 },
+        preference_etag: '"preferences-test"',
+      });
+    if (url === "/api/settings")
+      return json({
+        upload_timeout_seconds: 180,
+        client_timeout_margin_seconds: 10,
+        client_upload_timeout_ms: 190000,
+      });
     if (url === "/api/models") return json(server.models);
     if (url.startsWith("/api/models/")) {
       server.modelRequests.push(url);
@@ -484,6 +505,8 @@ async function appEnvironment(t, setup = () => {}, waitReady = true) {
   const wav = new Blob([encodeWav(samples)], { type: "audio/wav" });
   t.mock.method(MicrophoneRecorder.prototype, "start", async (onSamples = null) => {
     state.starts++;
+    if (server.microphoneError)
+      throw new DOMException("microphone unavailable", server.microphoneError);
     state.onSamples = onSamples;
   });
   t.mock.method(MicrophoneRecorder.prototype, "stop", async () => {
@@ -560,6 +583,7 @@ async function appEnvironment(t, setup = () => {}, waitReady = true) {
 
 async function startLive(app) {
   const starting = app.element("record").emit("click");
+  await setImmediate();
   const socket = app.sockets.at(-1);
   socket.event({ type: "ready" });
   await starting;
@@ -766,6 +790,7 @@ test("chats can be switched, started anew, and deleted after confirming", async 
 test("connection failure preserves existing text", async (t) => {
   const app = await appEnvironment(t, (server) => server.add("My existing edits."));
   const starting = app.element("record").emit("click");
+  await setImmediate();
   app.sockets[0].emit("error");
   await starting;
   assert.equal(app.state.starts, 0);
@@ -845,7 +870,9 @@ test("a different tab switching models cannot change the model of a recorded fal
   stream.close();
   await app.element("stop").emit("click");
   for (let i = 0; i < 10; i++) await setImmediate();
-  assert.deepEqual(app.server.requestedModels, ["phonon-2"]);
+  assert.deepEqual(app.server.requestedModels, []);
+  assert.match(app.element("error").textContent, /no longer active/);
+  assert.equal([...app.server.chats.values()][0].recordings.length, 1);
   assert.equal(app.element("record").disabled, true);
 });
 
@@ -3721,4 +3748,133 @@ test("settings shows application limits and opens models without discarding its 
   assert.equal(app.element("model-settings").open, true);
   assert.equal(app.element("preferences-dialog").open, true);
   assert.equal(app.element("copy-preamble-input").value, "Retained draft");
+});
+
+test("policy disagreement prevents both microphone access and live admission", async (t) => {
+  const app = await appEnvironment(t);
+  const fetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", async (url, options) =>
+    url === "/api/recording-policy"
+      ? Response.json(
+          { detail: "Recording policy differs between services.", code: "configuration_mismatch" },
+          { status: 503 },
+        )
+      : fetch(url, options),
+  );
+  await app.element("record").emit("click");
+  assert.equal(app.state.starts, 0);
+  assert.equal(app.sockets.length, 0);
+  assert.equal(app.element("record").disabled, false);
+  assert.match(app.element("error").textContent, /Recording policy differs/);
+});
+
+for (const name of ["NotAllowedError", "NotFoundError"])
+  test(`live microphone ${name} cancels before capture and leaves the model ready`, async (t) => {
+    const app = await appEnvironment(t, (server) => {
+      server.microphoneError = name;
+    });
+    const socket = await startLive(app);
+    assert.equal(socket.readyState, 3);
+    assert.equal(app.state.stops, 0);
+    assert.equal(app.server.models.active, "phonon-2");
+    assert.equal(app.element("record").disabled, false);
+    assert.equal(app.server.storedTranscriptions, 0);
+    assert.match(app.element("status").textContent, /hasn’t started/);
+  });
+
+async function waitForRecoveryWork(app) {
+  for (let attempt = 0; attempt < 200; attempt++) {
+    await new Promise((resolve) => {
+      setTimeout(resolve, 10);
+    });
+    if (!app.element("stage").classList.contains("busy")) return;
+  }
+  assert.fail("Recovery did not finish");
+}
+
+test("live fallback waits through cleanup and reloading before submitting the stored WAV once", async (t) => {
+  const app = await appEnvironment(t);
+  const socket = await startLive(app);
+  socket.close();
+  const fetch = globalThis.fetch;
+  let recoveryReads = 0;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (url === "/api/models") {
+      recoveryReads++;
+      if (recoveryReads < 3)
+        return Response.json({
+          ...app.server.models,
+          busy: recoveryReads === 1,
+          active: null,
+          models: app.server.models.models.map((item) => ({ ...item, state: "loading" })),
+        });
+    }
+    if (String(url).endsWith("/transcribe?model=phonon-2")) assert.ok(recoveryReads >= 3);
+    return fetch(url, options);
+  });
+  await app.element("stop").emit("click");
+  await waitForRecoveryWork(app);
+  assert.ok(recoveryReads >= 3);
+  assert.equal(app.server.storedTranscriptions, 1);
+  assert.equal(app.element("transcript").value, "Stored recording.");
+  assert.equal(app.element("error").hidden, true);
+});
+
+for (const recoveryError of [
+  "Live cleanup failed. Restart the engine before using a model.",
+  "Model could not load. Choose Use model to retry.",
+])
+  test(`failed live recovery retains the clip and shows: ${recoveryError}`, async (t) => {
+    const app = await appEnvironment(t, (server) => server.add("Keep my words."));
+    const socket = await startLive(app);
+    socket.close();
+    const fetch = globalThis.fetch;
+    t.mock.method(globalThis, "fetch", async (url, options) =>
+      url === "/api/models"
+        ? Response.json({
+            ...app.server.models,
+            busy: true,
+            models: app.server.models.models.map((item) => ({
+              ...item,
+              state: "error",
+              message: recoveryError,
+            })),
+          })
+        : fetch(url, options),
+    );
+    await app.element("stop").emit("click");
+    await waitForRecoveryWork(app);
+    assert.equal(app.server.storedTranscriptions, 0);
+    assert.equal(app.element("transcript").value, "Keep my words.");
+    assert.equal([...app.server.chats.values()][0].recordings.length, 1);
+    assert.match(app.element("error").textContent, new RegExp(recoveryError));
+  });
+
+test("live recovery failure also explains that an unsaved WAV remains in this tab", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    server.add("Keep my words.");
+    server.failRecordings = true;
+  });
+  const socket = await startLive(app);
+  socket.close();
+  const fetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", async (url, options) =>
+    url === "/api/models"
+      ? Response.json({
+          ...app.server.models,
+          models: app.server.models.models.map((item) => ({
+            ...item,
+            state: "error",
+            message: "Restart the engine.",
+          })),
+        })
+      : fetch(url, options),
+  );
+  await app.element("stop").emit("click");
+  await waitForRecoveryWork(app);
+  assert.equal(app.server.storedTranscriptions, 0);
+  assert.equal(app.element("transcript").value, "Keep my words.");
+  assert.match(app.element("error").textContent, /Restart the engine/);
+  assert.match(app.element("error").textContent, /could not be saved.*stays in this tab/u);
+  assert.equal(app.element("clips").children.length, 1);
 });

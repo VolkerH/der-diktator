@@ -8,7 +8,7 @@ remains instance state owned by the model API.
 
 `GET /api/settings` returns a typed `EffectiveSettings` snapshot in OpenAPI:
 `profile_scope`, `operator_editable: false`, `model_selection`, `policy_revision`,
-and `limits`. Each limit has `id`, `label`, integer `value`, `unit`,
+`upload_timeout_seconds`, `client_timeout_margin_seconds`, `client_upload_timeout_ms`, and `limits`. Each limit has `id`, `label`, integer `value`, `unit`,
 `source: application_configuration`, `editable: false`, and
 `restart_required: true`. The source identifies the running application's frozen
 configuration, including injected configuration; it does not infer whether an
@@ -21,8 +21,10 @@ The revision is a deterministic identifier for this public snapshot. It is not
 an engine handshake or write validator. Limits describe web application
 recording/upload/text enforcement; an engine may impose additional constraints.
 The default recording ceiling remains 600 seconds. A profile cannot change it.
-Coordinated cross-process policy revisions, warning intervals and recording
-extensions belong to #6, before any longer interval is advertised.
+Coordinated cross-process policy discovery and admission now use the separate
+`GET /api/recording-policy`; see the [recording contract](recording-policy-api.md).
+The web-only upload budgets remain usable when the engine is unavailable.
+Warning intervals and recording extensions remain the complete next #6 slice.
 
 Preferences use the existing `GET/PATCH /api/preferences` and ETag/If-Match
 contract. Stale writes return 412 without changing preferences. The dialog retains

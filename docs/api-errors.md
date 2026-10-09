@@ -34,7 +34,17 @@ Health checks keep their existing `{ready: false}` behavior when the engine cann
 
 A rejected model admission has not been queued. Timeout, transport loss and upstream failures can
 leave the outcome uncertain; clients must retain audio and reconcile engine state before an explicit
-retry. This change adds no retry loop, job recovery or cancellation confirmation.
+retry. Failed inference requests are not automatically retried. Live failures trigger owned
+stop/reap and model reload; the browser waits for readiness before one batch fallback
+using the complete saved WAV. Recovery failures preserve audio and require explicit
+action. Native batch timeouts have no job recovery or cancellation confirmation.
+
+Policy discovery and inference admission add 503 `configuration_mismatch` for a
+missing/old engine policy capability or disagreement, distinct from an unreachable
+engine's `engine_unavailable`. Operators restart both services with matching inputs to
+resolve `configuration_mismatch`; clients do not automatically retry it. Both services enforce 408 `upload_timeout` while
+reading WAV request bodies. Batch 504 `engine_timeout` can leave native inference
+running; retain audio and wait before retrying. See [recording policy](recording-policy-api.md).
 
 ## Live errors
 
@@ -62,7 +72,10 @@ failures use `engine_unavailable`, finalization timeouts use `engine_timeout`, a
 events use `engine_error`. An error event ends the relay and closes the socket. `ready` means the web
 relay connection opened; an engine admission failure can arrive immediately afterwards. Only `done`
 is successful completion. A disconnect or error never proves that native inference was cancelled.
-Clients retain their capture buffer through finalization and show a warning on live failure, so the
+Normal native `done` permits model reuse. Abnormal teardown after reservation owns
+backend stop/reap through cancellation; model mutations and new inference stay
+busy until stop is confirmed. Successful cleanup leaves the model unloaded; failed
+cleanup stays busy and reports a model error. Clients retain their capture buffer through finalization and show a warning on live failure, so the
 user can explicitly retry the retained recording.
 
 ## Model route responses

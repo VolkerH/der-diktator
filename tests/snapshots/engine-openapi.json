@@ -5,6 +5,24 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/recording-policy": {
+      "get": {
+        "summary": "Recording Policy",
+        "operationId": "recording_policy_recording_policy_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingPolicy"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/models": {
       "get": {
         "summary": "Models",
@@ -216,6 +234,22 @@
               "type": "string",
               "title": "Model"
             }
+          },
+          {
+            "name": "x-recording-policy-revision",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Recording-Policy-Revision"
+            }
           }
         ],
         "responses": {
@@ -238,6 +272,16 @@
               }
             },
             "description": "Bad Request"
+          },
+          "408": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Request Timeout"
           },
           "409": {
             "content": {
@@ -278,6 +322,26 @@
               }
             },
             "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
           }
         }
       }
@@ -312,6 +376,27 @@
         "required": ["detail", "code"],
         "title": "ApiError",
         "description": "An actionable public failure; context never contains internal diagnostics."
+      },
+      "ClientDeadlines": {
+        "properties": {
+          "upload": {
+            "type": "integer",
+            "title": "Upload"
+          },
+          "batch": {
+            "type": "integer",
+            "title": "Batch"
+          },
+          "live": {
+            "type": "integer",
+            "title": "Live"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["upload", "batch", "live"],
+        "title": "ClientDeadlines",
+        "description": "Backend-derived maximum client waits in integer milliseconds."
       },
       "ModelStatus": {
         "properties": {
@@ -424,6 +509,75 @@
         "type": "object",
         "required": ["active", "busy", "models"],
         "title": "ModelsStatus"
+      },
+      "RecordingPolicy": {
+        "properties": {
+          "protocol_version": {
+            "type": "integer",
+            "const": 1,
+            "title": "Protocol Version",
+            "default": 1
+          },
+          "hard_limit_seconds": {
+            "type": "integer",
+            "title": "Hard Limit Seconds",
+            "default": 600
+          },
+          "wav_container_allowance_bytes": {
+            "type": "integer",
+            "title": "Wav Container Allowance Bytes",
+            "default": 800044
+          },
+          "max_stream_frame_bytes": {
+            "type": "integer",
+            "title": "Max Stream Frame Bytes",
+            "default": 65536
+          },
+          "upload_timeout_seconds": {
+            "type": "number",
+            "title": "Upload Timeout Seconds",
+            "default": 180.0
+          },
+          "batch_timeout_seconds": {
+            "type": "number",
+            "title": "Batch Timeout Seconds",
+            "default": 180.0
+          },
+          "live_finalization_timeout_seconds": {
+            "type": "number",
+            "title": "Live Finalization Timeout Seconds",
+            "default": 180.0
+          },
+          "client_timeout_margin_seconds": {
+            "type": "number",
+            "title": "Client Timeout Margin Seconds",
+            "default": 10.0
+          },
+          "client_deadlines_ms": {
+            "$ref": "#/components/schemas/ClientDeadlines",
+            "readOnly": true
+          },
+          "max_pcm_bytes": {
+            "type": "integer",
+            "title": "Max Pcm Bytes",
+            "readOnly": true
+          },
+          "max_audio_bytes": {
+            "type": "integer",
+            "title": "Max Audio Bytes",
+            "readOnly": true
+          },
+          "policy_revision": {
+            "type": "string",
+            "title": "Policy Revision",
+            "readOnly": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["client_deadlines_ms", "max_pcm_bytes", "max_audio_bytes", "policy_revision"],
+        "title": "RecordingPolicy",
+        "description": "Enforcement and waiting budgets; changing these requires a process restart."
       },
       "Transcription": {
         "properties": {

@@ -134,11 +134,12 @@ async def test_stream_owns_model_until_disconnect_and_refuses_stale_model(tmp_pa
     await manager.start()
     assert manager.job is not None
     await manager.job
-    async with manager.stream("phonon-2"):
+    async with manager.stream("phonon-2") as reservation:
         with pytest.raises(ModelConflict, match="busy"):
             manager.delete("phonon-2")
         with pytest.raises(ModelConflict, match="busy"):
             manager.activate("phonon-2")
+        reservation.complete()
     assert not manager.busy
     with pytest.raises(ModelConflict, match="not active"):
         await manager.transcribe("parakeet-v3", make_wav())

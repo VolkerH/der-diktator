@@ -50,15 +50,20 @@ def stream_failure(error: Exception) -> ApiFailure:
     return engine_failure("engine_error")
 
 
-def stream_url(engine_url: str, model: ModelId | None = None) -> str:
+def stream_url(
+    engine_url: str, model: ModelId | None = None, policy_revision: str | None = None
+) -> str:
     """Use the configured inference host for its matching WebSocket endpoint."""
     parts = urlsplit(engine_url)
     if parts.scheme not in {"http", "https"} or not parts.netloc:
         raise ValueError("The inference endpoint must be an HTTP or HTTPS URL.")
     scheme = "wss" if parts.scheme == "https" else "ws"
-    return urlunsplit(
-        (scheme, parts.netloc, "/v1/audio/stream", f"model={model}" if model else "", "")
-    )
+    query = f"model={model}" if model else ""
+    if policy_revision:
+        query += (
+            f"&policy_revision={policy_revision}" if query else f"policy_revision={policy_revision}"
+        )
+    return urlunsplit((scheme, parts.netloc, "/v1/audio/stream", query, ""))
 
 
 @asynccontextmanager
@@ -78,12 +83,34 @@ async def connect_engine(url: str) -> AsyncIterator[EngineStream]:
         yield connection
 
 
-async def relay_stream(browser: WebSocket, engine: EngineStream, settings: Settings) -> None:
+async def relay_stream(
+    browser: WebSocket,
+    engine: EngineStream,
+    settings: Settings,
+    *,
+    on_done: Callable[[], None] | None = None,
+    on_forward: Callable[[], None] | None = None,
+    initial_message: str | None = None,
+    finalization_margin_seconds: float = 0,
+) -> None:
     """Run both directions concurrently, keeping the engine open through finalization."""
 
     async def upload_audio() -> None:
         received_bytes = 0
         max_bytes = settings.max_duration_seconds * 16_000 * 2
+        initialized = False
+
+        async def forward(message: str | bytes) -> None:
+            nonlocal initialized
+            # Mark uncertain native ownership before either send: a failed
+            # write can still have delivered data to the decoder.
+            if on_forward is not None:
+                on_forward()
+            if not initialized and initial_message is not None:
+                await engine.send(initial_message)
+            initialized = True
+            await engine.send(message)
+
         while True:
             frame = await browser.receive()
             if frame["type"] == "websocket.disconnect":
@@ -96,12 +123,17 @@ async def relay_stream(browser: WebSocket, engine: EngineStream, settings: Setti
                         "audio_too_large",
                         413,
                     )
+                if len(audio) % 2:
+                    raise StreamError(
+                        "PCM frames must contain whole 16-bit samples.", "invalid_audio", 400
+                    )
                 received_bytes += len(audio)
                 if received_bytes > max_bytes:
                     raise StreamError(
                         "The recording exceeds the allowed duration limit.", "invalid_audio", 400
                     )
-                await engine.send(audio)
+                if audio:
+                    await forward(audio)
                 continue
             try:
                 control = json.loads(frame.get("text") or "")
@@ -113,7 +145,7 @@ async def relay_stream(browser: WebSocket, engine: EngineStream, settings: Setti
                 raise StreamError(
                     "Only an end message is accepted during recording.", "validation_error", 422
                 )
-            await engine.send(json.dumps(control))
+            await forward(json.dumps(control))
             return
 
     async def receive_transcripts() -> None:
@@ -139,6 +171,8 @@ async def relay_stream(browser: WebSocket, engine: EngineStream, settings: Setti
                 )
                 failure = engine_failure(event.get("code"))
                 event = StreamErrorEvent(message=str(failure), code=failure.code).model_dump()
+            if event["type"] == "done" and on_done is not None:
+                on_done()
             await browser.send_json(event)
             if event["type"] in {"done", "error"}:
                 return
@@ -152,7 +186,10 @@ async def relay_stream(browser: WebSocket, engine: EngineStream, settings: Setti
         for task in completed:
             task.result()
         if transcripts not in completed:
-            async with asyncio.timeout(settings.transcription_timeout_seconds):
+            async with asyncio.timeout(
+                settings.recording_policy.live_finalization_timeout_seconds
+                + finalization_margin_seconds
+            ):
                 await transcripts
     finally:
         upload.cancel()

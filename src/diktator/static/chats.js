@@ -1,4 +1,5 @@
 import { request } from "./request.js";
+import { recordingPolicy, recordingTimeoutMs, uploadTimeoutMs } from "./recording-policy.js";
 
 /** @typedef {{ id: string, created: string, duration_seconds: number }} Recording */
 /** A title observation carries its parent ordering revision without acknowledging the whole Chat.
@@ -72,11 +73,16 @@ export const chatApi = {
     }),
   /** @param {string} id @param {Blob} audio @param {string} recordingId @returns {Promise<RecordingUpload>} */
   addRecording: async (id, audio, recordingId) => {
-    const { body, headers } = await request(`/api/chats/${id}/recordings/${recordingId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "audio/wav" },
-      body: audio,
-    });
+    const deadline = await uploadTimeoutMs();
+    const { body, headers } = await request(
+      `/api/chats/${id}/recordings/${recordingId}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "audio/wav" },
+        body: audio,
+      },
+      deadline,
+    );
     const revision = headers.get("Chat-Revision");
     return {
       recording: body,
@@ -87,26 +93,35 @@ export const chatApi = {
   /** @param {string} id @param {string} recordingId */
   recordingUrl: (id, recordingId) => `/api/chats/${id}/recordings/${recordingId}`,
   /** @param {string} id @param {string} recordingId @param {string} [model] @returns {Promise<string>} */
-  transcribeRecording: async (id, recordingId, model = "phonon-2") =>
-    transcriptText(
+  transcribeRecording: async (id, recordingId, model = "phonon-2") => {
+    const policy = await recordingPolicy();
+    return transcriptText(
       (
         await request(
           `/api/chats/${id}/recordings/${recordingId}/transcribe?model=${encodeURIComponent(model)}`,
           { method: "POST" },
+          recordingTimeoutMs(policy, "batch"),
         )
       ).body,
-    ),
+    );
+  },
   /** Transcribe audio that could not be stored. @param {Blob} audio @param {string} [model] @returns {Promise<string>} */
-  transcribe: async (audio, model = "phonon-2") =>
-    transcriptText(
+  transcribe: async (audio, model = "phonon-2") => {
+    const policy = await recordingPolicy();
+    return transcriptText(
       (
-        await request(`/api/transcribe?model=${encodeURIComponent(model)}`, {
-          method: "POST",
-          headers: { "Content-Type": "audio/wav" },
-          body: audio,
-        })
+        await request(
+          `/api/transcribe?model=${encodeURIComponent(model)}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "audio/wav" },
+            body: audio,
+          },
+          recordingTimeoutMs(policy, "batch"),
+        )
       ).body,
-    ),
+    );
+  },
 };
 
 /**

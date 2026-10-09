@@ -29,3 +29,15 @@ test("caller cancellation survives the shared deadline", async (t) => {
   t.mock.method(globalThis, "fetch", async (_url, { signal }) => signal.throwIfAborted());
   await assert.rejects(request("/test", { signal: caller.signal }), { name: "AbortError" });
 });
+
+test("an explicit recording deadline replaces the generic request wait", async (t) => {
+  t.mock.method(AbortSignal, "timeout", (ms) => {
+    assert.equal(ms, 450_000);
+    return new AbortController().signal;
+  });
+  t.mock.method(globalThis, "fetch", async () => Response.json({ text: "complete" }));
+  assert.equal(
+    (await request("/api/transcribe", { method: "POST" }, 450_000)).body.text,
+    "complete",
+  );
+});

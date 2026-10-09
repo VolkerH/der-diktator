@@ -71,10 +71,20 @@ test("chat validators stay opaque and quoted through save, delete and keepalive"
 
 test("recording upload reads the explicit parent validator without treating the body as a Chat", async (t) => {
   const recording = { id: "b".repeat(32), created: "2026-10-08T10:00:00Z", duration_seconds: 1 };
-  t.mock.method(globalThis, "fetch", async () =>
-    Response.json(recording, {
-      headers: { "Chat-ETag": '"opaque-parent"', "Chat-Revision": "3", ETag: '"recording-only"' },
-    }),
+  t.mock.method(globalThis, "fetch", async (url) =>
+    url === "/api/settings"
+      ? Response.json({
+          upload_timeout_seconds: 180,
+          client_timeout_margin_seconds: 10,
+          client_upload_timeout_ms: 190000,
+        })
+      : Response.json(recording, {
+          headers: {
+            "Chat-ETag": '"opaque-parent"',
+            "Chat-Revision": "3",
+            ETag: '"recording-only"',
+          },
+        }),
   );
   const uploaded = await chatApi.addRecording("a".repeat(32), new Blob(), recording.id);
   assert.deepEqual(uploaded, { recording, chatEtag: '"opaque-parent"', chatRevision: 3 });
@@ -116,3 +126,23 @@ test("search requests encode the query and clearing issues the ordinary list req
     "/api/chats",
   ]);
 });
+
+for (const failedSettings of ["network", "malformed"])
+  test(`saving still uploads when settings discovery is ${failedSettings}`, async (t) => {
+    const recording = { id: "b".repeat(32), created: "now", duration_seconds: 1 };
+    let uploads = 0;
+    t.mock.method(globalThis, "fetch", async (url, options) => {
+      if (url === "/api/settings") {
+        if (failedSettings === "network") throw new TypeError("settings read failed");
+        return Response.json({});
+      }
+      assert.equal(options.method, "PUT");
+      uploads++;
+      return Response.json(recording);
+    });
+    assert.equal(
+      (await chatApi.addRecording("a".repeat(32), new Blob(), recording.id)).recording.id,
+      recording.id,
+    );
+    assert.equal(uploads, 1);
+  });

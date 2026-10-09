@@ -5,8 +5,9 @@ import { MAX_DURATION_SECONDS, wordCount } from "./audio.js";
 import { chatApi, spliceText } from "./chats.js";
 import { groupApi } from "./groups.js";
 import { GroupSidebar } from "./group-sidebar.js";
-import { modelPicker } from "./models.js";
+import { modelPicker, waitForModelReady } from "./models.js";
 import { LiveTranscriber } from "./live.js";
+import { recordingPolicy, recordingTimeoutMs } from "./recording-policy.js";
 import { MicrophoneRecorder } from "./recorder.js";
 
 /** @typedef {import("./chats.js").Chat} Chat */
@@ -88,6 +89,7 @@ let modelReady = false;
 let modelLive = false;
 let livePreference = liveMode.checked;
 let recordingModel = "phonon-2";
+let recordingCaptureLimitSeconds = MAX_DURATION_SECONDS;
 const models = modelPicker((ready, live) => {
   modelReady = ready;
   modelLive = live;
@@ -1421,16 +1423,31 @@ async function storeRecording(audio) {
   }
 }
 
-/** @param {Blob} audio @param {string | null} text */
-async function storeAndInsert(audio, text) {
+/** @param {Blob} audio @param {string | null} text @param {boolean} [recoverLive] */
+async function storeAndInsert(audio, text, recoverLive = false) {
   status.textContent = "Saving your recording…";
   const stored = await storeRecording(audio);
   if (text === null) {
-    status.textContent = "Transcribing your recording…";
-    text =
-      stored instanceof Error
-        ? await chatApi.transcribe(audio, recordingModel)
-        : await chatApi.transcribeRecording(stored.chatId, stored.recording.id, recordingModel);
+    try {
+      if (recoverLive) {
+        status.textContent = "Waiting for the model to recover… Your recording is kept.";
+        const policy = await recordingPolicy();
+        await waitForModelReady(recordingModel, recordingTimeoutMs(policy, "batch"));
+      }
+      status.textContent = "Transcribing your recording…";
+      text =
+        stored instanceof Error
+          ? await chatApi.transcribe(audio, recordingModel)
+          : await chatApi.transcribeRecording(stored.chatId, stored.recording.id, recordingModel);
+    } catch (error) {
+      if (stored instanceof Error) {
+        const detail = error instanceof Error ? error.message : "Transcription failed.";
+        throw new Error(
+          `${detail} Your recording could not be saved: ${stored.message} It stays in this tab; retry from its clip.`,
+        );
+      }
+      throw error;
+    }
   }
   // The transcript is recovered, so an earlier live-connection error no longer applies.
   hideError();
@@ -1604,6 +1621,11 @@ recordButton.addEventListener("click", async () => {
   insertion = captureInsertion();
   status.textContent = "Waiting for microphone permission…";
   try {
+    status.textContent = "Checking recording policy…";
+    const policy = await recordingPolicy();
+    // This intermediate release retains the existing ten-minute capture path.
+    // Smaller operator ceilings are safe; longer capture is delivered in PR2.
+    recordingCaptureLimitSeconds = Math.min(600, policy.hard_limit_seconds);
     if (liveMode.checked) {
       status.textContent = "Connecting live transcription…";
       const stream = new LiveTranscriber(
@@ -1617,6 +1639,7 @@ recordButton.addEventListener("click", async () => {
             status.textContent = "Recording continues. Stop to transcribe the complete recording.";
           }
         },
+        { finishTimeoutMs: recordingTimeoutMs(policy, "live") },
       );
       activeStream = stream;
       const url = new URL("/api/stream", window.location.href);
@@ -1641,9 +1664,9 @@ recordButton.addEventListener("click", async () => {
     }
     timerId = window.setInterval(() => {
       const elapsed = (performance.now() - startedAt) / 1000;
-      updateTimer(Math.min(elapsed, MAX_DURATION_SECONDS));
+      updateTimer(Math.min(elapsed, recordingCaptureLimitSeconds));
       pushLevel();
-      if (elapsed >= MAX_DURATION_SECONDS) void stopRecording();
+      if (elapsed >= recordingCaptureLimitSeconds) void stopRecording();
     }, 60);
   } catch (error) {
     activeStream?.cancel();
@@ -1682,7 +1705,7 @@ async function stopRecording() {
       // A failed stream is recovered by transcribing the complete WAV.
       text = await activeStream.finish().catch(() => null);
     }
-    await storeAndInsert(audio, text);
+    await storeAndInsert(audio, text, Boolean(activeStream && text === null));
   } catch (error) {
     restoreInsertion();
     showError(error);
