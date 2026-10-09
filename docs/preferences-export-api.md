@@ -32,6 +32,9 @@ an explicit reset with `If-Match: *` repairs a corrupt row without first reading
 writes cannot bypass corrupt-value validation. Write failures return 503 `persistence_failed`
 and roll back. Preferences never change chats, recordings, recency or history.
 
+Keyboard mappings and the action/default catalog use this same profile, revision and
+conditional-write contract; see [keyboard API](keyboard-api.md).
+
 ## Draft preparation
 
 `POST /api/exports` takes the exact current draft as `{text, format?: "plain" | "with_preamble"}`

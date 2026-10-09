@@ -1,6 +1,7 @@
 """Actor-scoped application preferences, independent of operator configuration."""
 
 import hashlib
+import json
 import logging
 from typing import Annotated, Literal
 
@@ -12,6 +13,13 @@ from diktator.chats import check_precondition
 from diktator.db import session_scope
 from diktator.db.rows import PreferenceRow, UserRow
 from diktator.errors import ApiFailure
+from diktator.keyboard import (
+    DEFAULT_KEYBOARD_BINDINGS,
+    KEYBOARD_ACTIONS,
+    KeyboardAction,
+    KeyboardBindings,
+    validate_bindings,
+)
 
 log = logging.getLogger(__name__)
 DEFAULT_PREAMBLE = (
@@ -36,6 +44,15 @@ class Preferences(BaseModel):
     copy_preamble: str = Field(default_factory=lambda: DEFAULT_PREAMBLE)
     copy_preamble_is_default: bool = True
     share_include_preamble: bool = False
+    keyboard_bindings: dict[str, str | None] = Field(
+        default_factory=lambda: dict(DEFAULT_KEYBOARD_BINDINGS)
+    )
+    keyboard_bindings_is_default: bool = True
+    default_keyboard_bindings: dict[str, str | None] = Field(
+        default_factory=lambda: dict(DEFAULT_KEYBOARD_BINDINGS)
+    )
+    keyboard_actions: list[KeyboardAction] = Field(default_factory=lambda: list(KEYBOARD_ACTIONS))
+    keyboard_binding_pattern: str = "Mod+Shift+(digit, E, F, G, K, ArrowUp or ArrowDown)"
     revision: int = 1
     default_copy_preamble: str = Field(default_factory=lambda: DEFAULT_PREAMBLE)
     max_copy_preamble_characters: int = MAX_PREAMBLE_CHARACTERS
@@ -54,11 +71,14 @@ class PreferenceUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     copy_preamble: Preamble | None = None
     share_include_preamble: StrictBool | None = None
-    reset: list[Literal["copy_preamble", "share_include_preamble"]] = Field(default_factory=list)
+    keyboard_bindings: KeyboardBindings | None = None
+    reset: list[Literal["copy_preamble", "share_include_preamble", "keyboard_bindings"]] = Field(
+        default_factory=list
+    )
 
     @model_validator(mode="after")
     def valid_changes(self) -> "PreferenceUpdate":
-        for name in ("copy_preamble", "share_include_preamble"):
+        for name in ("copy_preamble", "share_include_preamble", "keyboard_bindings"):
             if name in self.model_fields_set:
                 if getattr(self, name) is None:
                     raise ValueError(f"{name} cannot be null.")
@@ -81,7 +101,18 @@ class PreferenceService:
             not row.copy_preamble.strip() or len(row.copy_preamble) > MAX_PREAMBLE_CHARACTERS
         ):
             raise ApiFailure("Saved preferences cannot be read.", "preferences_unavailable", 503)
+        overrides: dict[str, str | None] = {}
+        if row.keyboard_bindings is not None:
+            try:
+                parsed = PreferenceUpdate(keyboard_bindings=json.loads(row.keyboard_bindings))
+                overrides = parsed.keyboard_bindings or {}
+            except (ValueError, TypeError) as error:
+                raise ApiFailure(
+                    "Saved preferences cannot be read.", "preferences_unavailable", 503
+                ) from error
         return Preferences(
+            keyboard_bindings=DEFAULT_KEYBOARD_BINDINGS | overrides,
+            keyboard_bindings_is_default=row.keyboard_bindings is None,
             copy_preamble=DEFAULT_PREAMBLE if row.copy_preamble is None else row.copy_preamble,
             copy_preamble_is_default=row.copy_preamble is None,
             share_include_preamble=row.share_include_preamble,
@@ -110,13 +141,23 @@ class PreferenceService:
                 row = session.get(PreferenceRow, actor_id)
                 resetting = "copy_preamble" in update.reset
                 # Explicit wildcard reset is also a recovery operation for unreadable rows.
-                if not (resetting and if_match.strip() == "*"):
+                if not (resetting and if_match.strip() == "*") and not (
+                    "keyboard_bindings" in update.reset and if_match.strip() == "*"
+                ):
                     current = self._representation(row)
                     check_precondition(
                         if_match, current.etag(actor_id), "These preferences changed elsewhere."
                     )
                 stored_preamble = row.copy_preamble if row is not None else None
                 stored_share = row.share_include_preamble if row is not None else False
+                stored_keyboard = row.keyboard_bindings if row is not None else None
+                keyboard = stored_keyboard
+                if "keyboard_bindings" in update.reset:
+                    keyboard = None
+                elif update.keyboard_bindings is not None:
+                    keyboard = json.dumps(
+                        validate_bindings(update.keyboard_bindings), sort_keys=True
+                    )
                 preamble = stored_preamble
                 if resetting:
                     preamble = None
@@ -127,17 +168,23 @@ class PreferenceService:
                     share_include_preamble = False
                 elif update.share_include_preamble is not None:
                     share_include_preamble = update.share_include_preamble
-                if preamble == stored_preamble and share_include_preamble == stored_share:
+                if (
+                    preamble == stored_preamble
+                    and share_include_preamble == stored_share
+                    and keyboard == stored_keyboard
+                ):
                     return self._representation(row)
                 if row is None:
                     row = PreferenceRow(
                         user_id=actor_id,
                         copy_preamble=preamble,
                         share_include_preamble=share_include_preamble,
+                        keyboard_bindings=keyboard,
                         revision=2,
                     )
                     session.add(row)
                 else:
+                    row.keyboard_bindings = keyboard
                     row.copy_preamble = preamble
                     row.share_include_preamble = share_include_preamble
                     row.revision += 1

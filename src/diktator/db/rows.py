@@ -101,5 +101,6 @@ class PreferenceRow(Base):
         ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
     copy_preamble: Mapped[str | None] = mapped_column(Text)
+    keyboard_bindings: Mapped[str | None] = mapped_column(Text)
     share_include_preamble: Mapped[bool] = mapped_column(default=False, server_default="0")
     revision: Mapped[int] = mapped_column(default=1)
