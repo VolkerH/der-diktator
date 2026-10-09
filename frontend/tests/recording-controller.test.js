@@ -13,7 +13,12 @@ function capture(interval = 60, ceiling = 180) {
       if (controller.stopping()) stops++;
     },
   });
-  const snapshot = { recording_interval_seconds: interval, hard_limit_seconds: ceiling };
+  const snapshot = {
+    recording_interval_seconds: interval,
+    hard_limit_seconds: ceiling,
+    warning_lead_seconds: 60,
+    extension_seconds: interval,
+  };
   controller.prepare(snapshot, "model-a");
   controller.started();
   return {
@@ -81,4 +86,35 @@ test("captured samples reconcile a stalled presentation clock", () => {
   const c = capture();
   c.advance(0, 60 * 16000);
   assert.equal(c.counts().stops, 1);
+});
+
+test("warnings and extensions consume backend rules rather than deriving them from the interval", async () => {
+  let now = 0;
+  let warnings = 0;
+  const controller = new RecordingController({
+    now: () => now,
+    warn: () => warnings++,
+    automaticStop: () => {},
+  });
+  const policy = {
+    recording_interval_seconds: 120,
+    hard_limit_seconds: 300,
+    warning_lead_seconds: 30,
+    extension_seconds: 60,
+  };
+  controller.prepare(policy, "model-a");
+  controller.started();
+  policy.warning_lead_seconds = 120;
+  policy.extension_seconds = 120;
+  now = 89_000;
+  controller.tick(0);
+  assert.equal(warnings, 0);
+  now = 90_000;
+  controller.tick(0);
+  assert.equal(warnings, 1);
+  await controller.extend(async (seconds) => {
+    assert.equal(seconds, 180);
+    return true;
+  });
+  assert.equal(controller.deadlineSeconds, 180);
 });

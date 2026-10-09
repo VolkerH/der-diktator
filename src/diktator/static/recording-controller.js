@@ -1,4 +1,4 @@
-/** @typedef {{protocol_version: number, max_audio_bytes: number, max_pcm_bytes: number, max_stream_frame_bytes: number, hard_limit_seconds: number, recording_interval_seconds: number, policy_revision: string, upload_timeout_seconds: number, batch_timeout_seconds: number, live_finalization_timeout_seconds: number, client_timeout_margin_seconds: number, preference_etag: string}} RecordingSnapshot */
+/** @typedef {{protocol_version: number, max_audio_bytes: number, max_pcm_bytes: number, max_stream_frame_bytes: number, hard_limit_seconds: number, recording_interval_seconds: number, warning_lead_seconds: number, extension_seconds: number, client_deadlines_ms: {upload: number, batch: number, live: number}, policy_revision: string, upload_timeout_seconds: number, batch_timeout_seconds: number, live_finalization_timeout_seconds: number, client_timeout_margin_seconds: number, preference_etag: string}} RecordingSnapshot */
 
 /** A recording freezes policy, model and its original interval until completion. */
 export class RecordingController {
@@ -22,7 +22,14 @@ export class RecordingController {
       !Number.isInteger(snapshot.recording_interval_seconds) ||
       snapshot.recording_interval_seconds < 60 ||
       snapshot.recording_interval_seconds % 60 !== 0 ||
-      snapshot.recording_interval_seconds > snapshot.hard_limit_seconds
+      snapshot.recording_interval_seconds > snapshot.hard_limit_seconds ||
+      !Number.isInteger(snapshot.warning_lead_seconds) ||
+      snapshot.warning_lead_seconds < 0 ||
+      snapshot.warning_lead_seconds > snapshot.hard_limit_seconds ||
+      !Number.isInteger(snapshot.extension_seconds) ||
+      snapshot.extension_seconds < 60 ||
+      snapshot.extension_seconds % 60 !== 0 ||
+      snapshot.extension_seconds > snapshot.hard_limit_seconds
     )
       throw new Error("The recording policy returned an invalid interval.");
     this.snapshot = Object.freeze({ ...snapshot });
@@ -45,7 +52,10 @@ export class RecordingController {
   tick(samples) {
     if (this.state !== "recording") return;
     const remaining = this.deadlineSeconds - this.elapsed(samples);
-    if (remaining <= 60 && !this.warned) {
+    if (
+      remaining <= /** @type {RecordingSnapshot} */ (this.snapshot).warning_lead_seconds &&
+      !this.warned
+    ) {
       this.warned = true;
       this.callbacks.warn();
     }
@@ -56,8 +66,7 @@ export class RecordingController {
       this.state === "recording" &&
       !this.extending &&
       Boolean(this.snapshot) &&
-      this.deadlineSeconds +
-        /** @type {RecordingSnapshot} */ (this.snapshot).recording_interval_seconds <=
+      this.deadlineSeconds + /** @type {RecordingSnapshot} */ (this.snapshot).extension_seconds <=
         /** @type {RecordingSnapshot} */ (this.snapshot).hard_limit_seconds
     );
   }
@@ -65,7 +74,7 @@ export class RecordingController {
   async extend(apply) {
     if (!this.canExtend || !this.snapshot) return false;
     this.extending = true;
-    const next = this.deadlineSeconds + this.snapshot.recording_interval_seconds;
+    const next = this.deadlineSeconds + this.snapshot.extension_seconds;
     try {
       if (!(await apply(next)) || this.state !== "recording") return false;
       this.deadlineSeconds = next;

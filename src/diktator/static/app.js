@@ -93,8 +93,7 @@ let captureNotice = null;
 const capture = new RecordingController({
   warn: () => {
     recordingWarning.hidden = false;
-    recordingWarning.textContent =
-      "One minute remaining. Extend the recording or it will stop automatically.";
+    recordingWarning.textContent = `${capture.snapshot?.warning_lead_seconds === 60 ? "One minute" : `${capture.snapshot?.warning_lead_seconds} seconds`} remaining. Extend the recording or it will stop automatically.`;
     beep.play();
   },
   automaticStop: (reason) => {
@@ -104,9 +103,16 @@ const capture = new RecordingController({
     void stopRecording(true);
   },
 });
-recorder.onWarning = (/** @type {string} */ message) => {
-  captureNotice = message;
-  showError(new Error(message));
+recorder.onWarning = (
+  /** @type {string} */ message,
+  /** @type {"extension" | "integrity"} */ kind,
+) => {
+  if (kind === "extension") {
+    recordingWarning.textContent = message;
+    recordingWarning.hidden = false;
+  } else {
+    captureNotice = message;
+  }
 };
 recorder.onAutomaticStop = (/** @type {string} */ reason) => capture.automaticStop(reason);
 function updateRecordingDeadline() {
@@ -122,7 +128,7 @@ function updateRecordingDeadline() {
   remainingTime.textContent = `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, "0")} remaining`;
   extensionButton.hidden = false;
   extensionButton.disabled = !capture.canExtend;
-  extensionButton.textContent = `Extend by ${(capture.snapshot?.recording_interval_seconds ?? 0) / 60} min`;
+  extensionButton.textContent = `Extend by ${(capture.snapshot?.extension_seconds ?? 0) / 60} min`;
   extensionButton.title = capture.canExtend
     ? "Add one full original interval"
     : "A full original interval cannot fit within the recording limit, or capture is stopping.";
@@ -1491,7 +1497,12 @@ async function storeAndInsert(audio, text, recoverLive = false) {
       text =
         stored instanceof Error
           ? await chatApi.transcribe(audio, recordingModel, capture.snapshot)
-          : await chatApi.transcribeRecording(stored.chatId, stored.recording.id, recordingModel, capture.snapshot);
+          : await chatApi.transcribeRecording(
+              stored.chatId,
+              stored.recording.id,
+              recordingModel,
+              capture.snapshot,
+            );
     } catch (error) {
       if (stored instanceof Error) {
         const detail = error instanceof Error ? error.message : "Transcription failed.";
@@ -1787,7 +1798,12 @@ async function stopRecording(automatic = false) {
     activeStream = null;
     capture.reset();
     await beep.release();
-    if (captureNotice) showError(new Error(captureNotice));
+    if (captureNotice)
+      showError(
+        new Error(
+          errorMessage.hidden ? captureNotice : `${errorMessage.textContent} ${captureNotice}`,
+        ),
+      );
     if (automatic) status.textContent = `Recording stopped automatically. ${status.textContent}`;
     busy = false;
     updateControls();

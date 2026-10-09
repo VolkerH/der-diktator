@@ -236,20 +236,6 @@ function chatServer() {
     url = parsed.pathname;
     if (parsed.searchParams.has("model"))
       server.requestedModels.push(parsed.searchParams.get("model"));
-    if (url === "/api/recording-policy")
-      return Response.json({
-        protocol_version: 1,
-        hard_limit_seconds: 3600,
-        recording_interval_seconds: 1800,
-        policy_revision: "test",
-        preference_etag: '"pref"',
-        upload_timeout_seconds: 180,
-        batch_timeout_seconds: 180,
-        live_finalization_timeout_seconds: 180,
-        client_timeout_margin_seconds: 10,
-      });
-    if (url === "/api/settings")
-      return Response.json({ upload_timeout_seconds: 180, client_timeout_margin_seconds: 10 });
     const method = options.method ?? "GET";
     const titleEtag = (chat) => `"title-${chat.id}-${chat.title_revision}"`;
     const json = (body, status = 200) =>
@@ -316,6 +302,9 @@ function chatServer() {
         protocol_version: 1,
         policy_revision: "test-policy",
         hard_limit_seconds: 600,
+        recording_interval_seconds: 600,
+        warning_lead_seconds: 60,
+        extension_seconds: 600,
         max_audio_bytes: 20000044,
         max_pcm_bytes: 19200000,
         max_stream_frame_bytes: 65536,
@@ -3030,6 +3019,7 @@ function exportServer(t) {
         recording_interval_seconds: 1800,
         requested_recording_interval_seconds: 1800,
         default_recording_interval_seconds: 1800,
+        effective_default_recording_interval_seconds: 1800,
         recording_interval_is_default: true,
         recording_interval_constrained: false,
         max_recording_interval_seconds: 3600,
@@ -3806,6 +3796,7 @@ test("one-minute capture warns immediately and extensions use the frozen origina
     return Response.json({
       ...(await response.json()),
       recording_interval_seconds: interval,
+      extension_seconds: interval,
       hard_limit_seconds: 180,
     });
   });
@@ -3876,6 +3867,11 @@ test("the original capture keeps its client wait budgets across a policy change"
       ...(await response.json()),
       upload_timeout_seconds: budget,
       batch_timeout_seconds: budget,
+      client_deadlines_ms: {
+        upload: (budget + 10) * 1000,
+        batch: (3 * budget + 30) * 1000,
+        live: 200000,
+      },
     });
   });
   await app.element("record").emit("click");
@@ -4034,4 +4030,68 @@ test("live recovery failure also explains that an unsaved WAV remains in this ta
   assert.match(app.element("error").textContent, /Restart the engine/);
   assert.match(app.element("error").textContent, /could not be saved.*stays in this tab/u);
   assert.equal(app.element("clips").children.length, 1);
+});
+
+for (const failure of ["save", "transcription", "both"])
+  test(`capture integrity notice preserves the ${failure} failure outcome`, async (t) => {
+    const app = await appEnvironment(t, (server) => {
+      server.add("Keep my words.");
+      server.failRecordings = failure !== "transcription";
+      server.failTranscription = failure !== "save";
+    });
+    app.element("live-mode").checked = false;
+    let microphone;
+    app.state.onStart = (recorder) => {
+      microphone = recorder;
+    };
+    await app.element("record").emit("click");
+    microphone.onWarning("The last unconfirmed audio may be missing.", "integrity");
+    await app.element("stop").emit("click");
+    await waitForIdle(app);
+    const message = app.element("error").textContent;
+    assert.match(message, /last unconfirmed audio may be missing/);
+    if (failure !== "transcription")
+      assert.match(message, /could not be saved.*stays in this tab/u);
+    if (failure !== "save") assert.match(message, /Engine unavailable/);
+    assert.equal(app.element("clips").children.length, 1);
+  });
+
+test("a temporary extension notice clears at stop and preserves an unsaved recording error", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    server.failRecordings = true;
+  });
+  app.element("live-mode").checked = false;
+  let microphone;
+  app.state.onStart = (recorder) => {
+    microphone = recorder;
+  };
+  await app.element("record").emit("click");
+  microphone.onWarning(
+    "The extension could not be confirmed. Capture will stop at the displayed deadline.",
+    "extension",
+  );
+  assert.match(app.element("recording-warning").textContent, /extension could not be confirmed/);
+  await app.element("stop").emit("click");
+  await waitForIdle(app);
+  assert.equal(app.element("recording-warning").hidden, true);
+  assert.match(app.element("error").textContent, /could not be saved.*stays in this tab/u);
+  assert.doesNotMatch(app.element("error").textContent, /extension could not be confirmed/);
+});
+
+test("Use default previews the effective value supplied by the backend", async (t) => {
+  const app = await appEnvironment(t);
+  exportServer(t);
+  const fetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (url !== "/api/preferences") return response;
+    return Response.json(
+      { ...(await response.json()), effective_default_recording_interval_seconds: 720 },
+      { headers: { ETag: '"preferences-default"' } },
+    );
+  });
+  await app.element("preferences-open").emit("click");
+  await settle();
+  await app.element("recording-interval-reset").emit("click");
+  assert.equal(app.element("recording-interval").value, "12");
 });

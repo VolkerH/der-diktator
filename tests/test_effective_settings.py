@@ -26,7 +26,7 @@ async def test_settings_show_running_limits_without_disclosing_operator_details(
         response = await client.get("/api/settings")
         assert response.status_code == 200
         body = response.json()
-        assert body["client_upload_timeout_ms"] == 190_000
+        assert body["client_upload_timeout_ms"] == 1_054_000
         assert body["operator_editable"] is False
         assert body["profile_scope"] == "shared_local_profile"
         assert body["model_selection"] == "instance_model_api"

@@ -22,7 +22,7 @@ export class MicrophoneRecorder {
     this.onAutomaticStop = null;
     /** @type {((level: number) => void) | null} */
     this.onLevel = null;
-    /** @type {((message: string) => void) | null} */
+    /** @type {((message: string, kind: "extension" | "integrity") => void) | null} */
     this.onWarning = null;
     /** @type {((accepted: boolean) => void) | null} */
     this.onExtended = null;
@@ -105,6 +105,7 @@ export class MicrophoneRecorder {
         this.extensionUncertain = true;
         this.onWarning?.(
           "The extension could not be confirmed. Capture will stop at the displayed deadline.",
+          "extension",
         );
         resolve(false);
       }, 2000);
@@ -131,6 +132,7 @@ export class MicrophoneRecorder {
             this.node?.disconnect();
             this.onWarning?.(
               "The audio thread did not confirm stopping. The received audio is saved; the last unconfirmed audio may be missing.",
+              "integrity",
             );
             resolve(undefined);
           }, 2000);

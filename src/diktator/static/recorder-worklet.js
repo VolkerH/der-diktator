@@ -47,8 +47,9 @@ export class RecorderProcessor extends AudioWorkletProcessor {
   /** @param {Float32Array[][]} inputs @returns {boolean} */
   process(inputs) {
     if (!this.active) return false;
-    // Eight batches plus a partial batch is less than 37 KiB PCM16, independent of duration.
-    if (this.pending >= 8) {
+    // 128 batches tolerate ~16.384 s of main-thread stalls. Including the
+    // partial batch, transport retains at most 516 KiB PCM16 regardless of duration.
+    if (this.pending >= 128) {
       this.stop("capture_queue_overflow");
       return false;
     }

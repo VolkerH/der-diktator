@@ -536,7 +536,7 @@
           "upload_timeout_seconds": {
             "type": "number",
             "title": "Upload Timeout Seconds",
-            "default": 180.0
+            "default": 1044.0
           },
           "batch_timeout_seconds": {
             "type": "number",
@@ -575,7 +575,7 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "required": ["max_pcm_bytes", "max_audio_bytes", "policy_revision"],
+        "required": ["client_deadlines_ms", "max_pcm_bytes", "max_audio_bytes", "policy_revision"],
         "title": "RecordingPolicy",
         "description": "Enforcement and waiting budgets; changing these requires a process restart."
       },

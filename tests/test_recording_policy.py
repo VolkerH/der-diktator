@@ -52,6 +52,12 @@ async def web_client(
 def test_startup_policy_is_immutable_with_bounded_long_capture_defaults() -> None:
     policy = RecordingPolicy()
     assert policy.hard_limit_seconds == 3600
+    assert policy.upload_timeout_seconds == 1044
+    assert policy.client_deadlines_ms.model_dump() == {
+        "upload": 1_054_000,
+        "batch": 2_298_000,
+        "live": 200_000,
+    }
     assert policy.max_pcm_bytes == 115_200_000
     assert policy.max_audio_bytes == 116_000_044
     assert RecordingPolicy(hard_limit_seconds=600).max_audio_bytes == 20_000_044
@@ -139,6 +145,8 @@ async def test_discovery_agrees_without_reserving_model_or_creating_preferences(
         assert response.status_code == 200
         assert body == policy.model_dump() | {
             "preference_etag": before.headers["ETag"],
+            "warning_lead_seconds": 60,
+            "extension_seconds": 1800,
             "recording_interval_seconds": 1800,
             "requested_recording_interval_seconds": 1800,
             "default_recording_interval_seconds": 1800,
@@ -408,3 +416,39 @@ async def test_upstream_http_waits_use_distinct_upload_and_batch_budgets(tmp_pat
         )
         assert response.status_code == 200
         assert len(calls) == 1
+
+
+def test_upload_defaults_follow_bytes_but_injected_overrides_are_preserved() -> None:
+    import math
+
+    for ceiling, allowance in [(60, 44), (600, 800_044), (1800, 800_044), (3600, 1_048_576)]:
+        policy = RecordingPolicy(
+            hard_limit_seconds=ceiling, wav_container_allowance_bytes=allowance
+        )
+        assert policy.upload_timeout_seconds == math.ceil(policy.max_audio_bytes * 180 / 20_000_044)
+        assert policy.max_audio_bytes / policy.upload_timeout_seconds <= 20_000_044 / 180
+        assert (
+            RecordingPolicy(
+                hard_limit_seconds=ceiling, upload_timeout_seconds=7.5
+            ).upload_timeout_seconds
+            == 7.5
+        )
+    assert RecordingPolicy(hard_limit_seconds=600).upload_timeout_seconds == 180
+
+
+def test_environment_upload_default_and_override_are_shared(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DIKTATOR_RECORDING_HARD_LIMIT_SECONDS", "1800")
+    monkeypatch.delenv("DIKTATOR_UPLOAD_TIMEOUT_SECONDS", raising=False)
+    settings = Settings.from_environment(tmp_path)
+    assert settings.recording_policy.upload_timeout_seconds == 526
+    engine = create_engine(ModelManager(ModelStore(tmp_path / "models")))
+    endpoint = next(
+        route.endpoint
+        for route in engine.routes
+        if isinstance(route, APIRoute) and route.path == "/recording-policy"
+    )
+    assert asyncio.run(endpoint()).upload_timeout_seconds == 526
+    monkeypatch.setenv("DIKTATOR_UPLOAD_TIMEOUT_SECONDS", "18.25")
+    assert Settings.from_environment(tmp_path).recording_policy.upload_timeout_seconds == 18.25

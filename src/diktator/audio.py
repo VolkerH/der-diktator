@@ -30,8 +30,12 @@ def validate_recording(audio: bytes, *, max_duration_seconds: int) -> RecordingI
             duration = sample_count / 16_000
             if duration > max_duration_seconds:
                 raise ValueError("The recording exceeds the allowed duration limit.")
-            if len(recording.readframes(sample_count)) != sample_count * 2:
-                raise ValueError("The recording is incomplete. Record again and retry.")
+            remaining = sample_count
+            while remaining:
+                frames = min(remaining, 32_768)
+                if len(recording.readframes(frames)) != frames * 2:
+                    raise ValueError("The recording is incomplete. Record again and retry.")
+                remaining -= frames
     except (wave.Error, EOFError) as error:
         raise ValueError("The recording could not be read as PCM WAV audio.") from error
     return RecordingInfo(sample_count=sample_count, duration_seconds=duration)

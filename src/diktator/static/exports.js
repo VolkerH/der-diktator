@@ -2,7 +2,7 @@ import { ApiRequestError } from "./errors.js";
 import { request } from "./request.js";
 
 /** @typedef {{text: string, key: number, active: boolean}} DraftSnapshot */
-/** @typedef {{copy_preamble: string, copy_preamble_is_default: boolean, share_include_preamble: boolean, default_copy_preamble: string, max_copy_preamble_characters: number, revision: number, recording_interval_seconds: number, requested_recording_interval_seconds: number, default_recording_interval_seconds: number, recording_interval_is_default: boolean, recording_interval_constrained: boolean, recording_interval_constraint_reason: string | null, max_recording_interval_seconds: number}} Preferences */
+/** @typedef {{copy_preamble: string, copy_preamble_is_default: boolean, share_include_preamble: boolean, default_copy_preamble: string, max_copy_preamble_characters: number, revision: number, recording_interval_seconds: number, requested_recording_interval_seconds: number, default_recording_interval_seconds: number, effective_default_recording_interval_seconds: number, recording_interval_is_default: boolean, recording_interval_constrained: boolean, recording_interval_constraint_reason: string | null, max_recording_interval_seconds: number}} Preferences */
 
 /** Request shared backend formatting/preferences, keeping device access in this client.
  * @param {() => DraftSnapshot} snapshot
@@ -40,12 +40,7 @@ export function exportControls(snapshot, announce) {
     if (!preferences) return;
     intervalDirty = true;
     intervalDefault = true;
-    interval.value = String(
-      Math.min(
-        preferences.default_recording_interval_seconds,
-        preferences.max_recording_interval_seconds,
-      ) / 60,
-    );
+    interval.value = String(preferences.effective_default_recording_interval_seconds / 60);
     intervalHelp.textContent = "Using the default interval for your next recording. Save to apply.";
   });
   const limits = /** @type {HTMLElement} */ (document.getElementById("settings-limits"));

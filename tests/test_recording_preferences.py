@@ -25,6 +25,7 @@ def test_default_reads_do_not_create_rows_and_policy_changes_invalidate_etags(
 ) -> None:
     preferences = PreferenceService(service.engine, hard_limit_seconds=3600)
     initial = preferences.get(LOCAL_USER_ID)
+    assert initial.effective_default_recording_interval_seconds == 1800
     assert initial.recording_interval_seconds == 1800
     assert initial.recording_interval_is_default
     with service.engine.connect() as connection:
@@ -32,6 +33,7 @@ def test_default_reads_do_not_create_rows_and_policy_changes_invalidate_etags(
     constrained = PreferenceService(service.engine, hard_limit_seconds=600).get(LOCAL_USER_ID)
     assert constrained.requested_recording_interval_seconds == 1800
     assert constrained.default_recording_interval_seconds == 1800
+    assert constrained.effective_default_recording_interval_seconds == 600
     assert constrained.recording_interval_seconds == 600
     assert constrained.recording_interval_constrained
     assert constrained.recording_interval_constraint_reason
@@ -185,6 +187,7 @@ def test_default_change_invalidates_validator_without_overwriting_explicit_inter
     current = preferences.get(LOCAL_USER_ID)
     assert current.recording_interval_seconds == 1800
     assert current.default_recording_interval_seconds == 1200
+    assert current.effective_default_recording_interval_seconds == 1200
     assert current.revision == saved.revision
     assert current.etag(LOCAL_USER_ID) != saved.etag(LOCAL_USER_ID)
     reset = preferences.update(
@@ -216,6 +219,9 @@ async def test_agreed_snapshot_matches_one_preference_read_and_policy_hash(tmp_p
         assert snapshot.status_code == 200
         data = snapshot.json()
         assert data["recording_interval_seconds"] == 1800
+        assert data["warning_lead_seconds"] == 60
+        assert data["extension_seconds"] == 1800
+        assert data["client_deadlines_ms"]["upload"] == 1_054_000
         assert data["hard_limit_seconds"] == 3600
         assert data["preference_etag"] == initial.headers["etag"]
         assert data["policy_revision"] == settings.recording_policy.policy_revision
@@ -227,6 +233,7 @@ async def test_agreed_snapshot_matches_one_preference_read_and_policy_hash(tmp_p
         )
         updated = (await client.get("/api/recording-policy")).json()
         assert updated["recording_interval_seconds"] == 60
+        assert updated["extension_seconds"] == 60
         assert updated["preference_etag"] == saved.headers["etag"]
         assert updated["policy_revision"] == data["policy_revision"]
 

@@ -4,6 +4,7 @@ import asyncio
 import pathlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
+from io import BytesIO
 from typing import Annotated
 
 import httpx
@@ -181,25 +182,28 @@ def create_app(
         content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
         if content_type not in {"audio/wav", "audio/x-wav"}:
             raise ApiFailure("Send the recording as PCM WAV audio.", "unsupported_audio", 415)
-        audio = bytearray()
+        audio = BytesIO()
         try:
             async with asyncio.timeout(settings.recording_policy.upload_timeout_seconds):
                 async for chunk in request.stream():
-                    if len(audio) + len(chunk) > settings.max_audio_bytes:
+                    if audio.tell() + len(chunk) > settings.max_audio_bytes:
                         raise ApiFailure(
                             "The recording is too large. "
                             f"The limit is {settings.max_audio_bytes} bytes.",
                             "audio_too_large",
                             413,
                         )
-                    audio.extend(chunk)
+                    audio.write(chunk)
         except TimeoutError as error:
             raise ApiFailure(
                 "Audio upload timed out. Keep the recording and retry saving.",
                 "upload_timeout",
                 408,
             ) from error
-        recording = bytes(audio)
+        # BytesIO.getvalue shares its immutable buffer on CPython; avoid retaining
+        # a full bytearray alongside a full bytes copy for long uploads.
+        recording = audio.getvalue()
+        audio.close()
         try:
             info = await run_in_threadpool(
                 validate_recording, recording, max_duration_seconds=settings.max_duration_seconds

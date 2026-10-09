@@ -75,10 +75,10 @@ test("an acknowledged extension permits its full interval and never exceeds the 
 });
 test("a throttled main thread has a bounded queue and receives an explicit stop", () => {
   const { instance, messages } = processor({ maxSamples: 3600 * 16000 });
-  for (let i = 0; i < 1000; i++) if (!instance.process([[new Float32Array(128)]])) break;
-  assert.equal(messages.filter((message) => message.type === "samples").length, 8);
+  for (let i = 0; i < 3000; i++) if (!instance.process([[new Float32Array(128)]])) break;
+  assert.equal(messages.filter((message) => message.type === "samples").length, 128);
   assert.equal(messages.at(-1).reason, "capture_queue_overflow");
-  assert.equal(messages.at(-1).sampleCount, 8 * 2048);
+  assert.equal(messages.at(-1).sampleCount, 128 * 2048);
 });
 
 test("native-rate FIR preserves speech-band tones and suppresses aliased high frequencies", () => {
@@ -102,4 +102,20 @@ test("native-rate FIR preserves speech-band tones and suppresses aliased high fr
     assert.ok(Math.abs(amplitude(4000) - 0.5 / Math.sqrt(2)) < 0.01);
     assert.ok(amplitude(12000) < 0.003, "12 kHz must not alias into speech");
   }
+});
+
+test("a two-second main-thread stall continues once queued batches are acknowledged", () => {
+  const { instance, messages } = processor({ maxSamples: 3600 * 16000 });
+  for (let i = 0; i < 250; i++) assert.equal(instance.process([[new Float32Array(128)]]), true);
+  assert.equal(
+    messages.some((message) => message.type === "stopped"),
+    false,
+  );
+  const queued = messages.filter((message) => message.type === "samples").length;
+  for (let i = 0; i < queued; i++) instance.port.onmessage({ data: { type: "ack" } });
+  assert.equal(instance.pending, 0);
+  assert.equal(instance.process([[new Float32Array(128)]]), true);
+  instance.port.onmessage({ data: { type: "stop" } });
+  assert.equal(messages.at(-1).reason, "manual");
+  assert.equal(messages.at(-1).sampleCount, 32_128);
 });

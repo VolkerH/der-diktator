@@ -3343,6 +3343,10 @@
             "type": "integer",
             "title": "Default Recording Interval Seconds"
           },
+          "effective_default_recording_interval_seconds": {
+            "type": "integer",
+            "title": "Effective Default Recording Interval Seconds"
+          },
           "recording_interval_is_default": {
             "type": "boolean",
             "title": "Recording Interval Is Default",
@@ -3441,7 +3445,7 @@
           "upload_timeout_seconds": {
             "type": "number",
             "title": "Upload Timeout Seconds",
-            "default": 180.0
+            "default": 1044.0
           },
           "batch_timeout_seconds": {
             "type": "number",
@@ -3493,6 +3497,10 @@
             ],
             "title": "Recording Interval Constraint Reason"
           },
+          "client_deadlines_ms": {
+            "$ref": "#/components/schemas/ClientDeadlines",
+            "readOnly": true
+          },
           "max_pcm_bytes": {
             "type": "integer",
             "title": "Max Pcm Bytes",
@@ -3507,6 +3515,18 @@
             "type": "string",
             "title": "Policy Revision",
             "readOnly": true
+          },
+          "warning_lead_seconds": {
+            "type": "integer",
+            "title": "Warning Lead Seconds",
+            "description": "Warn this many seconds before each acknowledged deadline.",
+            "readOnly": true
+          },
+          "extension_seconds": {
+            "type": "integer",
+            "title": "Extension Seconds",
+            "description": "Offer only this complete extension within the frozen hard ceiling.",
+            "readOnly": true
           }
         },
         "additionalProperties": false,
@@ -3519,9 +3539,12 @@
           "recording_interval_is_default",
           "recording_interval_constrained",
           "recording_interval_constraint_reason",
+          "client_deadlines_ms",
           "max_pcm_bytes",
           "max_audio_bytes",
-          "policy_revision"
+          "policy_revision",
+          "warning_lead_seconds",
+          "extension_seconds"
         ],
         "title": "PublicRecordingPolicy",
         "description": "Agreed limits with the validator of one read of the shared local preferences."

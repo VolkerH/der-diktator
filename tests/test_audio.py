@@ -45,3 +45,10 @@ def test_rejects_empty_recording() -> None:
 def test_duration_limit_is_enforced_from_audio_not_a_client_claim() -> None:
     with pytest.raises(ValueError, match="limit"):
         validate_recording(make_wav(frames=16_001), max_duration_seconds=1)
+
+
+def test_multiblock_recording_requires_complete_final_frames() -> None:
+    audio = make_wav(frames=65_537)
+    assert validate_recording(audio, max_duration_seconds=600).sample_count == 65_537
+    with pytest.raises(ValueError, match="incomplete"):
+        validate_recording(audio[:-1], max_duration_seconds=600)

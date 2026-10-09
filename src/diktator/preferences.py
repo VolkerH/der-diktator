@@ -41,6 +41,7 @@ Preamble = Annotated[str, Field(max_length=MAX_PREAMBLE_CHARACTERS), AfterValida
 
 
 class IntervalValues(TypedDict):
+    effective_default_recording_interval_seconds: int
     recording_interval_seconds: int
     requested_recording_interval_seconds: int
     recording_interval_is_default: bool
@@ -67,6 +68,9 @@ class Preferences(BaseModel):
     recording_interval_seconds: int = DEFAULT_RECORDING_INTERVAL_SECONDS
     requested_recording_interval_seconds: int = DEFAULT_RECORDING_INTERVAL_SECONDS
     default_recording_interval_seconds: int = Field(
+        default_factory=lambda: DEFAULT_RECORDING_INTERVAL_SECONDS
+    )
+    effective_default_recording_interval_seconds: int = Field(
         default_factory=lambda: DEFAULT_RECORDING_INTERVAL_SECONDS
     )
     recording_interval_is_default: bool = True
@@ -140,6 +144,9 @@ class PreferenceService:
         requested = DEFAULT_RECORDING_INTERVAL_SECONDS if stored is None else stored
         effective = min(requested, self.hard_limit_seconds)
         interval = IntervalValues(
+            effective_default_recording_interval_seconds=min(
+                DEFAULT_RECORDING_INTERVAL_SECONDS, self.hard_limit_seconds
+            ),
             recording_interval_seconds=effective,
             requested_recording_interval_seconds=requested,
             recording_interval_is_default=stored is None,

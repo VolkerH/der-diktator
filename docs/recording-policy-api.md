@@ -16,15 +16,15 @@ in this release. Existing host/port/data-directory CLI options retain their mean
 Changes require restarting both services; a saved profile preference cannot raise
 an operator ceiling.
 
-| Environment variable                         | Default | Meaning                                                        |
-| -------------------------------------------- | ------- | -------------------------------------------------------------- |
-| `DIKTATOR_RECORDING_HARD_LIMIT_SECONDS`      | 3600    | Whole-minute ceiling, at least 60 seconds                      |
-| `DIKTATOR_WAV_CONTAINER_ALLOWANCE_BYTES`     | 800044  | Body allowance beyond maximum PCM; 44 to 1048576 bytes         |
-| `DIKTATOR_MAX_STREAM_FRAME_BYTES`            | 65536   | Even frame budget; 2 to 1048576 bytes                          |
-| `DIKTATOR_UPLOAD_TIMEOUT_SECONDS`            | 180     | Deadline for reading a WAV request body on each service        |
-| `DIKTATOR_BATCH_TIMEOUT_SECONDS`             | 180     | Engine response wait after WAV validation and native admission |
-| `DIKTATOR_LIVE_FINALIZATION_TIMEOUT_SECONDS` | 180     | Engine wait for terminal events after sending `end`            |
-| `DIKTATOR_CLIENT_TIMEOUT_MARGIN_SECONDS`     | 10      | Extra wait at each outer transport boundary                    |
+| Environment variable                         | Default        | Meaning                                                        |
+| -------------------------------------------- | -------------- | -------------------------------------------------------------- |
+| `DIKTATOR_RECORDING_HARD_LIMIT_SECONDS`      | 3600           | Whole-minute ceiling, at least 60 seconds                      |
+| `DIKTATOR_WAV_CONTAINER_ALLOWANCE_BYTES`     | 800044         | Body allowance beyond maximum PCM; 44 to 1048576 bytes         |
+| `DIKTATOR_MAX_STREAM_FRAME_BYTES`            | 65536          | Even frame budget; 2 to 1048576 bytes                          |
+| `DIKTATOR_UPLOAD_TIMEOUT_SECONDS`            | 1044 (derived) | Deadline for reading a WAV request body on each service        |
+| `DIKTATOR_BATCH_TIMEOUT_SECONDS`             | 180            | Engine response wait after WAV validation and native admission |
+| `DIKTATOR_LIVE_FINALIZATION_TIMEOUT_SECONDS` | 180            | Engine wait for terminal events after sending `end`            |
+| `DIKTATOR_CLIENT_TIMEOUT_MARGIN_SECONDS`     | 10             | Extra wait at each outer transport boundary                    |
 
 Timeouts must be positive finite seconds, with combined browser deadlines fitting
 the signed 32-bit millisecond timer range. The hard ceiling derives
@@ -35,6 +35,23 @@ At the default ceiling the budget is 116,000,044 bytes, including the existing
 metadata allowance never permits longer audio. Both services reject excess data
 without truncation, including accumulated live frames and stored-clip retranscription.
 Each live frame must contain whole 16-bit samples.
+
+Without an explicit upload override, startup derives
+`upload_timeout_seconds = ceil(max_audio_bytes * 180 / 20000044)`. This preserves
+the previous full-body sustained throughput assumption of 111,111.36 bytes/s,
+approximately 0.889 Mbit/s before protocol overhead. The default 116,000,044-byte
+body gets 1044 seconds (17 minutes 24 seconds); a 600-second ceiling with the
+usual allowance retains 180 seconds. Both ceiling and metadata allowance affect
+this default. Explicit environment or Python-injected timeout values are preserved.
+This is a minimum throughput budget, not a guarantee for arbitrarily slow links.
+
+On CPython, the web body uses `BytesIO.getvalue()` to share its immutable buffer
+rather than retaining a bytearray plus a second full-body bytes copy. WAV
+completeness validation reads at most 65,536 bytes per block. A maximal body
+still occupies roughly 116 MB before allocator overhead; growth, request chunks,
+HTTP engine forwarding, engine-side body copies and native decoding can add
+memory. The browser retains PCM and may copy it into a Blob. These changes do
+not establish a process RSS peak or a zero-copy end-to-end path.
 
 The browser retains mono 16 kHz PCM16 independently of native sample rate, with
 a worklet sample budget and bounded pending messages. Raising the operator
@@ -51,11 +68,11 @@ Engine `GET /recording-policy` returns these typed fields:
   "hard_limit_seconds": 3600,
   "wav_container_allowance_bytes": 800044,
   "max_stream_frame_bytes": 65536,
-  "upload_timeout_seconds": 180.0,
+  "upload_timeout_seconds": 1044.0,
   "batch_timeout_seconds": 180.0,
   "live_finalization_timeout_seconds": 180.0,
   "client_timeout_margin_seconds": 10.0,
-  "client_deadlines_ms": { "upload": 190000, "batch": 570000, "live": 200000 },
+  "client_deadlines_ms": { "upload": 1054000, "batch": 2298000, "live": 200000 },
   "max_pcm_bytes": 115200000,
   "max_audio_bytes": 116000044,
   "policy_revision": "sha256-of-canonical-policy"
@@ -71,11 +88,16 @@ one read of the shared local profile, and interval fields:
 - `requested_recording_interval_seconds`: saved request or product default;
 - `default_recording_interval_seconds`: 1800-second product default;
 - `recording_interval_is_default`: whether the profile follows that default;
-- `recording_interval_constrained` and `recording_interval_constraint_reason`.
+- `recording_interval_constrained` and `recording_interval_constraint_reason`;
+- `warning_lead_seconds`: 60 seconds before each acknowledged deadline;
+- `extension_seconds`: one effective original interval, frozen for this recording.
 
 `GET /api/preferences` additionally supplies the interval editor bounds:
 `min_recording_interval_seconds`, `max_recording_interval_seconds` and
 `recording_interval_step_seconds`: 60, current hard ceiling and 60.
+It also publishes `effective_default_recording_interval_seconds`, the backend
+resolution of the product default under the current ceiling. Clients use that
+value when previewing Use default; they do not repeat the resolution formula.
 
 The effective interval is constrained by the operator ceiling. Existing saved
 requests survive a lowered ceiling; new explicit writes above it are rejected.
@@ -108,8 +130,10 @@ it does not attest engine agreement. It adds `upload_timeout_seconds` and
 Audio save clients use the published deadline without engine
 discovery, so short WAV upload/playback/export remain usable when inference is
 unavailable or mismatched. The settings revision covers these added budgets too.
-A failed or malformed settings read does not prevent the browser from saving: it
-uses its earlier generic 190,000 ms wait. That wait may expire before an increased
+Original capture uploads and recovery use their frozen discovered deadlines.
+For later clips/attachments a failed or malformed settings read does not prevent
+the browser from saving: it uses its earlier generic 190,000 ms wait without
+reusing an unrelated cached policy. That wait may expire before an increased
 operator budget; retained WAV bytes and upload identity allow explicit recovery.
 Preference ETags include the interval default, effective values and policy-derived
 limits. See [preferences API](preferences-export-api.md).
@@ -154,7 +178,8 @@ The browser saves its complete WAV after a live failure, then polls model status
 within the published batch deadline until the recorded model is ready and idle.
 It submits batch inference once. Cleanup/reload failure, service failure, model
 switch or readiness deadline expiry leaves the clip and restored editor available
-and displays recovery instructions. It never reactivates a different selected model
+and displays recovery instructions. Capture-integrity notices are retained alongside
+save/transcription failures. Temporary extension warnings clear when capture stops. It never reactivates a different selected model
 or repeats a failed inference request automatically.
 
 Terminal `partial`/`final`/`done`/`error` event meanings remain compatible. `ready`
@@ -173,7 +198,14 @@ remains manual-only; this policy change requires no image build or model downloa
 ## Client capture obligations
 
 Fetch discovery before microphone access, then freeze policy, original interval,
-model identity and waiting budgets. Start the presentation clock at actual capture
+model identity, `warning_lead_seconds`, `extension_seconds` and waiting budgets.
+Consume the published rule values; do not derive them from the interval. Warn
+when the acknowledged deadline is within `warning_lead_seconds`. Offer an
+extension only when the complete `extension_seconds` fits at or below the frozen
+`hard_limit_seconds`; never shorten an extension to fit. Acknowledge the new
+worklet sample deadline before updating the visible deadline or re-arming the
+warning. Preferences saved during capture affect the next recording.
+Start the presentation clock at actual capture
 start and reconcile it with accepted 16 kHz samples. A one-minute interval warns
 immediately. Warnings are visible and announced accessibly even when an audio beep
 is muted or unavailable; suspended browsers cannot promise timely sound.
@@ -181,8 +213,10 @@ is muted or unavailable; suspended browsers cannot promise timely sound.
 The browser worklet enforces the current sample deadline and hard cap. Extensions
 are acknowledged before updating the displayed deadline. Stop, automatic expiry,
 late extension and startup teardown finalize once; the normal stopped acknowledgement
-follows the permitted PCM tail. At most eight 2048-sample messages plus a partial
-batch await acknowledgement. If the tab cannot keep up, capture stops explicitly
+follows the permitted PCM tail. At most 128 unacknowledged 2048-sample PCM16
+messages plus a partial batch await acknowledgement (at most 516 KiB). This
+allows about 16.384 seconds of main-thread delay, including temporary modal
+dialogs or garbage collection, while bounding a frozen tab. If the tab cannot keep up, capture stops explicitly
 and its received audio remains available for saving/recovery. A missing stop
 acknowledgement saves only the received prefix and warns that the unconfirmed tail
 may be missing. Such interrupted capture is never presented as continuing normally.
