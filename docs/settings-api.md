@@ -35,3 +35,8 @@ Future #9 stages must define authorized operator capabilities, actual CLI/env/fi
 precedence, saved versus effective/pending values, coordinated restart, and a
 stop/copy/verify/restart storage migration procedure. They are not delivered by
 this read-only snapshot and dialog.
+
+The proposed next recording slice is described in the
+[recording policy plan](plans/recording-policy.md). That plan does not change this
+endpoint or its current 600-second enforcement; it separates an agreed engine
+policy snapshot from this existing web-only display revision.

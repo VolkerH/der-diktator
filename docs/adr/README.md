@@ -24,3 +24,7 @@ defined in [AGENTS.md](../../AGENTS.md).
 
 [API conventions](../api-conventions.md) defines the shared implementation contract from ADR 0002,
 including the decisions still required for individual features.
+
+The [2026-10-09 architecture audit](../architecture-audit-2026-10-09.md) separates
+merged behavior from remaining roadmap gates. The linked recording plan is proposed
+implementation guidance; it does not change the status of the accepted ADRs.
