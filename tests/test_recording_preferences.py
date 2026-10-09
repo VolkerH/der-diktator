@@ -205,3 +205,51 @@ def test_whole_minute_ceiling_is_inclusive(service: ChatService) -> None:
     )
     assert saved.recording_interval_seconds == 3600
     assert not saved.recording_interval_constrained
+
+
+@pytest.mark.anyio
+async def test_agreed_snapshot_matches_one_preference_read_and_policy_hash(tmp_path: Path) -> None:
+    settings = Settings(data_directory=tmp_path)
+    async with client_for(healthy_engine, settings) as client:
+        initial = await client.get("/api/preferences")
+        snapshot = await client.get("/api/recording-policy")
+        assert snapshot.status_code == 200
+        data = snapshot.json()
+        assert data["recording_interval_seconds"] == 1800
+        assert data["hard_limit_seconds"] == 3600
+        assert data["preference_etag"] == initial.headers["etag"]
+        assert data["policy_revision"] == settings.recording_policy.policy_revision
+        assert data["max_audio_bytes"] == 116_000_044
+        saved = await client.patch(
+            "/api/preferences",
+            json={"recording_interval_seconds": 60},
+            headers={"If-Match": initial.headers["etag"]},
+        )
+        updated = (await client.get("/api/recording-policy")).json()
+        assert updated["recording_interval_seconds"] == 60
+        assert updated["preference_etag"] == saved.headers["etag"]
+        assert updated["policy_revision"] == data["policy_revision"]
+
+
+@pytest.mark.anyio
+async def test_snapshot_exposes_operator_constrained_default(tmp_path: Path) -> None:
+    from httpx import Request, Response
+
+    from diktator.recording_policy import RecordingPolicy
+
+    settings = Settings(
+        data_directory=tmp_path, recording_policy=RecordingPolicy(hard_limit_seconds=600)
+    )
+
+    def configured_engine(request: Request) -> Response:
+        if request.url.path == "/recording-policy":
+            return Response(200, json=settings.recording_policy.model_dump())
+        return healthy_engine(request)
+
+    async with client_for(configured_engine, settings) as client:
+        data = (await client.get("/api/recording-policy")).json()
+        assert data["hard_limit_seconds"] == 600
+        assert data["requested_recording_interval_seconds"] == 1800
+        assert data["recording_interval_seconds"] == 600
+        assert data["recording_interval_constrained"]
+        assert data["recording_interval_constraint_reason"]

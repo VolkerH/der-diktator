@@ -22,7 +22,7 @@ class RecordingPolicy(BaseModel):
 
     model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
     protocol_version: Literal[1] = 1
-    hard_limit_seconds: int = 600
+    hard_limit_seconds: int = 3600
     # Includes the usual 44-byte header and bounded optional WAV metadata. This
     # preserves the existing 20,000,044-byte upload ceiling at 600 seconds.
     wav_container_allowance_bytes: int = 800_044
@@ -118,13 +118,19 @@ class PublicRecordingPolicy(RecordingPolicy):
     """Agreed limits with the validator of one read of the shared local preferences."""
 
     preference_etag: str
+    recording_interval_seconds: int
+    requested_recording_interval_seconds: int
+    default_recording_interval_seconds: int
+    recording_interval_is_default: bool
+    recording_interval_constrained: bool
+    recording_interval_constraint_reason: str | None
 
     @computed_field
     @property
     @override
     def policy_revision(self) -> str:
-        # The preference validator is a separate contract and cannot change the
-        # web/engine agreement hash. PR2 may add resolved interval fields here.
+        # Preference fields and their validator are separate from the
+        # web/engine agreement hash, which covers only operator policy.
         return RecordingPolicy.model_validate(
             {key: getattr(self, key) for key in RecordingPolicy.model_fields}
         ).policy_revision

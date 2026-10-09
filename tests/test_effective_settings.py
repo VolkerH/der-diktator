@@ -31,8 +31,8 @@ async def test_settings_show_running_limits_without_disclosing_operator_details(
         assert body["profile_scope"] == "shared_local_profile"
         assert body["model_selection"] == "instance_model_api"
         assert {limit["id"]: limit["value"] for limit in body["limits"]} == {
-            "recording_seconds": 600,
-            "audio_bytes": 20_000_044,
+            "recording_seconds": 3600,
+            "audio_bytes": 116_000_044,
             "text_characters": 1234,
         }
         for limit in body["limits"]:

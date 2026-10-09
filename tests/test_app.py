@@ -67,7 +67,7 @@ async def test_health_checks_the_model_identity() -> None:
     async with client_for(healthy_engine) as client:
         assert (await client.get("/api/health")).json() == {
             "ready": True,
-            "max_duration_seconds": 600,
+            "max_duration_seconds": 3600,
         }
     async with client_for(
         lambda _: httpx.Response(200, json={"status": "ok", "model": "phonon-1"})

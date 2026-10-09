@@ -238,6 +238,12 @@ def create_app(
         return PublicRecordingPolicy(
             **{key: getattr(policy, key) for key in RecordingPolicy.model_fields},
             preference_etag=preference.etag(actor_id),
+            recording_interval_seconds=preference.recording_interval_seconds,
+            requested_recording_interval_seconds=preference.requested_recording_interval_seconds,
+            default_recording_interval_seconds=preference.default_recording_interval_seconds,
+            recording_interval_is_default=preference.recording_interval_is_default,
+            recording_interval_constrained=preference.recording_interval_constrained,
+            recording_interval_constraint_reason=preference.recording_interval_constraint_reason,
         )
 
     preference_headers = {
