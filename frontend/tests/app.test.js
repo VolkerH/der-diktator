@@ -297,6 +297,20 @@ function chatServer() {
       group.revision++;
       return groupJson(group);
     }
+    if (url === "/api/recording-policy")
+      return json({
+        protocol_version: 1,
+        policy_revision: "test-policy",
+        hard_limit_seconds: 600,
+        max_audio_bytes: 20000044,
+        max_pcm_bytes: 19200000,
+        max_stream_frame_bytes: 65536,
+        upload_timeout_seconds: 180,
+        batch_timeout_seconds: 180,
+        live_finalization_timeout_seconds: 180,
+        client_timeout_margin_seconds: 10,
+        preference_etag: '"preferences-test"',
+      });
     if (url === "/api/models") return json(server.models);
     if (url.startsWith("/api/models/")) {
       server.modelRequests.push(url);
@@ -560,6 +574,7 @@ async function appEnvironment(t, setup = () => {}, waitReady = true) {
 
 async function startLive(app) {
   const starting = app.element("record").emit("click");
+  await setImmediate();
   const socket = app.sockets.at(-1);
   socket.event({ type: "ready" });
   await starting;
@@ -766,6 +781,7 @@ test("chats can be switched, started anew, and deleted after confirming", async 
 test("connection failure preserves existing text", async (t) => {
   const app = await appEnvironment(t, (server) => server.add("My existing edits."));
   const starting = app.element("record").emit("click");
+  await setImmediate();
   app.sockets[0].emit("error");
   await starting;
   assert.equal(app.state.starts, 0);

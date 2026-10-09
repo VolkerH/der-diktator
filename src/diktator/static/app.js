@@ -7,6 +7,7 @@ import { groupApi } from "./groups.js";
 import { GroupSidebar } from "./group-sidebar.js";
 import { modelPicker } from "./models.js";
 import { LiveTranscriber } from "./live.js";
+import { recordingPolicy, recordingTimeoutMs } from "./recording-policy.js";
 import { MicrophoneRecorder } from "./recorder.js";
 
 /** @typedef {import("./chats.js").Chat} Chat */
@@ -88,6 +89,7 @@ let modelReady = false;
 let modelLive = false;
 let livePreference = liveMode.checked;
 let recordingModel = "phonon-2";
+let recordingCaptureLimitSeconds = MAX_DURATION_SECONDS;
 const models = modelPicker((ready, live) => {
   modelReady = ready;
   modelLive = live;
@@ -1604,6 +1606,11 @@ recordButton.addEventListener("click", async () => {
   insertion = captureInsertion();
   status.textContent = "Waiting for microphone permission…";
   try {
+    status.textContent = "Checking recording policy…";
+    const policy = await recordingPolicy();
+    // This intermediate release retains the existing ten-minute capture path.
+    // Smaller operator ceilings are safe; longer capture is delivered in PR2.
+    recordingCaptureLimitSeconds = Math.min(600, policy.hard_limit_seconds);
     if (liveMode.checked) {
       status.textContent = "Connecting live transcription…";
       const stream = new LiveTranscriber(
@@ -1617,6 +1624,7 @@ recordButton.addEventListener("click", async () => {
             status.textContent = "Recording continues. Stop to transcribe the complete recording.";
           }
         },
+        { finishTimeoutMs: recordingTimeoutMs(policy, "live") },
       );
       activeStream = stream;
       const url = new URL("/api/stream", window.location.href);
@@ -1641,9 +1649,9 @@ recordButton.addEventListener("click", async () => {
     }
     timerId = window.setInterval(() => {
       const elapsed = (performance.now() - startedAt) / 1000;
-      updateTimer(Math.min(elapsed, MAX_DURATION_SECONDS));
+      updateTimer(Math.min(elapsed, recordingCaptureLimitSeconds));
       pushLevel();
-      if (elapsed >= MAX_DURATION_SECONDS) void stopRecording();
+      if (elapsed >= recordingCaptureLimitSeconds) void stopRecording();
     }, 60);
   } catch (error) {
     activeStream?.cancel();

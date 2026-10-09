@@ -4,6 +4,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass
 
 from diktator.errors import ENGINE_ERRORS, ApiFailure
 from diktator.inference.backends import Backend, create_backend
@@ -21,6 +22,17 @@ class ModelConflict(ApiFailure):
         super().__init__(message, code, status)
 
 
+@dataclass
+class StreamReservation:
+    """Native ownership can be released normally only after an upstream done event."""
+
+    endpoint: str
+    completed: bool = False
+
+    def complete(self) -> None:
+        self.completed = True
+
+
 class ModelManager:
     """Only the event-loop thread changes lifecycle state; workers own inference."""
 
@@ -36,6 +48,8 @@ class ModelManager:
         self.errors: dict[ModelId, str] = {}
         self.inference: asyncio.Task[str] | None = None
         self.streaming = False
+        self.stream_cleanup: asyncio.Task[None] | None = None
+        self.shutdown: asyncio.Task[None] | None = None
 
     @property
     def busy(self) -> bool:
@@ -183,15 +197,46 @@ class ModelManager:
         return await asyncio.shield(task)
 
     @asynccontextmanager
-    async def stream(self, model_id: ModelId) -> AsyncIterator[str]:
+    async def stream(self, model_id: ModelId) -> AsyncIterator[StreamReservation]:
         backend = self.require(model_id)
         if backend.stream_endpoint is None:
             raise ModelConflict("live_transcription_unsupported")
+        reservation = StreamReservation(backend.stream_endpoint)
+        self.stream_cleanup = None
         self.streaming = True
         try:
-            yield backend.stream_endpoint
+            yield reservation
         finally:
-            self.streaming = False
+            if reservation.completed:
+                self.streaming = False
+            else:
+                # WebSocket closure alone is no acknowledgement of native decode
+                # completion. This owned task survives repeated requester cancellation.
+                await asyncio.shield(self._start_stream_cleanup(backend, model_id))
+
+    def _start_stream_cleanup(self, backend: Backend, model_id: ModelId) -> asyncio.Task[None]:
+        if self.stream_cleanup is None:
+            self.stream_cleanup = asyncio.create_task(self._abort_stream(backend, model_id))
+            self.stream_cleanup.add_done_callback(
+                lambda task: task.exception() if not task.cancelled() else None
+            )
+        return self.stream_cleanup
+
+    async def _abort_stream(self, backend: Backend, model_id: ModelId) -> None:
+        try:
+            await backend.close()
+        except Exception:
+            self.errors[model_id] = "Live cleanup failed. Restart the engine before using a model."
+            logger.exception("Native live cleanup failed; retaining reservation")
+            raise
+        # close() confirms stop/reap; only now can other native work be admitted.
+        if self.backend is backend:
+            self.backend = None
+            self.active = None
+        self.errors[model_id] = (
+            "Live transcription stopped before completion. Choose Use model to reload it."
+        )
+        self.streaming = False
 
     async def start(self) -> None:
         preferred = self.store.preference()
@@ -199,6 +244,19 @@ class ModelManager:
             self.activate(preferred)
 
     async def close(self) -> None:
+        if self.shutdown is None:
+            self.shutdown = asyncio.create_task(self._close())
+            self.shutdown.add_done_callback(
+                lambda task: task.exception() if not task.cancelled() else None
+            )
+        await asyncio.shield(self.shutdown)
+
+    async def _close(self) -> None:
+        if self.streaming and self.backend is not None and self.active is not None:
+            self._start_stream_cleanup(self.backend, self.active)
+        if self.stream_cleanup is not None:
+            with suppress(Exception):
+                await asyncio.shield(self.stream_cleanup)
         if self.job is not None:
             # Downloads can be cancelled safely; native model loading cannot.
             if self.job_kind == "download":

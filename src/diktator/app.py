@@ -1,5 +1,6 @@
 """Serve the browser interface and bounded audio uploads from the same origin."""
 
+import asyncio
 import pathlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
@@ -49,10 +50,10 @@ from diktator.group_models import ChatCreate, ChatPlacement, Group, GroupName, P
 from diktator.groups import GroupService
 from diktator.models import ModelId, ModelsStatus
 from diktator.preferences import Preferences, PreferenceService, PreferenceUpdate
+from diktator.recording_policy import PublicRecordingPolicy, RecordingPolicy
 from diktator.storage import Storage, open_storage
 from diktator.streaming import (
     StreamConnector,
-    StreamError,
     connect_engine,
     relay_stream,
     stream_failure,
@@ -75,7 +76,8 @@ def create_app(
     settings = settings or Settings.from_environment()
     client = httpx.AsyncClient(
         base_url=settings.engine_url,
-        timeout=settings.transcription_timeout_seconds,
+        timeout=settings.recording_policy.batch_timeout_seconds
+        + settings.recording_policy.client_timeout_margin_seconds,
         transport=transport,
         trust_env=False,
     )
@@ -174,14 +176,23 @@ def create_app(
         if content_type not in {"audio/wav", "audio/x-wav"}:
             raise ApiFailure("Send the recording as PCM WAV audio.", "unsupported_audio", 415)
         audio = bytearray()
-        async for chunk in request.stream():
-            if len(audio) + len(chunk) > settings.max_audio_bytes:
-                raise ApiFailure(
-                    f"The recording is too large. The limit is {settings.max_audio_bytes} bytes.",
-                    "audio_too_large",
-                    413,
-                )
-            audio.extend(chunk)
+        try:
+            async with asyncio.timeout(settings.recording_policy.upload_timeout_seconds):
+                async for chunk in request.stream():
+                    if len(audio) + len(chunk) > settings.max_audio_bytes:
+                        raise ApiFailure(
+                            "The recording is too large. "
+                            f"The limit is {settings.max_audio_bytes} bytes.",
+                            "audio_too_large",
+                            413,
+                        )
+                    audio.extend(chunk)
+        except TimeoutError as error:
+            raise ApiFailure(
+                "Audio upload timed out. Keep the recording and retry saving.",
+                "upload_timeout",
+                408,
+            ) from error
         recording = bytes(audio)
         try:
             info = await run_in_threadpool(
@@ -191,10 +202,12 @@ def create_app(
             raise ApiFailure(str(error), "invalid_audio", 400) from error
         return recording, info
 
-    @app.post("/api/transcribe", responses=error_responses(400, 409, 413, 415, 422, 502, 503, 504))
+    @app.post(
+        "/api/transcribe", responses=error_responses(400, 408, 409, 413, 415, 422, 502, 503, 504)
+    )
     async def transcribe(request: Request, model: ModelId = "phonon-2") -> Transcription:
         recording, _info = await read_recording(request)
-        return await engine.transcribe(recording, model)
+        return await engine.transcribe(recording, model, policy=settings.recording_policy)
 
     @app.get(
         "/api/settings",
@@ -208,6 +221,16 @@ def create_app(
 
     def preferences() -> PreferenceService:
         return PreferenceService(app.state.storage.engine)
+
+    @app.get("/api/recording-policy", responses=error_responses(503, 504))
+    async def get_recording_policy(actor_id: Actor) -> PublicRecordingPolicy:
+        await engine.recording_policy(settings.recording_policy)
+        preference = await run_in_threadpool(preferences().get, actor_id)
+        policy = settings.recording_policy
+        return PublicRecordingPolicy(
+            **{key: getattr(policy, key) for key in RecordingPolicy.model_fields},
+            preference_etag=preference.etag(actor_id),
+        )
 
     preference_headers = {
         "ETag": {
@@ -587,7 +610,10 @@ def create_app(
     @app.post(
         "/api/chats/{chat_id}/recordings",
         status_code=201,
-        responses={**error_responses(400, 404, 413, 415, 422), 201: {"headers": upload_headers}},
+        responses={
+            **error_responses(400, 404, 408, 413, 415, 422),
+            201: {"headers": upload_headers},
+        },
         description="Store validated PCM WAV as a new recording with a server-chosen ID. "
         "Returns 201 with the Recording and a parent `Chat-ETag`. The upload changes the "
         "chat validator while preserving the text validator; clients retain their "
@@ -608,7 +634,7 @@ def create_app(
     @app.put(
         "/api/chats/{chat_id}/recordings/{recording_id}",
         responses={
-            **error_responses(400, 404, 409, 413, 415, 422),
+            **error_responses(400, 404, 408, 409, 413, 415, 422),
             200: {"headers": upload_headers},
             201: {"model": Recording, "headers": upload_headers},
         },
@@ -649,19 +675,39 @@ def create_app(
         chat_id: ChatId, recording_id: ChatId, actor_id: Actor, model: ModelId = "phonon-2"
     ) -> Transcription:
         audio = await run_in_threadpool(store().recording_audio, actor_id, chat_id, recording_id)
-        return await engine.transcribe(audio, model)
+        # Stored clips are revalidated against this process's current policy;
+        # a restart with lower limits must not silently truncate earlier audio.
+        if len(audio) > settings.max_audio_bytes:
+            raise ApiFailure(
+                "The stored recording exceeds the current upload limit.", "audio_too_large", 413
+            )
+        try:
+            await run_in_threadpool(
+                validate_recording, audio, max_duration_seconds=settings.max_duration_seconds
+            )
+        except ValueError as error:
+            raise ApiFailure(str(error), "invalid_audio", 400) from error
+        return await engine.transcribe(audio, model, policy=settings.recording_policy)
 
     @app.websocket("/api/stream")
     async def live_transcription(browser: WebSocket, model: ModelId = "phonon-2") -> None:
         await browser.accept()
         try:
-            async with stream_connector(stream_url(settings.engine_url, model)) as upstream:
+            await engine.recording_policy(settings.recording_policy)
+            async with stream_connector(
+                stream_url(settings.engine_url, model, settings.recording_policy.policy_revision)
+            ) as upstream:
                 await upstream.send('{"sample_rate":16000,"format":"pcm_s16le"}')
                 await browser.send_json({"type": "ready"})
-                await relay_stream(browser, upstream, settings)
+                await relay_stream(
+                    browser,
+                    upstream,
+                    settings,
+                    finalization_margin_seconds=settings.recording_policy.client_timeout_margin_seconds,
+                )
         except WebSocketDisconnect:
             pass
-        except (OSError, TimeoutError, WebSocketException, StreamError, ValueError) as error:
+        except (OSError, TimeoutError, WebSocketException, ApiFailure, ValueError) as error:
             failure = stream_failure(error)
             if (
                 browser.client_state == WebSocketState.CONNECTED

@@ -9,6 +9,7 @@ import pytest
 
 from diktator.app import create_app
 from diktator.config import Settings
+from diktator.recording_policy import RecordingPolicy
 from tests.helpers import isolated_settings
 from tests.test_audio import make_wav
 
@@ -27,7 +28,13 @@ async def client_for(
     settings: Settings | None = None,
 ) -> AsyncIterator[httpx.AsyncClient]:
     with isolated_settings(settings) as settings:
-        app = create_app(settings, transport=httpx.MockTransport(handler))
+
+        def capable_engine(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/recording-policy":
+                return httpx.Response(200, json=settings.recording_policy.model_dump())
+            return handler(request)
+
+        app = create_app(settings, transport=httpx.MockTransport(capable_engine))
         async with (
             app.router.lifespan_context(app),
             httpx.AsyncClient(
@@ -135,10 +142,17 @@ async def test_upload_limit_applies_to_streamed_bodies_without_content_length() 
         return httpx.Response(200, json={"text": "unexpected"})
 
     async def chunks() -> AsyncIterator[bytes]:
-        yield b"a" * 30
-        yield b"b" * 30
+        yield b"a" * 1_000_000
+        yield b"b" * 1_000_000
 
-    async with client_for(handler, Settings(max_audio_bytes=50)) as client:
+    async with client_for(
+        handler,
+        Settings(
+            recording_policy=RecordingPolicy(
+                hard_limit_seconds=60, wav_container_allowance_bytes=44
+            )
+        ),
+    ) as client:
         response = await client.post(
             "/api/transcribe",
             content=chunks(),
@@ -146,7 +160,7 @@ async def test_upload_limit_applies_to_streamed_bodies_without_content_length() 
         )
     assert response.status_code == 413
     assert response.json()["code"] == "audio_too_large"
-    assert "50 bytes" in response.json()["detail"]
+    assert "1920044 bytes" in response.json()["detail"]
     assert "ten minutes" not in response.text
     assert calls == []
 

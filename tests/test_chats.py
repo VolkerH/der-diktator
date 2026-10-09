@@ -11,6 +11,7 @@ from diktator.config import Settings, default_data_directory, migrate_chats
 from diktator.db import open_engine, upgrade_schema
 from diktator.db.legacy import import_legacy
 from diktator.db.rows import LOCAL_USER_ID
+from diktator.recording_policy import RecordingPolicy
 from tests.test_app import client_for
 from tests.test_audio import make_wav
 
@@ -197,14 +198,16 @@ async def test_missing_chat_and_recording_have_distinct_errors_and_restored_audi
         (make_wav(channels=2), 600, 400, "invalid_audio"),
         (make_wav(width=1), 600, 400, "invalid_audio"),
         (make_wav()[:-1], 600, 400, "invalid_audio"),
-        (make_wav(frames=16_001), 1, 400, "invalid_audio"),
+        (make_wav(frames=960_001), 60, 400, "invalid_audio"),
     ],
     ids=["sample-rate", "stereo", "sample-width", "truncated", "duration"],
 )
 async def test_external_wav_attachment_validation_preserves_chat(
     tmp_path: Path, audio: bytes, limit: int, status: int, code: str
 ) -> None:
-    settings = Settings(data_directory=tmp_path, max_duration_seconds=limit)
+    settings = Settings(
+        data_directory=tmp_path, recording_policy=RecordingPolicy(hard_limit_seconds=limit)
+    )
     async with client_for(transcribing_engine, settings) as client:
         chat_id = (await client.post("/api/chats")).json()["id"]
         await client.put(f"/api/chats/{chat_id}/text", json={"text": "Keep text"})

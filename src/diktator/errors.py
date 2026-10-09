@@ -57,12 +57,22 @@ ENGINE_ERRORS: dict[str, tuple[int, str]] = {
         409,
         "The model operation conflicts with the engine state. Refresh and retry.",
     ),
+    "upload_timeout": (408, "Audio upload timed out. Keep the recording and retry saving."),
     "audio_too_large": (413, "The recording exceeds the engine's audio limit."),
     "unsupported_audio": (415, "Send the recording as PCM WAV audio."),
     "invalid_audio": (400, "The engine rejected the audio. Check the recording format and limits."),
     "validation_error": (422, "The engine rejected the request fields."),
+    "configuration_mismatch": (
+        503,
+        "Recording policy differs between services. "
+        "Restart both services with matching configuration.",
+    ),
     "engine_unavailable": (503, "The transcription engine is not ready. Try again shortly."),
-    "engine_timeout": (504, "Transcription timed out. Stop recording and retry transcription."),
+    "engine_timeout": (
+        504,
+        "Transcription timed out. The engine may still be working. "
+        "Keep the recording and wait before retrying.",
+    ),
     "engine_error": (502, "The transcription engine returned an unexpected response. Try again."),
 }
 

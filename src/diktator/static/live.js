@@ -50,7 +50,7 @@ export class LiveTranscriber {
     this.onFailure = onFailure;
     this.socketFactory = options.socketFactory ?? ((url) => new WebSocket(url));
     this.readyTimeoutMs = options.readyTimeoutMs ?? 10_000;
-    this.finishTimeoutMs = options.finishTimeoutMs ?? 180_000;
+    this.finishTimeoutMs = options.finishTimeoutMs ?? 200_000;
     this.transcript = new LiveTranscript();
     /** @type {WebSocket | null} */
     this.socket = null;

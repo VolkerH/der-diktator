@@ -10,6 +10,7 @@ from pathlib import Path
 from platformdirs import user_data_path
 
 from diktator.durability import sync_directory
+from diktator.recording_policy import RecordingPolicy
 
 DATABASE_NAME = "diktator.sqlite3"
 LOCK_NAME = ".diktator.lock"
@@ -121,16 +122,29 @@ class Settings:
     """Keep the inference service separate from the browser-facing application."""
 
     engine_url: str = "http://127.0.0.1:8010"
-    transcription_timeout_seconds: float = 180.0
-    max_audio_bytes: int = 20_000_044
-    max_duration_seconds: int = 600
-    max_stream_frame_bytes: int = 65_536
+    recording_policy: RecordingPolicy = field(default_factory=RecordingPolicy)
     max_text_characters: int = 1_000_000
     data_directory: Path = field(default_factory=default_data_directory)
 
+    @property
+    def max_duration_seconds(self) -> int:
+        return self.recording_policy.hard_limit_seconds
+
+    @property
+    def max_audio_bytes(self) -> int:
+        return self.recording_policy.max_audio_bytes
+
+    @property
+    def max_stream_frame_bytes(self) -> int:
+        return self.recording_policy.max_stream_frame_bytes
+
+    @property
+    def transcription_timeout_seconds(self) -> float:
+        return self.recording_policy.batch_timeout_seconds
+
     @classmethod
     def from_environment(cls, data_directory: Path | None = None) -> "Settings":
-        """Read the inference endpoint and chat storage; remaining limits are defaults."""
+        """Read startup operator inputs shared by web and inference processes."""
         configured = os.environ.get("DIKTATOR_DATA_DIR")
         directory = data_directory or (
             Path(configured).expanduser() if configured else default_data_directory()
@@ -138,4 +152,5 @@ class Settings:
         return cls(
             engine_url=os.environ.get("DIKTATOR_ENGINE_URL", "http://127.0.0.1:8010"),
             data_directory=directory,
+            recording_policy=RecordingPolicy.from_environment(),
         )

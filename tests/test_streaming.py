@@ -7,12 +7,14 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from starlette.types import Message, Scope
 
 from diktator.app import create_app
 from diktator.config import Settings
+from diktator.recording_policy import RecordingPolicy
 from diktator.streaming import EngineStream, StreamConnector, stream_url
 from tests.helpers import isolated_settings
 
@@ -90,7 +92,13 @@ async def browser_for(
             engine.closed = True
 
     with isolated_settings(settings) as settings:
-        app = create_app(settings, stream_connector=connector or connect)
+        app = create_app(
+            settings,
+            stream_connector=connector or connect,
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(200, json=settings.recording_policy.model_dump())
+            ),
+        )
         incoming: asyncio.Queue[Message] = asyncio.Queue()
         outgoing: asyncio.Queue[Message] = asyncio.Queue()
 
@@ -138,7 +146,9 @@ async def ready(browser: BrowserSession) -> None:
 async def test_audio_and_transcripts_flow_before_and_after_end() -> None:
     async with browser_for() as browser:
         await ready(browser)
-        assert browser.urls == ["ws://127.0.0.1:8010/v1/audio/stream?model=phonon-2"]
+        assert browser.urls == [
+            f"ws://127.0.0.1:8010/v1/audio/stream?model=phonon-2&policy_revision={RecordingPolicy().policy_revision}"
+        ]
         pcm = b"\x00\x00\xff\x7f"
         await browser.audio(pcm)
         assert await asyncio.wait_for(browser.engine.sent.get(), timeout=2) == pcm
@@ -162,8 +172,12 @@ async def test_audio_and_transcripts_flow_before_and_after_end() -> None:
 @pytest.mark.parametrize(
     ("settings", "audio", "message", "code"),
     [
-        (Settings(max_stream_frame_bytes=4), b"a" * 6, "frame was too large", "audio_too_large"),
-        (Settings(max_duration_seconds=1), b"a" * 32_002, "duration limit", "invalid_audio"),
+        (
+            Settings(recording_policy=RecordingPolicy(max_stream_frame_bytes=4)),
+            b"a" * 6,
+            "frame was too large",
+            "audio_too_large",
+        ),
     ],
 )
 async def test_stream_limits_refuse_audio_before_forwarding(
@@ -181,11 +195,14 @@ async def test_stream_limits_refuse_audio_before_forwarding(
 
 
 async def test_duration_limit_accumulates_across_frames() -> None:
-    async with browser_for(Settings(max_duration_seconds=1)) as browser:
+    async with browser_for(
+        Settings(recording_policy=RecordingPolicy(hard_limit_seconds=60))
+    ) as browser:
         await ready(browser)
-        await browser.audio(b"a" * 20_000)
-        assert len(await asyncio.wait_for(browser.engine.sent.get(), timeout=2)) == 20_000
-        await browser.audio(b"a" * 20_000)
+        for _ in range(96):
+            await browser.audio(b"a" * 20_000)
+            assert len(await asyncio.wait_for(browser.engine.sent.get(), timeout=2)) == 20_000
+        await browser.audio(b"a" * 2)
         assert (await browser.event())["type"] == "error"
         assert browser.engine.sent.empty()
 
@@ -241,7 +258,13 @@ async def test_browser_disconnect_cancels_receiving_and_releases_engine() -> Non
 
 
 async def test_finalization_timeout_releases_engine_and_reports_retry() -> None:
-    async with browser_for(Settings(transcription_timeout_seconds=0.01)) as browser:
+    async with browser_for(
+        Settings(
+            recording_policy=RecordingPolicy(
+                live_finalization_timeout_seconds=0.01, client_timeout_margin_seconds=0.01
+            )
+        )
+    ) as browser:
         await ready(browser)
         await browser.end()
         event = await browser.event()
