@@ -17,6 +17,8 @@ import { MicrophoneRecorder } from "./recorder.js";
 const recordButton = /** @type {HTMLButtonElement} */ (document.getElementById("record"));
 const stopButton = /** @type {HTMLButtonElement} */ (document.getElementById("stop"));
 const uploadButton = /** @type {HTMLButtonElement} */ (document.getElementById("upload-audio"));
+const chatWindow = /** @type {HTMLElement} */ (document.getElementById("chat-window"));
+const dropHint = /** @type {HTMLElement} */ (document.getElementById("audio-drop-hint"));
 const audioFile = /** @type {HTMLInputElement} */ (document.getElementById("audio-file"));
 const copyButton = /** @type {HTMLButtonElement} */ (document.getElementById("copy"));
 const newChatButton = /** @type {HTMLButtonElement} */ (document.getElementById("new-chat"));
@@ -1506,16 +1508,72 @@ async function attachUpload(audio) {
 uploadButton.addEventListener("click", () => {
   if (!recording && !busy && !titleEdit && !unsaved) audioFile.click();
 });
-audioFile.addEventListener("change", async () => {
-  const file = audioFile.files?.[0];
-  audioFile.value = ""; // Picking the same file again must trigger change after rejection.
+/** Picker and drop share the same guards, original bytes and retry-safe upload.
+ * @param {File | undefined} file */
+async function uploadFile(file) {
   if (!file || recording || busy || titleEdit || unsaved) return;
-  // Browser MIME guesses vary; send original bytes with the API's canonical WAV type.
   const audio = new Blob([file], { type: "audio/wav" });
   await runBusy(async () => {
     insertion = captureInsertion();
     await attachUpload(audio);
   }, "Upload failed. Choose a compatible WAV or retry the unsaved clip.");
+}
+
+audioFile.addEventListener("change", async () => {
+  const file = audioFile.files?.[0];
+  audioFile.value = ""; // Picking the same file again must trigger change after rejection.
+  await uploadFile(file);
+});
+
+/** Ignore ordinary text/link drags so editor drag-selection still works.
+ * @param {DragEvent} event */
+function isFileDrag(event) {
+  return Boolean(event.dataTransfer && Array.from(event.dataTransfer.types).includes("Files"));
+}
+
+/** @param {DragEvent} event */
+function showDropTarget(event) {
+  if (!isFileDrag(event)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const available = !uploadButton.disabled && !document.querySelector("dialog[open]");
+  if (event.dataTransfer) event.dataTransfer.dropEffect = available ? "copy" : "none";
+  dropHint.textContent = available
+    ? "Drop one WAV recording here"
+    : "Finish the current action before attaching a WAV recording.";
+  dropHint.hidden = false;
+}
+chatWindow.addEventListener("dragenter", showDropTarget);
+chatWindow.addEventListener("dragover", showDropTarget);
+chatWindow.addEventListener("dragleave", (event) => {
+  if (!chatWindow.contains(/** @type {Node | null} */ (event.relatedTarget)))
+    dropHint.hidden = true;
+});
+chatWindow.addEventListener("drop", async (event) => {
+  dropHint.hidden = true;
+  if (!isFileDrag(event)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (uploadButton.disabled || document.querySelector("dialog[open]")) return;
+  const files = event.dataTransfer?.files;
+  if (!files || files.length !== 1) {
+    showError(new Error("Attach one WAV recording at a time."));
+    return;
+  }
+  await uploadFile(files[0]);
+});
+// A file dropped outside the chat must not navigate away from an unsaved draft.
+for (const type of ["dragover", "drop"]) {
+  window.addEventListener(type, (event) => {
+    if (!isFileDrag(/** @type {DragEvent} */ (event))) return;
+    event.preventDefault();
+    dropHint.hidden = true;
+    const transfer = /** @type {DragEvent} */ (event).dataTransfer;
+    if (transfer) transfer.dropEffect = "none";
+  });
+}
+window.addEventListener("dragend", () => {
+  dropHint.hidden = true;
 });
 
 recordButton.addEventListener("click", async () => {

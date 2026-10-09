@@ -59,6 +59,7 @@ body {
   min-height: 100vh;
 }
 main {
+  position: relative;
   width: min(760px, 100%);
   margin: 0 auto;
   padding: 18px 20px 32px;
@@ -1865,4 +1866,36 @@ textarea:read-only {
   .export-dialog {
     padding: 20px;
   }
+}
+
+/* Compact attachment control keeps a full touch target on small screens. */
+.sheet-actions .attachment-button {
+  flex: 0 0 44px;
+  width: 44px;
+  min-height: 44px;
+  padding: 10px;
+  justify-content: center;
+}
+.attachment-button svg {
+  width: 20px;
+  height: 20px;
+}
+.attachment-button:focus-visible {
+  outline: 2px solid var(--hot);
+  outline-offset: 3px;
+}
+.audio-drop-hint {
+  position: absolute;
+  inset: 10px;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  border: 2px dashed var(--hot);
+  border-radius: 24px;
+  background: var(--sheet);
+  color: var(--chip-ink);
+  font-weight: 650;
+  text-align: center;
+  pointer-events: none;
 }

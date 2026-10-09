@@ -476,7 +476,11 @@ async function appEnvironment(t, setup = () => {}, waitReady = true) {
   });
   t.mock.method(MicrophoneRecorder.prototype, "release", async () => {});
   const replacements = {
-    document: { getElementById: element, createElement: (tag) => new Element(tag) },
+    document: {
+      getElementById: element,
+      createElement: (tag) => new Element(tag),
+      querySelector: () => null,
+    },
     window: {
       isSecureContext: true,
       location: { href: "http://localhost:8080/" },
@@ -3563,6 +3567,87 @@ test("pending uploads lock navigation and duplicate requests, then retain failed
   assert.equal(app.server.chats.get(id(2)).recordings.length, 0);
   await app.element("clips").children[0].children[1].emit("click");
   await settle();
+  assert.equal(app.element("clips").children.length, 1);
+  assert.equal(app.element("transcript").value, "Keep text");
+});
+
+function fileDrop(files = [new Blob([encodeWav(new Float32Array(160))])]) {
+  return {
+    dataTransfer: { types: ["Files"], files, dropEffect: "none" },
+    prevented: false,
+    stopped: false,
+    preventDefault() {
+      this.prevented = true;
+    },
+    stopPropagation() {
+      this.stopped = true;
+    },
+  };
+}
+
+test("dropping a WAV shares attachment behavior and preserves draft/selection", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Before after"));
+  const editor = app.element("transcript");
+  editor.setSelectionRange(7, 7);
+  const event = fileDrop();
+  await app.element("chat-window").emit("dragover", event);
+  assert.equal(event.dataTransfer.dropEffect, "copy");
+  assert.equal(app.element("audio-drop-hint").hidden, false);
+  await app.element("chat-window").emit("drop", event);
+  assert.equal(event.prevented, true);
+  assert.equal(event.stopped, true);
+  assert.equal(app.element("audio-drop-hint").hidden, true);
+  assert.equal(editor.value, "Before after");
+  assert.equal(editor.selectionStart, 7);
+  assert.equal(app.element("clips").children.length, 1);
+  assert.equal(app.server.storedTranscriptions, 0);
+});
+
+test("multiple-file drops reject all files and text drags remain native", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Keep text"));
+  await app.element("chat-window").emit("drop", fileDrop([new Blob(), new Blob()]));
+  assert.match(app.element("error").textContent, /one WAV recording at a time/);
+  assert.equal(app.element("clips").children.length, 0);
+  const text = fileDrop([]);
+  text.dataTransfer.types = ["text/plain"];
+  await app.element("chat-window").emit("dragover", text);
+  await app.element("chat-window").emit("drop", text);
+  app.windowListeners.get("drop")(text);
+  assert.equal(text.prevented, false);
+  const outside = fileDrop();
+  app.windowListeners.get("drop")(outside);
+  assert.equal(outside.prevented, true);
+  assert.equal(app.element("clips").children.length, 0);
+});
+
+test("drops cannot replace pending or retained failed uploads", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    server.add("Keep text");
+    server.failRecordings = true;
+  });
+  const fetch = globalThis.fetch;
+  let release;
+  let uploads = 0;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url).includes("/recordings/") && options?.method === "PUT") {
+      uploads++;
+      await new Promise((resolve) => {
+        release = resolve;
+      });
+    }
+    return fetch(url, options);
+  });
+  const pending = app.element("chat-window").emit("drop", fileDrop());
+  await settle();
+  const duplicate = fileDrop();
+  await app.element("chat-window").emit("dragover", duplicate);
+  assert.equal(duplicate.dataTransfer.dropEffect, "none");
+  await app.element("chat-window").emit("drop", duplicate);
+  assert.equal(uploads, 1);
+  release();
+  await pending;
+  await app.element("chat-window").emit("drop", fileDrop());
+  assert.equal(uploads, 1);
   assert.equal(app.element("clips").children.length, 1);
   assert.equal(app.element("transcript").value, "Keep text");
 });

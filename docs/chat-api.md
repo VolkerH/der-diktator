@@ -240,7 +240,10 @@ registry; a registry load failure keeps accessible chats visible with their last
 
 ### External WAV attachments
 
-The browser's **Upload WAV…** action sends the file's unchanged bytes to the
+The browser's **Attach WAV recording** paperclip opens the file picker; dropping
+one file into the chat uses the same upload path. Multiple-file drops are rejected
+without uploading, ordinary text drags remain native, and dropping files outside
+the chat cannot navigate away from a draft. Both attachment methods send unchanged bytes to the
 existing recording PUT endpoint with `Content-Type: audio/wav`. Browsers may
 report another MIME type or none; the server validates the bytes. The accepted
 format is 16 kHz mono signed 16-bit PCM WAV, within the operator's configured
