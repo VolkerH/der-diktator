@@ -24,7 +24,9 @@ function processor(config = {}) {
   const source = readFileSync(
     new URL("../../src/diktator/static/recorder-worklet.js", import.meta.url),
     "utf8",
-  ).replace(/^import .*\n/u, "");
+  )
+    .replace(/^import .*\n/u, "")
+    .replace("export class", "class");
   vm.runInContext(source, context);
   return { instance: new Processor({ processorOptions: config }), messages };
 }

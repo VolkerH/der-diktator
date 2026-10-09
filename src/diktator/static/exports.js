@@ -2,7 +2,7 @@ import { ApiRequestError } from "./errors.js";
 import { request } from "./request.js";
 
 /** @typedef {{text: string, key: number, active: boolean}} DraftSnapshot */
-/** @typedef {{copy_preamble: string, copy_preamble_is_default: boolean, share_include_preamble: boolean, default_copy_preamble: string, max_copy_preamble_characters: number, revision: number}} Preferences */
+/** @typedef {{copy_preamble: string, copy_preamble_is_default: boolean, share_include_preamble: boolean, default_copy_preamble: string, max_copy_preamble_characters: number, revision: number, recording_interval_seconds: number, requested_recording_interval_seconds: number, default_recording_interval_seconds: number, recording_interval_is_default: boolean, recording_interval_constrained: boolean, recording_interval_constraint_reason: string | null, max_recording_interval_seconds: number}} Preferences */
 
 /** Request shared backend formatting/preferences, keeping device access in this client.
  * @param {() => DraftSnapshot} snapshot
@@ -25,6 +25,29 @@ export function exportControls(snapshot, announce) {
   const settingsShare = /** @type {HTMLInputElement} */ (
     document.getElementById("settings-share-preamble")
   );
+  const interval = /** @type {HTMLInputElement} */ (document.getElementById("recording-interval"));
+  const intervalHelp = /** @type {HTMLElement} */ (
+    document.getElementById("recording-interval-help")
+  );
+  const intervalReset = button("recording-interval-reset");
+  let intervalDirty = false;
+  let intervalDefault = false;
+  interval.addEventListener("input", () => {
+    intervalDirty = true;
+    intervalDefault = false;
+  });
+  intervalReset.addEventListener("click", () => {
+    if (!preferences) return;
+    intervalDirty = true;
+    intervalDefault = true;
+    interval.value = String(
+      Math.min(
+        preferences.default_recording_interval_seconds,
+        preferences.max_recording_interval_seconds,
+      ) / 60,
+    );
+    intervalHelp.textContent = "Using the default interval for your next recording. Save to apply.";
+  });
   const limits = /** @type {HTMLElement} */ (document.getElementById("settings-limits"));
   for (const [link, target] of [
     ["settings-keyboard", "keyboard-open"],
@@ -349,6 +372,8 @@ export function exportControls(snapshot, announce) {
       : "";
     input.readOnly = preferencePending || !preferences;
     settingsShare.disabled = preferencePending || !preferences;
+    interval.disabled = preferencePending || !preferences;
+    intervalReset.disabled = preferencePending || !preferences;
     save.disabled = preferencePending || !preferences || !etag || preferenceConflict;
     reset.disabled = preferencePending || !preferences;
     previewButton.disabled = preferencePending || !preferences;
@@ -371,6 +396,17 @@ export function exportControls(snapshot, announce) {
       preview.value = "";
       example.open = false;
       settingsShare.checked = /** @type {Preferences} */ (preferences).share_include_preamble;
+      interval.value = String(
+        /** @type {Preferences} */ (preferences).recording_interval_seconds / 60,
+      );
+      interval.max = String(
+        /** @type {Preferences} */ (preferences).max_recording_interval_seconds / 60,
+      );
+      intervalDirty = false;
+      intervalDefault = Boolean(preferences?.recording_interval_is_default);
+      intervalHelp.textContent = preferences?.recording_interval_constrained
+        ? `${preferences.recording_interval_constraint_reason} Saved request: ${preferences.requested_recording_interval_seconds / 60} minutes. Next recording: ${preferences.recording_interval_seconds / 60} minutes.`
+        : "Applies to your next recording. Each extension adds the same interval.";
       preferenceConflict = false;
       input.focus();
     } catch (error) {
@@ -433,6 +469,10 @@ export function exportControls(snapshot, announce) {
   });
   save.addEventListener("click", async () => {
     if (save.disabled || !preferences || !etag) return;
+    if (intervalDirty && !intervalDefault && !interval.checkValidity()) {
+      interval.reportValidity();
+      return;
+    }
     const generation = preferenceGeneration;
     preferencePending = true;
     preferenceError.hidden = true;
@@ -442,7 +482,18 @@ export function exportControls(snapshot, announce) {
         method: "PATCH",
         headers: { "Content-Type": "application/json", "If-Match": etag },
         body: JSON.stringify({
-          ...(followDefault ? { reset: ["copy_preamble"] } : { copy_preamble: input.value }),
+          ...(followDefault || (intervalDirty && intervalDefault)
+            ? {
+                reset: [
+                  ...(followDefault ? ["copy_preamble"] : []),
+                  ...(intervalDirty && intervalDefault ? ["recording_interval_seconds"] : []),
+                ],
+              }
+            : {}),
+          ...(!followDefault ? { copy_preamble: input.value } : {}),
+          ...(intervalDirty && !intervalDefault
+            ? { recording_interval_seconds: Number(interval.value) * 60 }
+            : {}),
           share_include_preamble: settingsShare.checked,
         }),
       });

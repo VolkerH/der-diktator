@@ -236,6 +236,18 @@ function chatServer() {
     url = parsed.pathname;
     if (parsed.searchParams.has("model"))
       server.requestedModels.push(parsed.searchParams.get("model"));
+    if (url === "/api/recording-policy")
+      return Response.json({
+        protocol_version: 1,
+        hard_limit_seconds: 3600,
+        recording_interval_seconds: 1800,
+        policy_revision: "test",
+        preference_etag: '"pref"',
+        upload_timeout_seconds: 180,
+        batch_timeout_seconds: 180,
+        live_finalization_timeout_seconds: 180,
+        client_timeout_margin_seconds: 10,
+      });
     const method = options.method ?? "GET";
     const titleEtag = (chat) => `"title-${chat.id}-${chat.title_revision}"`;
     const json = (body, status = 200) =>
@@ -583,7 +595,7 @@ async function appEnvironment(t, setup = () => {}, waitReady = true) {
 
 async function startLive(app) {
   const starting = app.element("record").emit("click");
-  await setImmediate();
+  for (let i = 0; i < 10 && !app.sockets.length; i++) await setImmediate();
   const socket = app.sockets.at(-1);
   socket.event({ type: "ready" });
   await starting;
@@ -790,7 +802,7 @@ test("chats can be switched, started anew, and deleted after confirming", async 
 test("connection failure preserves existing text", async (t) => {
   const app = await appEnvironment(t, (server) => server.add("My existing edits."));
   const starting = app.element("record").emit("click");
-  await setImmediate();
+  for (let i = 0; i < 10 && !app.sockets.length; i++) await setImmediate();
   app.sockets[0].emit("error");
   await starting;
   assert.equal(app.state.starts, 0);
@@ -3012,6 +3024,13 @@ function exportServer(t) {
     }
     return Response.json(
       {
+        recording_interval_seconds: 1800,
+        requested_recording_interval_seconds: 1800,
+        default_recording_interval_seconds: 1800,
+        recording_interval_is_default: true,
+        recording_interval_constrained: false,
+        max_recording_interval_seconds: 3600,
+        recording_interval_constraint_reason: null,
         copy_preamble: server.preamble,
         share_include_preamble: server.sharePreamble,
         default_copy_preamble: "Default preamble",

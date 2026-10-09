@@ -1,6 +1,6 @@
 import { request } from "./request.js";
 
-/** @typedef {{ protocol_version: number, policy_revision: string, hard_limit_seconds: number, max_audio_bytes: number, max_pcm_bytes: number, max_stream_frame_bytes: number, upload_timeout_seconds: number, batch_timeout_seconds: number, live_finalization_timeout_seconds: number, client_timeout_margin_seconds: number, client_deadlines_ms: {upload: number, batch: number, live: number}, preference_etag: string }} RecordingPolicy */
+/** @typedef {{ protocol_version: number, policy_revision: string, hard_limit_seconds: number, max_audio_bytes: number, max_pcm_bytes: number, max_stream_frame_bytes: number, upload_timeout_seconds: number, batch_timeout_seconds: number, live_finalization_timeout_seconds: number, client_timeout_margin_seconds: number, client_deadlines_ms: {upload: number, batch: number, live: number}, preference_etag: string, recording_interval_seconds: number }} RecordingPolicy */
 
 /** Discovery does not reserve a model. The server checks agreement again at admission.
  * @returns {Promise<Readonly<RecordingPolicy>>} */

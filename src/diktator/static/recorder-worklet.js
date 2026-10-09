@@ -1,7 +1,7 @@
 import { PcmCapture } from "./pcm-capture.js";
 
 /** Bound audio in the audio thread, including messages awaiting main-thread delivery. */
-class RecorderProcessor extends AudioWorkletProcessor {
+export class RecorderProcessor extends AudioWorkletProcessor {
   /** @param {{processorOptions?: {sampleRate?: number, maxSamples?: number, hardMaxSamples?: number}}} [options] */
   constructor(options = {}) {
     super();
@@ -28,7 +28,12 @@ class RecorderProcessor extends AudioWorkletProcessor {
           limit > this.pcm.limit &&
           limit <= this.hardMaxSamples;
         if (accepted) this.pcm.limit = limit;
-        this.port.postMessage({ type: "extended", accepted, maxSamples: this.pcm.limit });
+        this.port.postMessage({
+          type: "extended",
+          requestId: event.data.requestId,
+          accepted,
+          maxSamples: this.pcm.limit,
+        });
       }
     };
   }

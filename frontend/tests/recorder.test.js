@@ -160,3 +160,36 @@ test("native-rate live capture uses the same bounded worklet conversion", async 
   await recorder.stop();
   assert.equal(samples.length, 1);
 });
+
+test("missing stop acknowledgement preserves the received audio with an explicit warning", async (t) => {
+  audioEnvironment(t);
+  const recorder = new MicrophoneRecorder();
+  await recorder.start();
+  const warnings = [];
+  recorder.onWarning = (message) => warnings.push(message);
+  recorder.node.port.onmessage({
+    data: { type: "samples", pcm: new Int16Array([1, 2, 3]), level: 0 },
+  });
+  recorder.node.port.postMessage = () => {};
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const stopped = recorder.stop();
+  t.mock.timers.tick(2000);
+  const blob = await stopped;
+  assert.equal(blob.size, 50);
+  assert.match(warnings[0], /last unconfirmed audio may be missing/);
+  assert.equal(recorder.context, null);
+});
+
+test("an extension timeout cannot be mistaken for a later acknowledgement", async (t) => {
+  audioEnvironment(t);
+  const recorder = new MicrophoneRecorder();
+  await recorder.start();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const extension = recorder.extend(1200);
+  t.mock.timers.tick(2000);
+  assert.equal(await extension, false);
+  assert.equal(await recorder.extend(1800), false);
+  recorder.node.port.onmessage({ data: { type: "extended", requestId: 1, accepted: true } });
+  assert.equal(await recorder.extend(1800), false);
+  await recorder.release();
+});

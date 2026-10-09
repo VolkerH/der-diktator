@@ -13,12 +13,16 @@ export class MicrophoneRecorder {
     this.chunks = [];
     this.sampleCount = 0;
     this.stopped = false;
+    this.extensionRequestId = 0;
+    this.extensionUncertain = false;
     /** @type {(() => void) | null} */
     this.onStopped = null;
     /** @type {((reason: string) => void) | null} */
     this.onAutomaticStop = null;
     /** @type {((level: number) => void) | null} */
     this.onLevel = null;
+    /** @type {((message: string) => void) | null} */
+    this.onWarning = null;
     /** @type {((accepted: boolean) => void) | null} */
     this.onExtended = null;
     /** @type {Promise<Blob> | null} */
@@ -31,6 +35,7 @@ export class MicrophoneRecorder {
     this.sampleCount = 0;
     this.stopped = false;
     this.stopping = null;
+    this.extensionUncertain = false;
     const hardMaxSamples = budget.hardLimitSeconds * SAMPLE_RATE;
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
@@ -68,7 +73,10 @@ export class MicrophoneRecorder {
           this.onExtended = null;
           this.onStopped?.();
           if (event.data.reason !== "manual") this.onAutomaticStop?.(event.data.reason);
-        } else if (event.data.type === "extended") {
+        } else if (
+          event.data.type === "extended" &&
+          event.data.requestId === this.extensionRequestId
+        ) {
           this.onExtended?.(Boolean(event.data.accepted));
           this.onExtended = null;
         }
@@ -85,17 +93,23 @@ export class MicrophoneRecorder {
   }
   /** @param {number} seconds @returns {Promise<boolean>} */
   async extend(seconds) {
-    if (!this.node || this.stopped || this.stopping || this.onExtended) return false;
+    if (!this.node || this.stopped || this.stopping || this.onExtended || this.extensionUncertain)
+      return false;
+    const requestId = ++this.extensionRequestId;
     return await new Promise((resolve) => {
       const timeout = setTimeout(() => {
         this.onExtended = null;
+        this.extensionUncertain = true;
+        this.onWarning?.(
+          "The extension could not be confirmed. Capture will stop at the displayed deadline.",
+        );
         resolve(false);
       }, 2000);
       this.onExtended = (accepted) => {
         clearTimeout(timeout);
         resolve(accepted);
       };
-      this.node?.port.postMessage({ type: "extend", maxSamples: seconds * SAMPLE_RATE });
+      this.node?.port.postMessage({ type: "extend", requestId, maxSamples: seconds * SAMPLE_RATE });
     });
   }
   /** @returns {Promise<Blob>} */
@@ -109,11 +123,14 @@ export class MicrophoneRecorder {
     if (!this.context || !this.node) throw new Error("No recording is active.");
     try {
       if (!this.stopped)
-        await new Promise((resolve, reject) => {
-          const timeout = setTimeout(
-            () => reject(new Error("Microphone capture did not stop.")),
-            2000,
-          );
+        await new Promise((resolve) => {
+          const timeout = setTimeout(() => {
+            this.node?.disconnect();
+            this.onWarning?.(
+              "The audio thread did not confirm stopping. The received audio is saved; the last unconfirmed audio may be missing.",
+            );
+            resolve(undefined);
+          }, 2000);
           this.onStopped = () => {
             clearTimeout(timeout);
             resolve(undefined);

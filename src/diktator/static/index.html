@@ -188,6 +188,7 @@
         </header>
 
         <section id="stage" class="stage" aria-label="Recorder">
+          <p id="recording-warning" role="alert" hidden></p>
           <canvas id="meter" class="meter" aria-hidden="true"></canvas>
           <div class="controls">
             <button id="record" class="orb-button record" type="button">
@@ -205,6 +206,10 @@
           </div>
           <p class="clock">
             <span id="timer" aria-label="Recording duration">00:00</span>
+            <span id="recording-remaining"></span>
+            <button id="extend-recording" class="chip" type="button" hidden>
+              Extend recording
+            </button>
             <span class="limit">/ 10:00</span>
           </p>
           <p id="status" class="status" role="status" aria-live="polite">Tap the mic to start.</p>
@@ -336,6 +341,22 @@
         </button>
         <button id="settings-models" class="chip" type="button" aria-haspopup="dialog">
           Speech models
+        </button>
+      </section>
+      <section class="field">
+        <label for="recording-interval">Recording interval (minutes)</label>
+        <input
+          id="recording-interval"
+          type="number"
+          min="1"
+          step="1"
+          aria-describedby="recording-interval-help"
+        />
+        <p id="recording-interval-help" class="field-hint">
+          Applies to your next recording. Each extension adds the same interval.
+        </p>
+        <button id="recording-interval-reset" class="chip" type="button">
+          Use default interval
         </button>
       </section>
       <section class="field" aria-labelledby="settings-limits-title">
