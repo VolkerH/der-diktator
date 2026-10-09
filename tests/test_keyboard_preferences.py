@@ -28,7 +28,13 @@ async def test_keyboard_defaults_persistence_conflicts_and_reset(tmp_path: Path)
         assert missing.status_code == 428
         saved = await client.patch(
             "/api/preferences",
-            json={"keyboard_bindings": {"copy": None, "search_chats": "Mod+Shift+K"}},
+            json={
+                "keyboard_bindings": {
+                    "copy": None,
+                    "focus_sidebar": None,
+                    "search_chats": "Ctrl+Shift+5",
+                }
+            },
             headers={"If-Match": initial.headers["etag"]},
         )
         assert saved.status_code == 200
@@ -69,8 +75,8 @@ async def test_invalid_keyboard_updates_do_not_write() -> None:
             {"keyboard_bindings": {"unknown": None}},
             {"keyboard_bindings": {"copy": "a"}},
             {"keyboard_bindings": {"copy": "Mod+C"}},
-            {"keyboard_bindings": {"copy": "Mod+Shift+T"}},
-            {"keyboard_bindings": {"copy": "Mod+Shift+1"}},
+            {"keyboard_bindings": {"copy": "Ctrl+Shift+T"}},
+            {"keyboard_bindings": {"copy": "Ctrl+Shift+1"}},
             {"keyboard_bindings": {"copy": 4}},
             {"keyboard_bindings": {}, "reset": ["keyboard_bindings"]},
         ):

@@ -121,6 +121,15 @@
         </div>
         <ul id="chat-list" class="chat-list"></ul>
         <button
+          id="keyboard-open"
+          class="sidebar-link"
+          type="button"
+          aria-haspopup="dialog"
+          aria-controls="keyboard-dialog"
+        >
+          Keyboard shortcuts
+        </button>
+        <button
           id="preferences-open"
           class="sidebar-link"
           type="button"
@@ -384,6 +393,35 @@
       <div class="dialog-actions">
         <button id="model-delete-cancel" class="chip" type="button" autofocus>Cancel</button>
         <button id="model-delete-confirm" class="chip danger" type="button">Delete download</button>
+      </div>
+    </dialog>
+    <dialog
+      id="keyboard-dialog"
+      class="model-settings"
+      aria-labelledby="keyboard-title"
+      aria-describedby="keyboard-format"
+    >
+      <header class="settings-heading">
+        <h2 id="keyboard-title">Keyboard shortcuts</h2>
+        <button id="keyboard-close" class="chip" type="button">Close</button>
+      </header>
+      <p>
+        Tab and Shift+Tab reach every control. Enter or Space activates buttons. Arrow keys operate
+        native choices. Escape closes dialogs and the mobile sidebar. In the chat list, Up/Down
+        moves between visible chats; Enter opens the focused chat.
+      </p>
+      <p id="keyboard-format">
+        Ctrl means the Control key on every platform, including macOS. Type Ctrl+Shift+ a digit,
+        ArrowUp or ArrowDown. Leave blank to disable an action. Each binding must be unique. Browser
+        and text editing shortcuts are reserved. Shortcuts pause while a dialog is open. Arrow
+        shortcuts also pause in text fields to preserve selection.
+      </p>
+      <div id="keyboard-bindings" class="keyboard-bindings"></div>
+      <p id="keyboard-status" role="status" aria-live="polite"></p>
+      <div class="dialog-actions">
+        <button id="keyboard-reload" class="chip" type="button" hidden>Load latest</button>
+        <button id="keyboard-reset" class="chip" type="button" disabled>Use defaults</button>
+        <button id="keyboard-save" class="chip accent" type="button" disabled>Save</button>
       </div>
     </dialog>
   </body>

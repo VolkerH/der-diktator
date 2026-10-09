@@ -1899,3 +1899,30 @@ textarea:read-only {
   text-align: center;
   pointer-events: none;
 }
+
+.keyboard-bindings {
+  display: grid;
+  gap: 0.7rem;
+  margin-block: 1.2rem;
+}
+.keyboard-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.keyboard-row input {
+  width: 13rem;
+  max-width: 50%;
+  padding: 0.5rem;
+  color: inherit;
+  background: var(--page);
+  border: 1px solid var(--sheet-line);
+  border-radius: 0.4rem;
+}
+
+.keyboard-row input {
+  font: inherit;
+  font-size: 16px;
+  min-height: 44px;
+}

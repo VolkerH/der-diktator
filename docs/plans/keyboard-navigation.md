@@ -13,7 +13,7 @@ and [modal dialogs](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/) pres
 visible focus, native Tab/Shift+Tab, activation and Escape/return focus. ChatGPT
 [search documentation](https://help.openai.com/en/articles/10056348-how-do-i-search-my-chat-history-in-chatgpt)
 uses Ctrl/Cmd+K. That combination also invokes browser search on some browsers, so
-this app uses Ctrl/Cmd+Shift+2 for chat search and a consistent numbered shortcut
+this app uses Ctrl+Shift+2 for chat search and a consistent numbered shortcut
 family. Users can choose supported alternatives or disable individual actions.
 
 No editor/framework replacement is needed. Clients dispatch keys and own focus,

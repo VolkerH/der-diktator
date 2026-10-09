@@ -52,7 +52,7 @@ class Preferences(BaseModel):
         default_factory=lambda: dict(DEFAULT_KEYBOARD_BINDINGS)
     )
     keyboard_actions: list[KeyboardAction] = Field(default_factory=lambda: list(KEYBOARD_ACTIONS))
-    keyboard_binding_pattern: str = "Mod+Shift+(digit, E, F, G, K, ArrowUp or ArrowDown)"
+    keyboard_binding_pattern: str = "Ctrl+Shift+(digit, ArrowUp or ArrowDown)"
     revision: int = 1
     default_copy_preamble: str = Field(default_factory=lambda: DEFAULT_PREAMBLE)
     max_copy_preamble_characters: int = MAX_PREAMBLE_CHARACTERS

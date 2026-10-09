@@ -14,14 +14,14 @@ with `{"reset": ["keyboard_bindings"]}` stores NULL and follows future defaults.
 Setting and resetting together, null mappings, unknown action IDs, unsupported
 bindings and duplicate _effective_ bindings return 422 `validation_error`.
 
-Bindings use `Mod+Shift+` followed by a digit, E, F, G, K, ArrowUp or ArrowDown.
-Mod resolves to Command on macOS and Control elsewhere. The conservative grammar
+Bindings use `Ctrl+Shift+` followed by a digit, ArrowUp or ArrowDown.
+Ctrl means Control on every platform, including macOS; Command is not used. The conservative grammar
 reserves ordinary typing, native navigation, Alt/AltGr, function keys, standard
 browser and editing shortcuts. It deliberately avoids Ctrl/Cmd+K despite its
 use in some chat interfaces because browsers also use it. Each action has at
 most one binding; users may disable any or all shortcuts. Physical number keys
 are used so Shift's printed symbols and keyboard layout do not change numbers.
-Letters use the event's logical key. Composition, repeated keys and AltGraph
+Arrow shortcuts pause in editable fields to preserve text selection. Composition, repeated keys and AltGraph
 never dispatch shortcuts. OS/browser/assistive-technology remapping can still
 consume a binding; native Tab navigation remains available.
 
@@ -63,8 +63,17 @@ help button remains available with Load latest to retry.
 and [modal dialog pattern](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/)
 provide the native navigation, visible focus and return-focus conventions.
 [ChatGPT search](https://help.openai.com/en/articles/10056348-how-do-i-search-my-chat-history-in-chatgpt)
-uses Ctrl/Cmd+K. This app offers a consistent Ctrl/Cmd+Shift+number family instead
+uses Ctrl/Cmd+K. This app offers a consistent Ctrl+Shift+number family instead
 of taking that browser shortcut. Main actions are 1 new chat, 2 search, 3 editor,
 4 start/stop, 5 sidebar, 6 models, 7 preamble, 8 share, 9 copy, 0 help. Previous/next
-chat focus uses Ctrl/Cmd+Shift+Up/Down. Optional actions default disabled, with
+chat focus uses Ctrl+Shift+Up/Down. Optional actions default disabled, with
 native controls always available.
+
+[Firefox shortcuts](https://support.mozilla.org/en-US/kb/keyboard-shortcuts-perform-firefox-tasks-quickly),
+[Chrome shortcuts](https://support.google.com/chrome/answer/157179), and
+[Apple shortcuts](https://support.apple.com/en-us/102650) inform the reserved set.
+Literal Control avoids Command+Shift+3/4/5 screenshot commands on macOS. Letter
+bindings are excluded because browsers reserve overlapping Control/Command+Shift
+letters (including developer tools and find previous). Native editor selection
+continues to own Control+Shift+arrows in editable controls. Supported numbered and
+arrow mappings can be swapped or disabled; Tab navigation is independent of them.
