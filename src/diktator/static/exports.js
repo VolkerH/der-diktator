@@ -65,6 +65,9 @@ export function exportControls(snapshot, announce) {
   );
   const input = area("copy-preamble-input");
   const preview = area("preferences-preview");
+  const example = /** @type {HTMLDetailsElement} */ (
+    document.getElementById("preferences-example")
+  );
   const output = area("prepared-text");
   const preferenceError = /** @type {HTMLElement} */ (document.getElementById("preferences-error"));
   const preferenceStatus = /** @type {HTMLElement} */ (
@@ -366,6 +369,7 @@ export function exportControls(snapshot, announce) {
       input.value = /** @type {Preferences} */ (preferences).copy_preamble;
       input.maxLength = /** @type {Preferences} */ (preferences).max_copy_preamble_characters;
       preview.value = "";
+      example.open = false;
       settingsShare.checked = /** @type {Preferences} */ (preferences).share_include_preamble;
       preferenceConflict = false;
       input.focus();
@@ -419,6 +423,7 @@ export function exportControls(snapshot, announce) {
       const { body } = await post("/api/exports/preview", { copy_preamble: preamble });
       if (generation === preferenceGeneration && input.value === preamble) {
         preview.value = body.text;
+        example.open = true;
         preferenceError.hidden = true;
       }
     } catch (error) {

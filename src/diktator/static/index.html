@@ -315,10 +315,11 @@
           <button id="preferences-reset" class="chip" type="button" disabled>Use default</button>
         </div>
       </div>
-      <div class="field">
-        <label for="preferences-preview">Prepared example</label>
+      <details id="preferences-example" class="field">
+        <summary>Prepared example</summary>
+        <label class="visually-hidden" for="preferences-preview">Prepared example text</label>
         <textarea id="preferences-preview" class="export-text" rows="6" readonly></textarea>
-      </div>
+      </details>
       <div class="field">
         <label class="inline-check" for="settings-share-preamble">
           <input id="settings-share-preamble" type="checkbox" />
