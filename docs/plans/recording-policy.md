@@ -20,8 +20,8 @@ Use **two feature PRs**, with the second based on the first:
 2. **Recording intervals in Settings and bounded capture with warnings/extensions.**
    Deliver the preference, effective snapshot, recorder changes, Settings field,
    countdown/beep and extension control together. The requested default is
-   **1800 seconds**; enable it only in this complete path. Permit a default extension
-   by choosing and validating a hard ceiling of at least 3600 seconds. The earlier
+   **1800 seconds**; enable it only in this complete path. Target an initial hard ceiling of **3600 seconds**, validated to permit one
+   full default extension. The earlier
    7200-second ceiling is a candidate requiring resource measurements, not an
    accepted supported limit. This PR may close #6 when its acceptance is met;
    it leaves operator editing, restart orchestration and relocation in #9 open.
@@ -151,7 +151,12 @@ peak memory. Joining, browser audio buffers, encoding and server/model copies ad
 to the total. Measure peak memory for the chosen default and ceiling on target
 browsers, including native-rate fallback, and bound pending transport/worker
 queues. Synthetic tests establish bounds and correctness; they do not certify
-mobile microphone behavior or real-model latency.
+mobile microphone behavior or real-model latency. Accelerated synthetic
+full-duration browser capture is suitable for measuring the retained-buffer and
+conversion budget at 1800/3600 seconds; label it as synthetic and record the
+browser/sample rate. Real-time microphone, mobile and model-performance acceptance
+remain separately reported evidence, not an open-ended prerequisite for delivering
+and reviewing bounded software behavior.
 
 ## Timeouts, native work and retries
 
