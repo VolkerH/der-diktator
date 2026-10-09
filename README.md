@@ -92,7 +92,9 @@ words: in German, a _Diktat_ is a dictation.
 Use **New chat** for the next snippet. Your chats are listed on the left, or
 behind the ☰ button on a phone; the app reopens the most recent one. To delete a
 chat and its recordings, click its trash icon and then **Delete**. A recording
-stops automatically after ten minutes.
+uses a 30-minute default interval. Settings lets you choose a whole-minute interval;
+the app warns with one minute remaining and offers a full interval extension
+when it fits within the one-hour default ceiling.
 
 ## Requirements
 
@@ -558,8 +560,8 @@ References: [WSL localhost networking](https://learn.microsoft.com/en-us/windows
 
 Share… opens a preview of your current edited draft with Copy, Download and, when supported,
 Share to app. Include saved preamble is remembered on the server for your local user profile
-across devices. The main Copy button still copies your draft directly. Settings lets you edit the introduction and default sharing format, open keyboard
+across devices. The main Copy button still copies your draft directly. Settings lets you edit the introduction, default sharing format and next-recording interval, open keyboard
 shortcuts and speech models, and see the running application limits. Preferences
-are shared across clients of the local profile. See the [settings contract](docs/settings-api.md) and [recording policy contract](docs/recording-policy-api.md) for shared startup limits, inference agreement and timeout/recovery behavior. The default recording ceiling remains ten minutes. See the [preferences and export API](docs/preferences-export-api.md)
+are shared across clients of the local profile. See the [settings contract](docs/settings-api.md) and [recording policy contract](docs/recording-policy-api.md) for shared startup limits, inference agreement and timeout/recovery behavior. The default recording interval is 30 minutes with a one-hour ceiling. See the [preferences and export API](docs/preferences-export-api.md)
 for conditional saves and limits, and the [native-sharing contract](docs/native-sharing.md)
 for handoff outcomes and client responsibilities.

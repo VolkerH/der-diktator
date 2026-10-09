@@ -71,9 +71,11 @@ one read of the shared local profile, and interval fields:
 - `requested_recording_interval_seconds`: saved request or product default;
 - `default_recording_interval_seconds`: 1800-second product default;
 - `recording_interval_is_default`: whether the profile follows that default;
-- `recording_interval_constrained` and `recording_interval_constraint_reason`;
-- `min_recording_interval_seconds`, `max_recording_interval_seconds` and
-  `recording_interval_step_seconds`: 60, current hard ceiling and 60.
+- `recording_interval_constrained` and `recording_interval_constraint_reason`.
+
+`GET /api/preferences` additionally supplies the interval editor bounds:
+`min_recording_interval_seconds`, `max_recording_interval_seconds` and
+`recording_interval_step_seconds`: 60, current hard ceiling and 60.
 
 The effective interval is constrained by the operator ceiling. Existing saved
 requests survive a lowered ceiling; new explicit writes above it are rejected.
