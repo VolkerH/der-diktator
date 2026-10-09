@@ -1,6 +1,5 @@
 name: Docker CPU packaging
 on:
-  pull_request:
   workflow_dispatch:
 permissions:
   contents: read

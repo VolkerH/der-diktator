@@ -263,7 +263,15 @@ uv run --locked python scripts/smoke-docker.py der-diktator:local
 It uses disposable named volumes and containers, disables container networking,
 checks packaged native imports, exercises HTTP APIs, replaces the container,
 checks persistence, tests unwritable storage, and verifies bounded shutdown.
-CI builds and runs this check without publishing an image. It establishes
+The **Docker CPU packaging** GitHub Actions workflow builds and runs this check
+on manual request, without publishing an image. Open **Actions → Docker CPU
+packaging → Run workflow** and choose the branch to validate, or run:
+
+```sh
+gh workflow run docker.yaml --ref main
+```
+
+Pull requests and pushes do not trigger Docker builds. The check establishes
 packaging behavior, not microphone access or transcription quality. Real model
 load/transcription and Phonon streaming need separate checks on the deployment
 hardware; ARM emulation, GPU execution and native installers are not covered.
