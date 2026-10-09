@@ -188,3 +188,33 @@ async def test_missing_chat_and_recording_have_distinct_errors_and_restored_audi
         assert (
             await client.get(f"/api/chats/{chat_id}/recordings/{recording_id}")
         ).content == make_wav()
+
+
+@pytest.mark.parametrize(
+    "audio,limit,status,code",
+    [
+        (make_wav(rate=48_000), 600, 400, "invalid_audio"),
+        (make_wav(channels=2), 600, 400, "invalid_audio"),
+        (make_wav(width=1), 600, 400, "invalid_audio"),
+        (make_wav()[:-1], 600, 400, "invalid_audio"),
+        (make_wav(frames=16_001), 1, 400, "invalid_audio"),
+    ],
+    ids=["sample-rate", "stereo", "sample-width", "truncated", "duration"],
+)
+async def test_external_wav_attachment_validation_preserves_chat(
+    tmp_path: Path, audio: bytes, limit: int, status: int, code: str
+) -> None:
+    settings = Settings(data_directory=tmp_path, max_duration_seconds=limit)
+    async with client_for(transcribing_engine, settings) as client:
+        chat_id = (await client.post("/api/chats")).json()["id"]
+        await client.put(f"/api/chats/{chat_id}/text", json={"text": "Keep text"})
+        before = (await client.get(f"/api/chats/{chat_id}")).json()
+        rejected = await client.put(
+            f"/api/chats/{chat_id}/recordings/{'a' * 32}",
+            content=audio,
+            headers={"Content-Type": "audio/wav"},
+        )
+        assert rejected.status_code == status
+        assert rejected.json()["code"] == code
+        assert (await client.get(f"/api/chats/{chat_id}")).json() == before
+        assert not list(tmp_path.glob("**/*.wav"))

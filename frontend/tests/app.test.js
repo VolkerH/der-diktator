@@ -3454,3 +3454,115 @@ for (const failure of ["conflict", "network"])
     assert.equal(app.element("share-preamble").checked, true);
     assert.equal(app.element("share-preamble").disabled, false);
   });
+
+async function uploadWav(app, bytes = encodeWav(new Float32Array(160))) {
+  app.element("audio-file").files = [new Blob([bytes], { type: "audio/x-wav" })];
+  await app.element("audio-file").emit("change");
+  await settle();
+}
+
+test("WAV uploads attach a pill without transcription or editor changes; clip inserts at selection", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Before after"));
+  const editor = app.element("transcript");
+  editor.setSelectionRange(7, 7);
+  await uploadWav(app);
+  assert.equal(editor.value, "Before after");
+  assert.equal(editor.selectionStart, 7);
+  assert.equal(app.server.storedTranscriptions, 0);
+  assert.equal(app.server.batchPosts.length, 0);
+  assert.equal(app.element("clips").children.length, 1);
+  await app.element("clips").children[0].children[1].emit("click");
+  await settle();
+  assert.equal(editor.value, "Before Stored recording. after");
+  assert.equal(app.server.storedTranscriptions, 1);
+});
+
+test("ambiguous upload retries the same ID without a ready model or duplicate clip", async (t) => {
+  const app = await appEnvironment(
+    t,
+    (server) => {
+      server.add("Keep text");
+      server.models.models[0].state = "missing";
+    },
+    false,
+  );
+  const fetch = globalThis.fetch;
+  const uploads = [];
+  let lose = true;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    const response = await fetch(url, options);
+    if (String(url).includes("/recordings/") && options?.method === "PUT") {
+      uploads.push(url);
+      assert.equal(options.headers["Content-Type"], "audio/wav");
+      if (lose) {
+        lose = false;
+        throw new TypeError("Response lost");
+      }
+    }
+    return response;
+  });
+  await uploadWav(app);
+  assert.equal(app.element("upload-audio").disabled, true);
+  await app.element("record").emit("click");
+  assert.equal(app.state.starts, 0, "another capture must not replace the retained upload");
+  await app.element("clips").children.at(-1).children[1].emit("click");
+  await settle();
+  assert.equal(uploads.length, 2);
+  assert.equal(uploads[0], uploads[1]);
+  assert.equal(app.server.chats.get(id(1)).recordings.length, 1);
+  assert.equal(app.element("transcript").value, "Keep text");
+  assert.equal(app.server.storedTranscriptions, 0);
+  assert.equal(app.element("upload-audio").disabled, false);
+});
+
+test("invalid uploads show backend format feedback and allow a replacement file", async (t) => {
+  const app = await appEnvironment(t, (server) => server.add("Keep text"));
+  const fetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", (url, options) =>
+    String(url).includes("/recordings/") && options?.method === "PUT"
+      ? Response.json(
+          { code: "invalid_audio", detail: "Use 16 kHz mono 16-bit PCM WAV." },
+          { status: 400 },
+        )
+      : fetch(url, options),
+  );
+  await uploadWav(app, new Uint8Array([1, 2, 3]));
+  assert.match(app.element("error").textContent, /16 kHz mono/);
+  assert.equal(app.element("clips").children.length, 0);
+  assert.equal(app.element("audio-file").value, "");
+  assert.equal(app.element("upload-audio").disabled, false);
+  assert.equal(app.element("transcript").value, "Keep text");
+});
+
+test("pending uploads lock navigation and duplicate requests, then retain failed transcription clips", async (t) => {
+  const app = await appEnvironment(t, (server) => {
+    server.add("Keep text");
+    server.add("Other chat");
+    server.failTranscription = true;
+  });
+  const fetch = globalThis.fetch;
+  let release;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url).includes("/recordings/") && options?.method === "PUT")
+      await new Promise((resolve) => {
+        release = resolve;
+      });
+    return fetch(url, options);
+  });
+  const pending = uploadWav(app);
+  await settle();
+  assert.equal(app.element("upload-audio").disabled, true);
+  assert.equal(app.element("transcript").readOnly, true);
+  await app.element("new-chat").emit("click");
+  await app.element("record").emit("click");
+  await app.element("audio-file").emit("change");
+  assert.equal(app.state.starts, 0);
+  release();
+  await pending;
+  assert.equal(app.server.chats.get(id(1)).recordings.length, 1);
+  assert.equal(app.server.chats.get(id(2)).recordings.length, 0);
+  await app.element("clips").children[0].children[1].emit("click");
+  await settle();
+  assert.equal(app.element("clips").children.length, 1);
+  assert.equal(app.element("transcript").value, "Keep text");
+});
