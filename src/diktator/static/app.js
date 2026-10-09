@@ -1,3 +1,4 @@
+import { RecorderVisualization } from "./recorder-visualization.js";
 import { keyboardControls, preserveFocus } from "./keyboard.js";
 import { exportControls } from "./exports.js";
 import { ApiRequestError } from "./errors.js";
@@ -147,8 +148,7 @@ let unsavedUrl = null;
 /** Which clip the shared player has loaded, and whether it is playing. */
 let playbackKey = "";
 let playingKey = "";
-/** Recent microphone levels for the scrolling meter, oldest first. */
-const levels = new Array(160).fill(0);
+const visualization = new RecorderVisualization(meter);
 let peakLevel = 0;
 recorder.onLevel = (/** @type {number} */ level) => {
   peakLevel = Math.max(peakLevel, level);
@@ -161,49 +161,17 @@ const exports = exportControls(
   },
 );
 
-/** Draw the level history as mirrored bars; quiet input still shows a baseline. */
-function drawMeter() {
-  const context = meter.getContext("2d");
-  if (!context) return;
-  const ratio = window.devicePixelRatio || 1;
-  const width = Math.round(meter.clientWidth * ratio);
-  const height = Math.round(meter.clientHeight * ratio);
-  if (meter.width !== width || meter.height !== height) {
-    meter.width = width;
-    meter.height = height;
-  }
-  context.clearRect(0, 0, width, height);
-  // Show as many recent levels as fit at a fixed bar pitch.
-  const visible = levels.slice(-Math.max(1, Math.floor(width / (7 * ratio))));
-  const step = width / visible.length;
-  const bar = step * 0.55;
-  const gradient = context.createLinearGradient(0, 0, width, 0);
-  gradient.addColorStop(0, "#19d3a200");
-  gradient.addColorStop(0.35, "#5eead4");
-  gradient.addColorStop(0.75, "#ff7ab8");
-  gradient.addColorStop(1, "#ffb199");
-  context.fillStyle = gradient;
-  visible.forEach((level, index) => {
-    const size = Math.max(bar, Math.min(1, Math.sqrt(level * 8)) * height * 0.92);
-    const x = index * step + (step - bar) / 2;
-    context.beginPath();
-    context.roundRect(x, (height - size) / 2, bar, size, bar / 2);
-    context.fill();
-  });
-}
-
 function newId() {
   return crypto.randomUUID().replaceAll("-", "");
 }
 
 function pushLevel() {
-  levels.shift();
-  levels.push(recording ? peakLevel : 0);
+  visualization.push(recording ? peakLevel : 0);
   peakLevel = 0;
-  drawMeter();
 }
 
 function updateControls() {
+  visualization.setRecording(recording);
   const active = recording || busy;
   models.lock(active);
   uploadButton.disabled = active || Boolean(titleEdit) || Boolean(unsaved);
@@ -1666,8 +1634,7 @@ async function stopRecording() {
   if (!recording || busy) return;
   window.clearInterval(timerId);
   recording = false;
-  levels.fill(0);
-  drawMeter();
+  peakLevel = 0;
   busy = true;
   updateControls();
   status.textContent = "Preparing your recording…";
@@ -1762,6 +1729,7 @@ async function copyTranscript() {
 copyButton.addEventListener("click", copyTranscript);
 
 window.addEventListener("pagehide", () => {
+  visualization.destroy();
   window.clearInterval(timerId);
   clearTimeout(saveTimer);
   if (textDirty && chat?.textEtag && !textConflict && chat.id !== deletingChatId) {
@@ -1924,7 +1892,6 @@ function updateDrawerFocus() {
 }
 updateDrawerFocus();
 window.addEventListener("resize", updateDrawerFocus);
-window.addEventListener("resize", drawMeter);
 
 /** Retry startup navigation only while the initial blank editor is untouched. */
 async function finishStartup() {
@@ -1966,7 +1933,6 @@ async function loadChats() {
   );
 }
 
-drawMeter();
 setChat(null);
 void loadChats();
 void models.refresh();
