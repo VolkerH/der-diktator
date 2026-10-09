@@ -59,6 +59,10 @@ that write retains its draft and control lock until the response settles. A fail
 initial read does not invent client defaults: the visible
 help button remains available with Load latest to retry.
 
+Before a pending read or save disables the focused settings control, focus moves
+to the enabled Close button. It remains in the modal through success or rejection;
+completing a request after closure does not move focus back into the dialog.
+
 ## Research and selected conventions
 
 [WAI APG keyboard interface](https://www.w3.org/WAI/ARIA/apg/practices/keyboard-interface/)

@@ -63,6 +63,7 @@ export function keyboardControls(actions) {
   const save = /** @type {HTMLButtonElement} */ (document.getElementById("keyboard-save"));
   const reset = /** @type {HTMLButtonElement} */ (document.getElementById("keyboard-reset"));
   const reload = /** @type {HTMLButtonElement} */ (document.getElementById("keyboard-reload"));
+  const close = /** @type {HTMLButtonElement} */ (document.getElementById("keyboard-close"));
   /** @type {KeyboardPreferences | null} */
   let preferences = null;
   /** @type {string | null} */
@@ -76,6 +77,11 @@ export function keyboardControls(actions) {
   let generation = 0;
 
   function controls() {
+    // Disabling a focused control blurs it to the body in Chromium. Transfer
+    // focus before disabling; Close stays enabled throughout reads and writes.
+    const active = document.activeElement;
+    if (pending && dialog.open && active instanceof HTMLElement && dialog.contains(active))
+      close.focus();
     save.disabled = pending || !etag || conflicted;
     reset.disabled = pending || !etag;
     reload.hidden = !conflicted;
@@ -150,7 +156,7 @@ export function keyboardControls(actions) {
     void load(true);
   }
   document.getElementById("keyboard-open")?.addEventListener("click", open);
-  document.getElementById("keyboard-close")?.addEventListener("click", () => dialog.close());
+  close.addEventListener("click", () => dialog.close());
   reload.addEventListener("click", () => void load(true));
   reset.addEventListener("click", () => {
     if (!preferences) return;

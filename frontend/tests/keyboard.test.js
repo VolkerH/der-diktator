@@ -62,6 +62,15 @@ function settings(t) {
       this.value = "";
       this.disabled = false;
     }
+    get disabled() {
+      return this._disabled;
+    }
+    set disabled(value) {
+      this._disabled = value;
+      // Model Chromium's blur when a focused control becomes disabled.
+      if (value && globalThis.document?.activeElement === this)
+        globalThis.document.activeElement = new Element("body");
+    }
     addEventListener(type, listener) {
       this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
     }
@@ -199,4 +208,53 @@ test("a rejected pending save keeps its reopened draft and requires explicit rel
   assert.equal(app.requests[4].headers["If-Match"], '"latest"');
   await app.reply(4);
   await retry;
+});
+
+for (const status of [200, 422, 412]) {
+  test(`saving transfers focus to enabled Close before disabling controls (${status})`, async (t) => {
+    const app = settings(t);
+    await app.reply(0);
+    await app.open();
+    app.input().value = "Unsupported draft";
+    app.element("save").focus();
+    const saving = app.element("save").emit("click");
+    assert.equal(globalThis.document.activeElement, app.element("close"));
+    assert.equal(app.element("close").disabled, false);
+    const body =
+      status === 200
+        ? app.preferences
+        : {
+            code: status === 422 ? "validation_error" : "revision_conflict",
+            detail: "Rejected mapping.",
+          };
+    await app.reply(2, body, '"response"', status);
+    await saving;
+    assert.equal(globalThis.document.activeElement, app.element("close"));
+    assert.equal(app.input().value, "Unsupported draft");
+    assert.equal(app.element("save").disabled, status === 412);
+  });
+}
+
+test("save completion never steals focus after closing the dialog", async (t) => {
+  const app = settings(t);
+  await app.reply(0);
+  await app.open();
+  app.element("save").focus();
+  const saving = app.element("save").emit("click");
+  app.element("dialog").close();
+  app.element("open").focus();
+  await app.reply(2);
+  await saving;
+  assert.equal(globalThis.document.activeElement, app.element("open"));
+});
+
+test("loading latest preserves enabled dialog focus while replacing a focused input", async (t) => {
+  const app = settings(t);
+  await app.reply(0);
+  await app.open();
+  app.input().focus();
+  await app.element("reload").emit("click");
+  assert.equal(globalThis.document.activeElement, app.element("close"));
+  await app.reply(2);
+  assert.equal(globalThis.document.activeElement, app.element("close"));
 });
