@@ -88,3 +88,14 @@ The existing actor-scoped preference API now supplies a typed action catalog, po
 server defaults and validated persisted keyboard overrides. Clients own dispatch and
 focus and can discover defaults without copying application rules. See the
 [keyboard contract](../keyboard-api.md) for contexts, resets, conflicts and navigation.
+
+### Implementation status after Settings (#9)
+
+SQLite ownership, application preferences and engine model selection are delivered.
+The configuration-file/environment/CLI statement above remains an architectural
+direction, not a claim that all operator fields have those input paths today. At
+main `91815a7`, web `Settings.from_environment` reads the engine URL and data
+directory; recording limits remain constructor defaults, and the engine constructs
+its own settings. See the [settings API](../settings-api.md),
+[architecture audit](../architecture-audit-2026-10-09.md) and proposed
+[recording policy plan](../plans/recording-policy.md) for the next scoped delivery.
