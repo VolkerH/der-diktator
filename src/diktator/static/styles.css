@@ -420,39 +420,29 @@ main {
 
 /* Recorder stage */
 .stage {
+  --recorder-paper: #fcfbf8;
+  --recorder-ink: #242321;
+  --recorder-muted: #64615b;
   position: relative;
   display: grid;
   justify-items: center;
-  padding: 22px 20px 20px;
+  padding: 18px 20px 24px;
+  border: 1px solid #dedbd4;
   border-radius: 28px;
-  background: var(--stage);
-  color: #f4f0ff;
+  background: radial-gradient(ellipse at 50% 25%, #fff, var(--recorder-paper));
+  color: var(--recorder-ink);
   overflow: hidden;
-  box-shadow:
-    0 24px 60px -18px #2a1270aa,
-    inset 0 1px 0 #ffffff1f;
+  box-shadow: 0 16px 40px -24px #24232140;
   isolation: isolate;
-}
-.stage::before {
-  content: "";
-  position: absolute;
-  inset: auto -20% -60% -20%;
-  height: 80%;
-  background: radial-gradient(closest-side, #ff2e8855, transparent);
-  opacity: 0.35;
-  transition: opacity 0.4s;
-  z-index: -1;
-}
-.stage.recording::before {
-  opacity: 1;
 }
 .meter {
   width: 100%;
-  height: 64px;
+  height: clamp(230px, 32vw, 330px);
   display: block;
+  pointer-events: none;
 }
 .controls {
-  margin-top: 10px;
+  margin-top: 4px;
 }
 .orb-button {
   position: relative;
@@ -462,7 +452,7 @@ main {
   padding: 0;
   border: 0;
   background: none;
-  color: #e6defe;
+  color: var(--recorder-ink);
   font: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -474,13 +464,11 @@ main {
 .stop::before {
   display: grid;
   place-items: center;
-  width: 96px;
-  height: 96px;
+  width: 72px;
+  height: 72px;
   border-radius: 50%;
-  background: var(--hot);
-  box-shadow:
-    0 12px 32px -6px #ff2e88aa,
-    inset 0 2px 0 #ffffff55;
+  background: var(--recorder-ink);
+  box-shadow: 0 8px 22px -8px #24232160;
   transition:
     transform 0.18s cubic-bezier(0.3, 1.6, 0.6, 1),
     box-shadow 0.2s,
@@ -497,9 +485,7 @@ main {
 .orb-button:not(:disabled):hover .orb,
 .stop:not(:disabled):hover::before {
   transform: scale(1.06);
-  box-shadow:
-    0 16px 40px -6px #ff2e88cc,
-    inset 0 2px 0 #ffffff55;
+  box-shadow: 0 10px 26px -8px #24232180;
 }
 .orb-button:not(:disabled):active .orb,
 .stop:not(:disabled):active::before {
@@ -516,7 +502,7 @@ main {
   filter: none;
   background:
     conic-gradient(from 0deg, transparent 0 70%, #ffffff 100%) border-box,
-    var(--hot) padding-box;
+    var(--recorder-ink) padding-box;
   border: 4px solid transparent;
   animation: spin 0.9s linear infinite;
 }
@@ -525,22 +511,18 @@ main {
 }
 .stop::before {
   content: "";
-  background: #fff;
-  box-shadow:
-    0 0 0 0 #ff2e8880,
-    0 12px 32px -6px #ff2e88aa;
-  animation: ring 1.6s ease-out infinite;
+  background: var(--recorder-ink);
 }
 .stop::after {
   content: "";
   position: absolute;
-  top: 34px;
+  top: 25px;
   left: 50%;
-  width: 28px;
-  height: 28px;
-  margin-left: -14px;
-  border-radius: 7px;
-  background: var(--hot);
+  width: 22px;
+  height: 22px;
+  margin-left: -11px;
+  border-radius: 4px;
+  background: #fff;
   pointer-events: none;
 }
 .clock {
@@ -553,20 +535,14 @@ main {
 .limit {
   font-size: 14px;
   font-weight: 500;
-  color: #a99fd6;
-}
-.stage.recording .clock #timer {
-  background: linear-gradient(90deg, #ffb199, #ff7ab8);
-  background-clip: text;
-  -webkit-background-clip: text;
-  color: transparent;
+  color: var(--recorder-muted);
 }
 .status {
   margin: 4px 0 0;
   min-height: 1.5em;
   max-width: 40ch;
   text-align: center;
-  color: #c4bbea;
+  color: var(--recorder-muted);
   font-size: 14px;
   line-height: 1.5;
 }
@@ -577,7 +553,7 @@ main {
   gap: 10px;
   padding: 7px 14px 7px 8px;
   border-radius: 999px;
-  background: #ffffff14;
+  background: #2423210a;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
