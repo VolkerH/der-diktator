@@ -675,7 +675,7 @@ def create_app(
 
     @app.post(
         "/api/chats/{chat_id}/recordings/{recording_id}/transcribe",
-        responses=error_responses(400, 404, 409, 413, 415, 422, 502, 503, 504),
+        responses=error_responses(400, 404, 408, 409, 413, 415, 422, 502, 503, 504),
     )
     async def transcribe_recording(
         chat_id: ChatId, recording_id: ChatId, actor_id: Actor, model: ModelId = "phonon-2"
