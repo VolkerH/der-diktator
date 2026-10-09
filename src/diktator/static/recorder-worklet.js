@@ -1,39 +1,55 @@
-/** Batch microphone frames to reduce traffic to the browser's main thread. */
+import { PcmCapture } from "./pcm-capture.js";
+
+/** Bound audio in the audio thread, including messages awaiting main-thread delivery. */
 class RecorderProcessor extends AudioWorkletProcessor {
-  constructor() {
+  /** @param {{processorOptions?: {sampleRate?: number, maxSamples?: number, hardMaxSamples?: number}}} [options] */
+  constructor(options = {}) {
     super();
-    this.buffer = new Float32Array(2048);
-    this.offset = 0;
+    const config = options.processorOptions ?? {};
+    this.hardMaxSamples = config.hardMaxSamples ?? 600 * 16000;
     this.active = true;
+    this.pending = 0;
+    this.pcm = new PcmCapture(
+      config.sampleRate ?? 16000,
+      config.maxSamples ?? this.hardMaxSamples,
+      (pcm, level) => {
+        this.pending++;
+        this.port.postMessage({ type: "samples", pcm, level }, [pcm.buffer]);
+      },
+    );
     this.port.onmessage = (event) => {
-      if (event.data.type === "stop") {
-        this.flush();
-        this.active = false;
-        this.port.postMessage({ type: "stopped" });
+      if (event.data.type === "ack") this.pending = Math.max(0, this.pending - 1);
+      else if (event.data.type === "stop") this.stop("manual");
+      else if (event.data.type === "extend") {
+        const limit = event.data.maxSamples;
+        const accepted =
+          this.active &&
+          Number.isInteger(limit) &&
+          limit > this.pcm.limit &&
+          limit <= this.hardMaxSamples;
+        if (accepted) this.pcm.limit = limit;
+        this.port.postMessage({ type: "extended", accepted, maxSamples: this.pcm.limit });
       }
     };
   }
-
-  flush() {
-    if (this.offset === 0) return;
-    const samples = this.buffer.slice(0, this.offset);
-    this.port.postMessage({ type: "samples", samples }, [samples.buffer]);
-    this.offset = 0;
+  /** @param {string} reason */
+  stop(reason) {
+    if (!this.active) return;
+    this.active = false;
+    this.pcm.flush();
+    this.port.postMessage({ type: "stopped", reason, sampleCount: this.pcm.count });
   }
-
   /** @param {Float32Array[][]} inputs @returns {boolean} */
   process(inputs) {
     if (!this.active) return false;
-    const channels = inputs[0];
-    if (!channels || channels.length === 0) return true;
-    for (let frame = 0; frame < channels[0].length; frame++) {
-      let mono = 0;
-      for (const channel of channels) mono += channel[frame] / channels.length;
-      this.buffer[this.offset++] = mono;
-      if (this.offset === this.buffer.length) this.flush();
+    // Eight batches plus a partial batch is less than 37 KiB PCM16, independent of duration.
+    if (this.pending >= 8) {
+      this.stop("capture_queue_overflow");
+      return false;
     }
-    return true;
+    this.pcm.push(inputs[0] ?? []);
+    if (this.pcm.count >= this.pcm.limit) this.stop("deadline");
+    return this.active;
   }
 }
-
 registerProcessor("diktator-recorder", RecorderProcessor);
