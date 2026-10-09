@@ -1824,6 +1824,7 @@ keyboardControls({
     clips.querySelector("button")?.focus();
   },
   toggle_live: () => clickControl("live-mode"),
+  upload_wav: () => clickControl("upload-audio"),
 });
 
 // Native dialogs provide modal Tab containment and Escape; preserve a fallback
@@ -1908,6 +1909,7 @@ window.addEventListener("keydown", (event) => {
 function updateDrawerFocus() {
   const modal =
     sidebar.classList.contains("open") && window.matchMedia("(max-width: 860px)").matches;
+  sidebar.inert = window.matchMedia("(max-width: 860px)").matches && !modal;
   const main = document.querySelector("main");
   if (main) main.inert = modal;
   if (modal) {
@@ -1920,6 +1922,7 @@ function updateDrawerFocus() {
     sidebar.removeAttribute("aria-modal");
   }
 }
+updateDrawerFocus();
 window.addEventListener("resize", updateDrawerFocus);
 window.addEventListener("resize", drawMeter);
 

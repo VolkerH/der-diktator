@@ -89,7 +89,9 @@ def test_keyboard_upgrade_keeps_saved_preferences(tmp_path: Path) -> None:
             command.upgrade(config, "0005_preferences")
             connection.execute(
                 text(
-                    "INSERT INTO preferences (user_id, copy_preamble, share_include_preamble, revision) VALUES ('local', 'Keep me', 1, 7)"
+                    "INSERT INTO preferences "
+                    "(user_id, copy_preamble, share_include_preamble, revision) "
+                    "VALUES ('local', 'Keep me', 1, 7)"
                 )
             )
             connection.commit()

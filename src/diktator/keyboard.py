@@ -34,6 +34,7 @@ KEYBOARD_ACTIONS = [
         ("new_group", "New group", None),
         ("focus_recordings", "Focus recordings", None),
         ("toggle_live", "Toggle live text", None),
+        ("upload_wav", "Attach external WAV", None),
     )
 ]
 DEFAULT_KEYBOARD_BINDINGS = {action.id: action.default_binding for action in KEYBOARD_ACTIONS}
