@@ -1,0 +1,17 @@
+name: Docker CPU packaging
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  linux-amd64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build locked CPU image
+        run: ./scripts/build-docker.sh der-diktator:ci
+      - name: Check packaged APIs, persistence, native imports and shutdown
+        run: python3 scripts/smoke-docker.py der-diktator:ci
