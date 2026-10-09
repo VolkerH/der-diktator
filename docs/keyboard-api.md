@@ -54,7 +54,9 @@ errors and conflicts retain the complete draft; Load latest explicitly discards
 that draft and reads the current representation. Reset is staged until Save.
 Successful saves become active immediately in this tab. Other tabs/devices refresh
 on window focus; a currently open editor keeps its original ETag so it can detect
-conflicts. A failed initial read does not invent client defaults: the visible
+conflicts. Refreshes and reopening do not start another read while Save is pending;
+that write retains its draft and control lock until the response settles. A failed
+initial read does not invent client defaults: the visible
 help button remains available with Load latest to retry.
 
 ## Research and selected conventions

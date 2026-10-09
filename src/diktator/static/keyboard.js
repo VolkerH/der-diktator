@@ -70,6 +70,7 @@ export function keyboardControls(actions) {
   /** @type {Map<string, HTMLInputElement>} */
   const inputs = new Map();
   let pending = false;
+  let writing = false;
   let conflicted = false;
   let followDefault = false;
   let generation = 0;
@@ -112,6 +113,9 @@ export function keyboardControls(actions) {
 
   /** @param {boolean} show */
   async function load(show = false) {
+    // A save owns its draft, ETag and pending controls until it settles. A focus
+    // refresh or reopen must not read a pre-save representation over its result.
+    if (writing) return;
     const ownGeneration = ++generation;
     pending = true;
     if (show) message.textContent = "Loading saved bindings…";
@@ -159,6 +163,8 @@ export function keyboardControls(actions) {
     const bindings = Object.fromEntries(
       [...inputs].map(([id, input]) => [id, input.value.trim() || null]),
     );
+    writing = true;
+    ++generation;
     pending = true;
     controls();
     message.textContent = "Saving…";
@@ -190,6 +196,7 @@ export function keyboardControls(actions) {
           ? " Your changes are kept. Load latest before retrying."
           : " Your changes are kept.");
     } finally {
+      writing = false;
       pending = false;
       controls();
     }
