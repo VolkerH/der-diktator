@@ -30,7 +30,7 @@
           "type": "string"
         },
         "mode": {
-          "enum": ["spelling", "paragraphs", "headings"],
+          "enum": ["spelling", "paragraphs", "headings", "list"],
           "title": "Mode",
           "type": "string"
         },

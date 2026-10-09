@@ -3475,6 +3475,7 @@ function correctionServer(
             { id: "paragraphs", label: "Readable paragraphs" },
             { id: "spelling", label: "Spelling and punctuation" },
             { id: "headings", label: "Paragraphs and Markdown headings" },
+            { id: "list", label: "Markdown list" },
           ],
           max_input_characters: 4000,
           timeout_seconds: 90,
@@ -3602,4 +3603,29 @@ test("correction UI makes no language claim for an unlabelled provider", async (
   assert.match(app.element("correction-provider").textContent, /Languages not specified/);
   assert.doesNotMatch(app.element("correction-provider").textContent, /English/);
   assert.equal(app.element("correction-generate").disabled, false);
+});
+
+test("Markdown list is discovered, requested, previewed and accepted for the selection", async (t) => {
+  const selected = "milk six eggs and do not buy peanuts";
+  const original = `Shopping:\n${selected}\nKeep this note.`;
+  const app = await appEnvironment(t, (server) => server.add(original));
+  const bullets = "- Milk\n- 6 eggs\n- Do not buy peanuts";
+  const requests = correctionServer(t, () => bullets);
+  const start = original.indexOf(selected);
+  await selectCorrection(app, start, start + selected.length);
+  const mode = app.element("correction-mode");
+  assert.equal(
+    mode.children.find((option) => option.value === "list").textContent,
+    "Markdown list",
+  );
+  mode.value = "list";
+  await mode.emit("change");
+  await app.element("correction-generate").emit("click");
+  assert.deepEqual(requests, [{ text: selected, mode: "list" }]);
+  assert.equal(app.element("correction-proposal").value, bullets);
+  assert.equal(app.element("transcript").value, original);
+  await app.element("correction-accept").emit("click");
+  assert.equal(app.element("transcript").value, `Shopping:\n${bullets}\nKeep this note.`);
+  for (let i = 0; i < 10; i++) await setImmediate();
+  assert.equal(app.server.chats.get(id(1)).text, app.element("transcript").value);
 });

@@ -2855,7 +2855,7 @@
           },
           "default_mode": {
             "type": "string",
-            "enum": ["spelling", "paragraphs", "headings"],
+            "enum": ["spelling", "paragraphs", "headings", "list"],
             "title": "Default Mode",
             "default": "paragraphs"
           },
@@ -2903,7 +2903,7 @@
         "properties": {
           "id": {
             "type": "string",
-            "enum": ["spelling", "paragraphs", "headings"],
+            "enum": ["spelling", "paragraphs", "headings", "list"],
             "title": "Id"
           },
           "label": {
@@ -2924,7 +2924,7 @@
           },
           "mode": {
             "type": "string",
-            "enum": ["spelling", "paragraphs", "headings"],
+            "enum": ["spelling", "paragraphs", "headings", "list"],
             "title": "Mode",
             "default": "paragraphs"
           }

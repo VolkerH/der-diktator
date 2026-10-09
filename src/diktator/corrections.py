@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 from diktator.errors import ApiFailure
 
-CorrectionMode = Literal["spelling", "paragraphs", "headings"]
+CorrectionMode = Literal["spelling", "paragraphs", "headings", "list"]
 DEFAULT_MODEL = "smollm3-3b"
 DEFAULT_LANGUAGES = ("English", "German", "French", "Spanish")
 PROMPTS: dict[CorrectionMode, str] = {
@@ -34,11 +34,18 @@ PROMPTS: dict[CorrectionMode, str] = {
         "Correct spelling and punctuation. Preserve all original text content, facts and meaning; "
         "do not summarize or omit details."
     ),
+    "list": (
+        "Turn the dictation into a Markdown list, with one '- ' bullet per shopping item or task "
+        "on its own line. Preserve the original language, names, quantities, negation and all "
+        "item or task details. Do not invent, omit, merge or duplicate items. Return only the "
+        "list, without a preamble or code fences."
+    ),
 }
 LABELS: dict[CorrectionMode, str] = {
     "spelling": "Spelling and punctuation",
     "paragraphs": "Readable paragraphs",
     "headings": "Paragraphs and Markdown headings",
+    "list": "Markdown list",
 }
 SYSTEM_PROMPT = (
     "You edit dictated text in its original language. Do not translate. Preserve any language "
@@ -92,10 +99,16 @@ class CorrectionSettings:
             <= 0
         ):
             raise ValueError("Correction limits must be positive.")
+        # Existing operator configurations defined the original three modes. Adding a
+        # built-in list prompt keeps those configurations valid without mutating their dict.
+        if set(self.prompts) == {"spelling", "paragraphs", "headings"}:
+            object.__setattr__(self, "prompts", {**self.prompts, "list": PROMPTS["list"]})
         if set(self.prompts) != set(PROMPTS) or any(
             not isinstance(value, str) or not value.strip() for value in self.prompts.values()
         ):
-            raise ValueError("Correction prompts must define spelling, paragraphs and headings.")
+            raise ValueError(
+                "Correction prompts must define spelling, paragraphs, headings and list."
+            )
 
     @property
     def language_labels(self) -> tuple[str, ...]:

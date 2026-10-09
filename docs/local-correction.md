@@ -6,7 +6,10 @@ text, choose **Fix selection…** (or right-click the selection), choose an edit
 style, and generate a preview. Compare the original and suggestion before
 accepting. **Undo correction** restores the exact previous editor text until the
 next edit or navigation. Paragraph formatting is the initial style; spelling and
-punctuation, and paragraphs with Markdown headings are also available.
+punctuation, paragraphs with Markdown headings, and a **Markdown list** style are
+also available. Choose Markdown list to turn a selected shopping or to-do dictation
+into one `- ` bullet per item or task. Its prompt asks the model to retain the
+original language, quantities, names, negation and details without inventing items.
 
 The [MVP plan](plans/local-correction-prototype.md) records the scope and deferred
 work. The current iteration asks the model to preserve the original language and
@@ -88,7 +91,7 @@ can pass a configured `Settings(correction=CorrectionSettings(...))` to
 | `DIKTATOR_CORRECTION_MODEL`        | Provider model ID; defaults to `smollm3-3b`.                    |
 | `DIKTATOR_CORRECTION_LANGUAGES`    | Comma-separated operator language labels; see resolution below. |
 | `DIKTATOR_CORRECTION_API_KEY`      | Optional Bearer credential, retained only on the server.        |
-| `DIKTATOR_CORRECTION_PROMPTS_FILE` | Optional UTF-8 JSON file replacing the three editing prompts.   |
+| `DIKTATOR_CORRECTION_PROMPTS_FILE` | Optional UTF-8 JSON file configuring the editing prompts.       |
 
 When language labels are omitted, the default model resolves to English, German,
 French and Spanish. A custom model ID or alias resolves to no labels unless
@@ -97,9 +100,12 @@ clears labels. Python configuration uses `CorrectionSettings(languages=(...))`;
 `None` requests default-model resolution and `()` declares no languages.
 The app does not probe or detect the configured provider's language capabilities.
 
-A prompt file must contain nonempty strings for all three keys: `spelling`,
-`paragraphs`, and `headings`. The shared Python system instruction is prepended
-to each. Restart the app after configuration or prompt changes. These are
+A prompt file must contain nonempty strings for `spelling`, `paragraphs`, and
+`headings`. Add a nonempty `list` value to customize Markdown lists. Existing
+three-mode files remain valid and use the built-in list prompt when `list` is
+omitted; the same compatibility applies to Python `CorrectionSettings` mappings.
+Unknown keys and missing original modes remain invalid. The shared Python system
+instruction is prepended to each mode. Restart the app after configuration or prompt changes. These are
 operator settings, not browser preferences. Mode choice applies only to the
 current dialog; reopening uses the backend's default. The shared instruction
 asks the model to preserve source language and language switches, names, numbers,
@@ -120,7 +126,8 @@ compatibility; new clients should use `languages`. No language field was added t
 the generation request: the prompt asks the model to preserve the source text's
 language without a separate language parameter.
 
-`POST /api/corrections` accepts this JSON and defaults `mode` to `paragraphs`:
+`POST /api/corrections` accepts `spelling`, `paragraphs`, `headings` or `list` as
+`mode`, and defaults to `paragraphs`:
 
 ```json
 { "text": "  selected dictated text  ", "mode": "paragraphs" }
@@ -208,8 +215,9 @@ snapshot and use the current conditional write API themselves.
 
 ## Validation and observed quality
 
-Validation on 2026-10-09 used the isolated worktree source, with `diktator.__file__`
-confirmed as `/tmp/phonon2-issue7-prototype/src/diktator/__init__.py`.
+Before the list-mode addition, validation on 2026-10-09 used the isolated worktree
+source, with `diktator.__file__` confirmed as
+`/tmp/phonon2-issue7-prototype/src/diktator/__init__.py`.
 
 - Ruff formatting/lint and ty: passed. Full Python suite: **389 passed**, including
   31 correction tests and the updated OpenAPI/event schema contract checks.
@@ -302,3 +310,19 @@ new prompts. It is not a matched timing comparison: the control used Q8_0 and
 prompt caching, while the larger candidates use Q4_K_M with caching disabled.
 Its timing values are retained in the raw evidence but excluded from the larger
 models' timing comparison.
+
+### Markdown list examples
+
+Two [real SmolLM3 list-mode samples](issue7-evidence/markdown-list-smoke.json)
+produced the requested Markdown bullets: an English shopping dictation retained
+quantities and a do-not-buy-peanuts item, and a German to-do dictation retained
+names, the 180-euro amount, the Friday deadline, an approval condition and a
+do-not-delete instruction. These are two synthetic examples, not a general
+quality guarantee. The earlier three-mode comparison remains historical and
+was not rerun for this added mode. Review every list before accepting it.
+
+The list-mode follow-up passed **37 focused Python correction/API-contract tests**
+and the full **168-test frontend suite**, plus Ruff, ty, Prettier, ESLint and
+TypeScript checks. API tests cover discovery, prompt routing and legacy/current
+operator prompt files; the client test exercises choosing Markdown list,
+previewing, accepting and saving only the selected text.

@@ -82,7 +82,8 @@ async def test_disabled_discovery_and_generation(tmp_path: Path) -> None:
         assert capability["default_mode"] == "paragraphs"
         assert capability["languages"] == list(DEFAULT_LANGUAGES)
         assert capability["language"] == ", ".join(DEFAULT_LANGUAGES)
-        assert len(capability["modes"]) == 3
+        assert len(capability["modes"]) == 4
+        assert {"id": "list", "label": "Markdown list"} in capability["modes"]
         response = await client.post("/api/corrections", json={"text": "hello"})
         assert response.status_code == 503
         assert response.json()["code"] == "correction_disabled"
@@ -296,3 +297,42 @@ async def test_language_declarations_follow_operator_configuration(
     assert CorrectionSettings.from_environment().language_labels == ()
     with pytest.raises(ValueError, match="languages"):
         replace(config, languages=("",))
+
+
+@pytest.mark.parametrize("custom_list_prompt", [None, "Use one Markdown bullet per shopping item."])
+async def test_list_mode_uses_legacy_or_explicit_operator_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, custom_list_prompt: str | None
+) -> None:
+    prompts: dict[CorrectionMode, str] = {
+        mode: "Existing operator prompt " + mode for mode in ("spelling", "paragraphs", "headings")
+    }
+    if custom_list_prompt is not None:
+        prompts["list"] = custom_list_prompt
+    prompt_file = tmp_path / "operator-prompts.json"
+    prompt_file.write_text(json.dumps(prompts))
+    monkeypatch.setenv("DIKTATOR_CORRECTION_PROMPTS_FILE", str(prompt_file))
+    monkeypatch.setenv("DIKTATOR_CORRECTION_URL", "http://local/v1")
+    settings = CorrectionSettings.from_environment()
+    expected_prompt = custom_list_prompt or PROMPTS["list"]
+    assert settings.prompts["spelling"] == "Existing operator prompt spelling"
+    assert settings.prompts["list"] == expected_prompt
+    assert CorrectionSettings(prompts=prompts).prompts == settings.prompts
+    assert ("list" in prompts) == (custom_list_prompt is not None)
+
+    def provider(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["messages"] == [
+            {"role": "system", "content": SYSTEM_PROMPT + expected_prompt},
+            {"role": "user", "content": "milk six eggs do not buy peanuts"},
+        ]
+        return httpx.Response(200, text=complete("- Milk\n- 6 eggs\n- Do not buy peanuts"))
+
+    async with api(tmp_path / "data", provider, settings) as client:
+        response = await client.post(
+            "/api/corrections", json={"text": "milk six eggs do not buy peanuts", "mode": "list"}
+        )
+        result = events(response)[-1]
+        assert result["type"] == "done"
+        assert result["mode"] == "list"
+        assert result["text"] == "- Milk\n- 6 eggs\n- Do not buy peanuts"
+        assert (await client.get("/api/chats")).json() == []
