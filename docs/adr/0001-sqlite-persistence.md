@@ -81,3 +81,10 @@ with simple local or self-hosted deployment.
 - SQLAlchemy ships optional native extensions; verify the packaged bundle (#8).
 - Alternative considered: SQLModel. Rejected in favor of explicit separation of table and API
   models.
+
+### Keyboard application preferences (#31)
+
+The existing actor-scoped preference API now supplies a typed action catalog, portable
+server defaults and validated persisted keyboard overrides. Clients own dispatch and
+focus and can discover defaults without copying application rules. See the
+[keyboard contract](../keyboard-api.md) for contexts, resets, conflicts and navigation.

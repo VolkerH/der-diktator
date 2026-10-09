@@ -19,7 +19,7 @@ def test_preferences_upgrade_preserves_populated_group_database(tmp_path: Path) 
     config = Config()
     migrations = Path(__file__).parents[1] / "src/diktator/db/migrations"
     config.set_main_option("script_location", str(migrations))
-    assert ScriptDirectory.from_config(config).get_heads() == ["0005_preferences"]
+    assert ScriptDirectory.from_config(config).get_heads() == ["0006_keyboard_bindings"]
     engine = open_engine(tmp_path / DATABASE_NAME)
     try:
         with engine.connect().execution_options(write=True) as connection:
@@ -53,7 +53,7 @@ def test_preferences_upgrade_preserves_populated_group_database(tmp_path: Path) 
             assert connection.exec_driver_sql("PRAGMA foreign_key_check").all() == []
             assert (
                 connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar()
-                == "0005_preferences"
+                == "0006_keyboard_bindings"
             )
             assert connection.exec_driver_sql("SELECT count(*) FROM preferences").scalar() == 0
         preferences = PreferenceService(engine)
@@ -75,3 +75,31 @@ def test_preferences_upgrade_preserves_populated_group_database(tmp_path: Path) 
         assert GroupService(reopened).placement(LOCAL_USER_ID, chat.id).group_id == group.id
     finally:
         reopened.dispose()
+
+
+def test_keyboard_upgrade_keeps_saved_preferences(tmp_path: Path) -> None:
+    config = Config()
+    config.set_main_option(
+        "script_location", str(Path(__file__).parents[1] / "src/diktator/db/migrations")
+    )
+    engine = open_engine(tmp_path / DATABASE_NAME)
+    try:
+        with engine.connect().execution_options(write=True) as connection:
+            config.attributes["connection"] = connection
+            command.upgrade(config, "0005_preferences")
+            connection.execute(
+                text(
+                    "INSERT INTO preferences "
+                    "(user_id, copy_preamble, share_include_preamble, revision) "
+                    "VALUES ('local', 'Keep me', 1, 7)"
+                )
+            )
+            connection.commit()
+        upgrade_schema(engine, tmp_path)
+        saved = PreferenceService(engine).get(LOCAL_USER_ID)
+        assert saved.copy_preamble == "Keep me"
+        assert saved.share_include_preamble is True
+        assert saved.revision == 7
+        assert saved.keyboard_bindings_is_default is True
+    finally:
+        engine.dispose()

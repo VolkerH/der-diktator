@@ -1,3 +1,4 @@
+import { keyboardControls, preserveFocus } from "./keyboard.js";
 import { exportControls } from "./exports.js";
 import { ApiRequestError } from "./errors.js";
 import { MAX_DURATION_SECONDS, wordCount } from "./audio.js";
@@ -468,6 +469,7 @@ function chatItem(id, title, meta, summary = null) {
 }
 
 function renderChats() {
+  const restoreFocus = preserveFocus(chatList);
   const editing = titleEdit?.source === "sidebar" ? titleEdit : null;
   const input = editing?.input;
   const hadFocus = Boolean(input && document.activeElement === input);
@@ -501,6 +503,7 @@ function renderChats() {
     editing.input.focus();
     editing.input.setSelectionRange(selection[0], selection[1]);
   }
+  if (!hadFocus) restoreFocus();
   chatList.hidden = shownQuery !== searchQuery && !editing;
   chatList.setAttribute("aria-busy", String(listLoading));
   searchClear.disabled = !searchQuery;
@@ -541,6 +544,7 @@ function clipItem(key, label, source, actionLabel, action) {
 }
 
 function renderClips() {
+  const restoreFocus = preserveFocus(clips);
   const current = chat;
   const items = (current?.recordings ?? []).map((clip, index) =>
     clipItem(
@@ -566,6 +570,7 @@ function renderClips() {
   }
   clips.replaceChildren(...items);
   clips.hidden = items.length === 0;
+  restoreFocus();
 }
 
 /** @param {string} key @param {string} source */
@@ -947,7 +952,11 @@ async function runAfterTitleSave(action) {
 
 /** @param {string} id */
 async function openChat(id) {
-  if (recording || busy || id === chat?.id) return;
+  if (recording || busy) return;
+  if (id === chat?.id) {
+    closeDrawer();
+    return;
+  }
   if (!(await prepareTitleEditorToLeave()) || recording || busy) return;
   closeDrawer();
   busy = true;
@@ -1693,6 +1702,9 @@ function closeDrawer() {
   sidebar.classList.toggle("open", false);
   scrim.hidden = true;
   menuButton.setAttribute("aria-expanded", "false");
+  updateDrawerFocus();
+  if (window.matchMedia("(max-width: 860px)").matches && sidebar.contains(document.activeElement))
+    transcript.focus();
 }
 
 /** Keep a failed inline edit visible when the phone drawer is dismissed. */
@@ -1713,6 +1725,7 @@ menuButton.addEventListener("click", () => {
     sidebar.classList.toggle("open", true);
     scrim.hidden = false;
     menuButton.setAttribute("aria-expanded", "true");
+    updateDrawerFocus();
   } else void dismissDrawer();
 });
 scrim.addEventListener("click", () => void dismissDrawer());
@@ -1758,13 +1771,159 @@ window.addEventListener("pagehide", () => {
   void recorder.release();
   discardUnsaved();
 });
-// Space starts and stops recording unless a control or the transcript has focus.
-window.addEventListener("keydown", (event) => {
-  if (event.code !== "Space" || event.repeat || event.target !== document.body) return;
-  event.preventDefault();
-  if (recording) void stopRecording();
-  else if (!recordButton.disabled) recordButton.click();
+/** Expose existing control actions without duplicating their permission/lifecycle rules. */
+const clickControl = (/** @type {string} */ id) => {
+  const control = document.getElementById(id);
+  if (control instanceof HTMLButtonElement || control instanceof HTMLInputElement) {
+    if (!control.disabled && !control.hidden) control.click();
+  }
+};
+function showSidebar() {
+  sidebar.classList.add("open");
+  scrim.hidden = false;
+  menuButton.setAttribute("aria-expanded", "true");
+  updateDrawerFocus();
+}
+/** @param {number} direction */
+function focusChat(direction) {
+  showSidebar();
+  const buttons = [...chatList.querySelectorAll(".chat-open")].filter(
+    (button) => !button.closest("[hidden]"),
+  );
+  const focused = buttons.indexOf(/** @type {Element} */ (document.activeElement));
+  const current = buttons.findIndex((button) => button.closest(".active"));
+  const index = focused >= 0 ? focused : current;
+  const next = buttons[Math.max(0, Math.min(buttons.length - 1, index + direction))];
+  if (next instanceof HTMLElement) next.focus();
+}
+keyboardControls({
+  new_chat: () => clickControl("new-chat"),
+  search_chats: () => {
+    showSidebar();
+    searchInput.focus();
+  },
+  focus_editor: () => {
+    closeDrawer();
+    transcript.focus();
+  },
+  toggle_recording: () => clickControl(recording ? "stop" : "record"),
+  focus_sidebar: () => {
+    showSidebar();
+    newChatButton.focus();
+  },
+  speech_models: () => clickControl("model-settings-open"),
+  preamble_preferences: () => clickControl("preferences-open"),
+  share: () => clickControl("share"),
+  copy: () => clickControl("copy"),
+  previous_chat: () => focusChat(-1),
+  next_chat: () => focusChat(1),
+  rename_chat: () => clickControl("chat-title-edit"),
+  new_group: () => clickControl("new-group"),
+  focus_recordings: () => {
+    closeDrawer();
+    clips.querySelector("button")?.focus();
+  },
+  toggle_live: () => clickControl("live-mode"),
+  upload_wav: () => clickControl("upload-audio"),
 });
+
+// Native dialogs provide modal Tab containment and Escape; preserve a fallback
+// when their original list control was replaced during an async request.
+for (const dialog of document.querySelectorAll("dialog")) {
+  dialog.addEventListener("keydown", (event) => {
+    if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
+    const controls = [
+      ...dialog.querySelectorAll("button, input, select, textarea, [tabindex]"),
+    ].filter(
+      (node) =>
+        node instanceof HTMLElement &&
+        node.tabIndex >= 0 &&
+        !node.closest("[hidden]") &&
+        !node.matches(":disabled") &&
+        node.getClientRects().length > 0,
+    );
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (event.shiftKey && document.activeElement === first && last instanceof HTMLElement) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last && first instanceof HTMLElement) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+  let returnTarget = /** @type {HTMLElement | null} */ (null);
+  dialog.addEventListener("beforetoggle", (event) => {
+    if (/** @type {ToggleEvent} */ (event).newState === "open")
+      returnTarget = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  });
+  dialog.addEventListener("close", () => {
+    if (returnTarget?.isConnected && !returnTarget.closest("[hidden]")) returnTarget.focus();
+    else if (sidebar.classList.contains("open")) newChatButton.focus();
+    else transcript.focus();
+  });
+}
+chatList.addEventListener("keydown", (event) => {
+  if (
+    event.target instanceof HTMLElement &&
+    event.target.classList.contains("chat-open") &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.shiftKey &&
+    (event.key === "ArrowUp" || event.key === "ArrowDown")
+  ) {
+    event.preventDefault();
+    focusChat(event.key === "ArrowUp" ? -1 : 1);
+  }
+});
+window.addEventListener("keydown", (event) => {
+  if (
+    event.defaultPrevented ||
+    document.querySelector("dialog[open]") ||
+    !sidebar.classList.contains("open") ||
+    !window.matchMedia("(max-width: 860px)").matches
+  )
+    return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    void dismissDrawer().then(() => {
+      if (!sidebar.classList.contains("open")) menuButton.focus();
+    });
+  }
+  if (event.key === "Tab") {
+    const controls = [...sidebar.querySelectorAll("button, input, summary")].filter(
+      (node) => !node.closest("[hidden]") && !node.matches(":disabled"),
+    );
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (event.shiftKey && document.activeElement === first && last instanceof HTMLElement) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last && first instanceof HTMLElement) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+});
+function updateDrawerFocus() {
+  const modal =
+    sidebar.classList.contains("open") && window.matchMedia("(max-width: 860px)").matches;
+  sidebar.inert = window.matchMedia("(max-width: 860px)").matches && !modal;
+  const main = document.querySelector("main");
+  if (main) main.inert = modal;
+  if (modal) {
+    sidebar.setAttribute("role", "dialog");
+    sidebar.setAttribute("aria-modal", "true");
+    if (!sidebar.contains(document.activeElement) && !document.querySelector("dialog[open]"))
+      newChatButton.focus();
+  } else {
+    sidebar.removeAttribute("role");
+    sidebar.removeAttribute("aria-modal");
+  }
+}
+updateDrawerFocus();
+window.addEventListener("resize", updateDrawerFocus);
 window.addEventListener("resize", drawMeter);
 
 /** Retry startup navigation only while the initial blank editor is untouched. */

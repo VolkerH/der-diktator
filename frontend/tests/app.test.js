@@ -30,6 +30,8 @@ class Element {
         else classes.delete(name);
         return force;
       },
+      add: (name) => classes.add(name),
+      remove: (name) => classes.delete(name),
       contains: (name) => classes.has(name) || String(this.className).split(/\s+/u).includes(name),
     };
   }
@@ -41,12 +43,18 @@ class Element {
   }
   append(...children) {
     this.children.push(...children);
-    for (const child of children) child.setConnected(this.isConnected);
+    for (const child of children) {
+      child.parent = this;
+      child.setConnected(this.isConnected);
+    }
   }
   replaceChildren(...children) {
     for (const child of this.children) child.setConnected(false);
     this.children = children;
-    for (const child of children) child.setConnected(this.isConnected);
+    for (const child of children) {
+      child.parent = this;
+      child.setConnected(this.isConnected);
+    }
   }
   setConnected(connected) {
     this.isConnected = connected;
@@ -78,6 +86,15 @@ class Element {
   }
   contains(candidate) {
     return candidate === this || this.children.some((child) => child.contains(candidate));
+  }
+  matches(selector) {
+    if (selector === "[hidden]") return this.hidden;
+    if (selector === "[data-chat-id]") return this.attributes.has("data-chat-id");
+    if (selector === ":disabled") return this.disabled;
+    return selector.startsWith(".") && this.classList.contains(selector.slice(1));
+  }
+  closest(selector) {
+    return this.matches(selector) ? this : (this.parent?.closest(selector) ?? null);
   }
   setSelectionRange(start, end) {
     this.selectionStart = start;
@@ -480,9 +497,14 @@ async function appEnvironment(t, setup = () => {}, waitReady = true) {
       getElementById: element,
       createElement: (tag) => new Element(tag),
       querySelector: () => null,
+      querySelectorAll: () => [],
     },
+    HTMLElement: Element,
+    HTMLButtonElement: Element,
+    HTMLInputElement: Element,
     window: {
       isSecureContext: true,
+      matchMedia: () => ({ matches: false }),
       location: { href: "http://localhost:8080/" },
       setInterval: (callback, milliseconds) => {
         if (milliseconds === 2000) intervals.push(callback);

@@ -61,6 +61,8 @@ words: in German, a _Diktat_ is a dictation.
   back, or transcribe it again at the cursor.
 - **Autosave and copy.** Edits are saved on the server automatically; **Copy**
   puts the whole transcript on the clipboard.
+- **Keyboard navigation.** Tab reaches every control. Open **Keyboard shortcuts**
+  in the sidebar for help and editable shortcuts saved on the server.
 - **Private.** Transcription runs on your server's CPU, with no cloud services
   and no GPU required.
 - **Resilient.** If live transcription drops, the complete recording is
@@ -77,7 +79,7 @@ words: in German, a _Diktat_ is a dictation.
    See [Choosing and downloading a model](#choosing-and-downloading-a-model)
    for the full walkthrough.
 2. **Tap the microphone** and speak. With **Live text** on, words appear as you
-   talk; provisional words can still change. On a computer, Space starts and
+   talk; provisional words can still change. On a computer, Ctrl+Shift+4 starts and
    stops recording too.
 3. **Tap Stop.** The recording is saved with the chat, and the final transcript
    is inserted at the cursor.

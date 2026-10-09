@@ -2813,6 +2813,33 @@
         "required": ["name"],
         "title": "GroupName"
       },
+      "KeyboardAction": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "default_binding": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Binding"
+          }
+        },
+        "type": "object",
+        "required": ["id", "label"],
+        "title": "KeyboardAction",
+        "description": "Stable action identity; clients implement supported actions in their own UI."
+      },
       "ModelStatus": {
         "properties": {
           "id": {
@@ -2970,10 +2997,32 @@
             ],
             "title": "Share Include Preamble"
           },
+          "keyboard_bindings": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "object",
+                "maxProperties": 17
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyboard Bindings"
+          },
           "reset": {
             "items": {
               "type": "string",
-              "enum": ["copy_preamble", "share_include_preamble"]
+              "enum": ["copy_preamble", "share_include_preamble", "keyboard_bindings"]
             },
             "type": "array",
             "title": "Reset"
@@ -2999,6 +3048,51 @@
             "type": "boolean",
             "title": "Share Include Preamble",
             "default": false
+          },
+          "keyboard_bindings": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Keyboard Bindings"
+          },
+          "keyboard_bindings_is_default": {
+            "type": "boolean",
+            "title": "Keyboard Bindings Is Default",
+            "default": true
+          },
+          "default_keyboard_bindings": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Default Keyboard Bindings"
+          },
+          "keyboard_actions": {
+            "items": {
+              "$ref": "#/components/schemas/KeyboardAction"
+            },
+            "type": "array",
+            "title": "Keyboard Actions"
+          },
+          "keyboard_binding_pattern": {
+            "type": "string",
+            "title": "Keyboard Binding Pattern",
+            "default": "Ctrl+Shift+(digit, ArrowUp or ArrowDown)"
           },
           "revision": {
             "type": "integer",
