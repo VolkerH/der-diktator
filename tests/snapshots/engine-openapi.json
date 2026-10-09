@@ -80,7 +80,11 @@
             "in": "path",
             "required": true,
             "schema": {
-              "enum": ["phonon-2", "parakeet-v3", "whisper-large-v3-turbo"],
+              "enum": [
+                "phonon-2",
+                "parakeet-v3",
+                "whisper-large-v3-turbo"
+              ],
               "type": "string",
               "title": "Model Id"
             }
@@ -130,7 +134,11 @@
             "in": "path",
             "required": true,
             "schema": {
-              "enum": ["phonon-2", "parakeet-v3", "whisper-large-v3-turbo"],
+              "enum": [
+                "phonon-2",
+                "parakeet-v3",
+                "whisper-large-v3-turbo"
+              ],
               "type": "string",
               "title": "Model Id"
             }
@@ -180,7 +188,11 @@
             "in": "path",
             "required": true,
             "schema": {
-              "enum": ["phonon-2", "parakeet-v3", "whisper-large-v3-turbo"],
+              "enum": [
+                "phonon-2",
+                "parakeet-v3",
+                "whisper-large-v3-turbo"
+              ],
               "type": "string",
               "title": "Model Id"
             }
@@ -230,7 +242,11 @@
             "in": "query",
             "required": true,
             "schema": {
-              "enum": ["phonon-2", "parakeet-v3", "whisper-large-v3-turbo"],
+              "enum": [
+                "phonon-2",
+                "parakeet-v3",
+                "whisper-large-v3-turbo"
+              ],
               "type": "string",
               "title": "Model"
             }
@@ -373,7 +389,10 @@
           }
         },
         "type": "object",
-        "required": ["detail", "code"],
+        "required": [
+          "detail",
+          "code"
+        ],
         "title": "ApiError",
         "description": "An actionable public failure; context never contains internal diagnostics."
       },
@@ -402,7 +421,11 @@
         "properties": {
           "id": {
             "type": "string",
-            "enum": ["phonon-2", "parakeet-v3", "whisper-large-v3-turbo"],
+            "enum": [
+              "phonon-2",
+              "parakeet-v3",
+              "whisper-large-v3-turbo"
+            ],
             "title": "Id"
           },
           "name": {
@@ -480,7 +503,11 @@
             "anyOf": [
               {
                 "type": "string",
-                "enum": ["phonon-2", "parakeet-v3", "whisper-large-v3-turbo"]
+                "enum": [
+                  "phonon-2",
+                  "parakeet-v3",
+                  "whisper-large-v3-turbo"
+                ]
               },
               {
                 "type": "null"
@@ -490,7 +517,11 @@
           },
           "preferred": {
             "type": "string",
-            "enum": ["phonon-2", "parakeet-v3", "whisper-large-v3-turbo"],
+            "enum": [
+              "phonon-2",
+              "parakeet-v3",
+              "whisper-large-v3-turbo"
+            ],
             "title": "Preferred",
             "default": "phonon-2"
           },
@@ -507,7 +538,11 @@
           }
         },
         "type": "object",
-        "required": ["active", "busy", "models"],
+        "required": [
+          "active",
+          "busy",
+          "models"
+        ],
         "title": "ModelsStatus"
       },
       "RecordingPolicy": {
@@ -521,7 +556,7 @@
           "hard_limit_seconds": {
             "type": "integer",
             "title": "Hard Limit Seconds",
-            "default": 600
+            "default": 3600
           },
           "wav_container_allowance_bytes": {
             "type": "integer",
@@ -575,7 +610,11 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "required": ["client_deadlines_ms", "max_pcm_bytes", "max_audio_bytes", "policy_revision"],
+        "required": [
+          "max_pcm_bytes",
+          "max_audio_bytes",
+          "policy_revision"
+        ],
         "title": "RecordingPolicy",
         "description": "Enforcement and waiting budgets; changing these requires a process restart."
       },
@@ -587,7 +626,9 @@
           }
         },
         "type": "object",
-        "required": ["text"],
+        "required": [
+          "text"
+        ],
         "title": "Transcription",
         "description": "The transcript returned to the browser."
       }

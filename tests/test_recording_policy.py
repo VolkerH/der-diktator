@@ -49,16 +49,12 @@ async def web_client(
         yield client, app
 
 
-def test_startup_policy_is_immutable_and_preserves_existing_defaults() -> None:
+def test_startup_policy_is_immutable_with_bounded_long_capture_defaults() -> None:
     policy = RecordingPolicy()
-    assert policy.hard_limit_seconds == 600
-    assert policy.client_deadlines_ms.model_dump() == {
-        "upload": 190_000,
-        "batch": 570_000,
-        "live": 200_000,
-    }
-    assert policy.max_pcm_bytes == 19_200_000
-    assert policy.max_audio_bytes == 20_000_044
+    assert policy.hard_limit_seconds == 3600
+    assert policy.max_pcm_bytes == 115_200_000
+    assert policy.max_audio_bytes == 116_000_044
+    assert RecordingPolicy(hard_limit_seconds=600).max_audio_bytes == 20_000_044
     assert policy == Settings().recording_policy
     with pytest.raises(ValidationError):
         policy.hard_limit_seconds = 1800
@@ -141,8 +137,15 @@ async def test_discovery_agrees_without_reserving_model_or_creating_preferences(
         response = await client.get("/api/recording-policy")
         body = response.json()
         assert response.status_code == 200
-        assert body == policy.model_dump() | {"preference_etag": before.headers["ETag"]}
-        assert "interval" not in response.text
+        assert body == policy.model_dump() | {
+            "preference_etag": before.headers["ETag"],
+            "recording_interval_seconds": 1800,
+            "requested_recording_interval_seconds": 1800,
+            "default_recording_interval_seconds": 1800,
+            "recording_interval_is_default": True,
+            "recording_interval_constrained": False,
+            "recording_interval_constraint_reason": None,
+        }
         assert "http" not in response.text
         assert str(tmp_path) not in response.text
         assert calls == ["/recording-policy"]
