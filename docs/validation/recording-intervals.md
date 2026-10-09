@@ -71,6 +71,10 @@ preservation of constrained requested preferences. FIR tests keep 1/4 kHz tone
 RMS within 0.005/0.01 of the expected amplitude and reduce a 12 kHz input to RMS
 below 0.003 at both native fallback rates, preventing speech-band aliasing.
 
+The complete `make check` passed: Ruff formatting/lint, Ty, **434 Python tests**,
+Prettier, ESLint, TypeScript checking and **204 frontend tests**. Tests use CPU-only
+fakes/mocks and do not download a model or rebuild a Docker image.
+
 ## Acceptance boundaries
 
 The shipped interval/default path is validated at 1800/3600 seconds. Raising the

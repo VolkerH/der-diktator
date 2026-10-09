@@ -193,3 +193,14 @@ test("an extension timeout cannot be mistaken for a later acknowledgement", asyn
   assert.equal(await recorder.extend(1800), false);
   await recorder.release();
 });
+
+test("simultaneous stop requests share finalization and release the cached WAV afterwards", async (t) => {
+  audioEnvironment(t);
+  const recorder = new MicrophoneRecorder();
+  await recorder.start();
+  const first = recorder.stop();
+  const second = recorder.stop();
+  assert.equal(first, second);
+  await first;
+  assert.equal(recorder.stopping, null);
+});

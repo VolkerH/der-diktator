@@ -96,7 +96,6 @@ async def measure(chromium):
             for rate in (16000, 48000):
                 for duration in (1800, 3600):
                     page = await browser.new_page()
-                    page.on("console", lambda message: print(message.text, flush=True))
                     page.on("pageerror", lambda error: print(f"Browser error: {error}", flush=True))
                     await page.goto(f"http://127.0.0.1:{server.server_port}/")
                     session = await page.context.new_cdp_session(page)
@@ -137,10 +136,7 @@ async def measure(chromium):
                         await originalAddModule.call(this, url);
                         await originalAddModule.call(this, "/benchmark-worklet.js");
                       };
-                      console.log("before start");
                       await recorder.start(null, {intervalSeconds: duration, hardLimitSeconds: 3600});
-                      console.log("started", recorder.context.state);
-                      window.debugRecorder = recorder;
                     }""",
                         {"rate": rate, "duration": duration},
                     )

@@ -112,11 +112,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "enum": [
-                "phonon-2",
-                "parakeet-v3",
-                "whisper-large-v3-turbo"
-              ],
+              "enum": ["phonon-2", "parakeet-v3", "whisper-large-v3-turbo"],
               "type": "string",
               "title": "Model"
             }
@@ -196,11 +192,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "enum": [
-                "phonon-2",
-                "parakeet-v3",
-                "whisper-large-v3-turbo"
-              ],
+              "enum": ["phonon-2", "parakeet-v3", "whisper-large-v3-turbo"],
               "type": "string",
               "title": "Model"
             }
@@ -280,11 +272,7 @@
             "in": "path",
             "required": true,
             "schema": {
-              "enum": [
-                "phonon-2",
-                "parakeet-v3",
-                "whisper-large-v3-turbo"
-              ],
+              "enum": ["phonon-2", "parakeet-v3", "whisper-large-v3-turbo"],
               "type": "string",
               "title": "Model"
             }
@@ -364,11 +352,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "enum": [
-                "phonon-2",
-                "parakeet-v3",
-                "whisper-large-v3-turbo"
-              ],
+              "enum": ["phonon-2", "parakeet-v3", "whisper-large-v3-turbo"],
               "type": "string",
               "default": "phonon-2",
               "title": "Model"
@@ -2478,11 +2462,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "enum": [
-                "phonon-2",
-                "parakeet-v3",
-                "whisper-large-v3-turbo"
-              ],
+              "enum": ["phonon-2", "parakeet-v3", "whisper-large-v3-turbo"],
               "type": "string",
               "default": "phonon-2",
               "title": "Model"
@@ -2630,10 +2610,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "detail",
-          "code"
-        ],
+        "required": ["detail", "code"],
         "title": "ApiError",
         "description": "An actionable public failure; context never contains internal diagnostics."
       },
@@ -2700,12 +2677,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "id",
-          "created",
-          "updated",
-          "title"
-        ],
+        "required": ["id", "created", "updated", "title"],
         "title": "Chat",
         "description": "One editable transcript and every recording made for it."
       },
@@ -2757,12 +2729,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "chat_id",
-          "group_id",
-          "placement_revision",
-          "etag"
-        ],
+        "required": ["chat_id", "group_id", "placement_revision", "etag"],
         "title": "ChatPlacement"
       },
       "ChatSummary": {
@@ -2841,10 +2808,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "text",
-          "text_revision"
-        ],
+        "required": ["text", "text_revision"],
         "title": "ChatText",
         "description": "Canonical text resource, independent of the chat's recordings."
       },
@@ -2867,10 +2831,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "custom_title",
-          "title_revision"
-        ],
+        "required": ["custom_title", "title_revision"],
         "title": "ChatTitle",
         "description": "Shared title metadata, independently writable from transcript and audio."
       },
@@ -2899,10 +2860,7 @@
         "properties": {
           "format": {
             "type": "string",
-            "enum": [
-              "plain",
-              "with_preamble"
-            ],
+            "enum": ["plain", "with_preamble"],
             "title": "Format",
             "default": "plain"
           },
@@ -2914,20 +2872,14 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "required": [
-          "text"
-        ],
+        "required": ["text"],
         "title": "DraftExport"
       },
       "EffectiveLimit": {
         "properties": {
           "id": {
             "type": "string",
-            "enum": [
-              "recording_seconds",
-              "audio_bytes",
-              "text_characters"
-            ],
+            "enum": ["recording_seconds", "audio_bytes", "text_characters"],
             "title": "Id"
           },
           "label": {
@@ -2940,11 +2892,7 @@
           },
           "unit": {
             "type": "string",
-            "enum": [
-              "seconds",
-              "bytes",
-              "characters"
-            ],
+            "enum": ["seconds", "bytes", "characters"],
             "title": "Unit"
           },
           "source": {
@@ -2967,12 +2915,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "id",
-          "label",
-          "value",
-          "unit"
-        ],
+        "required": ["id", "label", "value", "unit"],
         "title": "EffectiveLimit",
         "description": "A running limit; changes require operator configuration and a new process."
       },
@@ -3041,9 +2984,7 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "required": [
-          "copy_preamble"
-        ],
+        "required": ["copy_preamble"],
         "title": "ExportPreviewRequest",
         "description": "Preview an unsaved preference without persisting it."
       },
@@ -3073,13 +3014,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "id",
-          "name",
-          "created",
-          "revision",
-          "etag"
-        ],
+        "required": ["id", "name", "created", "revision", "etag"],
         "title": "Group",
         "description": "One actor's private group, with its validator available in lists."
       },
@@ -3092,9 +3027,7 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "required": [
-          "name"
-        ],
+        "required": ["name"],
         "title": "GroupName"
       },
       "KeyboardAction": {
@@ -3120,10 +3053,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "id",
-          "label"
-        ],
+        "required": ["id", "label"],
         "title": "KeyboardAction",
         "description": "Stable action identity; clients implement supported actions in their own UI."
       },
@@ -3131,11 +3061,7 @@
         "properties": {
           "id": {
             "type": "string",
-            "enum": [
-              "phonon-2",
-              "parakeet-v3",
-              "whisper-large-v3-turbo"
-            ],
+            "enum": ["phonon-2", "parakeet-v3", "whisper-large-v3-turbo"],
             "title": "Id"
           },
           "name": {
@@ -3213,11 +3139,7 @@
             "anyOf": [
               {
                 "type": "string",
-                "enum": [
-                  "phonon-2",
-                  "parakeet-v3",
-                  "whisper-large-v3-turbo"
-                ]
+                "enum": ["phonon-2", "parakeet-v3", "whisper-large-v3-turbo"]
               },
               {
                 "type": "null"
@@ -3227,11 +3149,7 @@
           },
           "preferred": {
             "type": "string",
-            "enum": [
-              "phonon-2",
-              "parakeet-v3",
-              "whisper-large-v3-turbo"
-            ],
+            "enum": ["phonon-2", "parakeet-v3", "whisper-large-v3-turbo"],
             "title": "Preferred",
             "default": "phonon-2"
           },
@@ -3248,11 +3166,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "active",
-          "busy",
-          "models"
-        ],
+        "required": ["active", "busy", "models"],
         "title": "ModelsStatus"
       },
       "PlacementUpdate": {
@@ -3272,9 +3186,7 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "required": [
-          "group_id"
-        ],
+        "required": ["group_id"],
         "title": "PlacementUpdate"
       },
       "PreferenceUpdate": {
@@ -3494,18 +3406,12 @@
           },
           "media_type": {
             "type": "string",
-            "enum": [
-              "text/plain",
-              "text/markdown"
-            ],
+            "enum": ["text/plain", "text/markdown"],
             "title": "Media Type"
           }
         },
         "type": "object",
-        "required": [
-          "text",
-          "media_type"
-        ],
+        "required": ["text", "media_type"],
         "title": "PreparedExport",
         "description": "Exact text for the final client copy/share action, with no delivery side effects."
       },
@@ -3637,11 +3543,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "id",
-          "created",
-          "duration_seconds"
-        ],
+        "required": ["id", "created", "duration_seconds"],
         "title": "Recording",
         "description": "A stored recording; its audio lives next to the chat document."
       },
@@ -3654,9 +3556,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "text"
-        ],
+        "required": ["text"],
         "title": "TextUpdate"
       },
       "TitleUpdate": {
@@ -3675,9 +3575,7 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "required": [
-          "custom_title"
-        ],
+        "required": ["custom_title"],
         "title": "TitleUpdate",
         "description": "Null restores automatic naming; an absent override is invalid."
       },
@@ -3689,9 +3587,7 @@
           }
         },
         "type": "object",
-        "required": [
-          "text"
-        ],
+        "required": ["text"],
         "title": "Transcription",
         "description": "The transcript returned to the browser."
       }

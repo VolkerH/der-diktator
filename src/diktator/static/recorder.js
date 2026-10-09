@@ -170,5 +170,6 @@ export class MicrophoneRecorder {
     this.chunks = [];
     if (this.context && this.context.state !== "closed") await this.context.close();
     this.context = null;
+    this.stopping = null;
   }
 }
