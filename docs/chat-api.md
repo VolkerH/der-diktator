@@ -237,3 +237,22 @@ Unsorted identity directly. Preserve its text/audio while resolving the error.
 
 Group moves preserve unsaved or conflicted editor text. Search, autosave and uploads reuse the last group
 registry; a registry load failure keeps accessible chats visible with their last known labels.
+
+### External WAV attachments
+
+The browser's **Upload WAV…** action sends the file's unchanged bytes to the
+existing recording PUT endpoint with `Content-Type: audio/wav`. Browsers may
+report another MIME type or none; the server validates the bytes. The accepted
+format is 16 kHz mono signed 16-bit PCM WAV, within the operator's configured
+byte and duration limits (defaults: 20,000,044 bytes and 600 seconds). There is no
+conversion, resampling, stereo downmixing, or compressed-audio support.
+
+Uploading attaches a clip without modifying text or requiring a ready model.
+Transcription is a separate explicit clip action that uses the existing selected
+model and cursor/selection insertion behavior. Clients choose the recording ID
+before upload and retain it across retries of an ambiguous response. The browser
+locks editor and chat navigation while requests run. A retryable failed attachment
+stays in a tab-local unsaved pill, whose action retries storage only; leaving the
+chat or closing the tab can discard it. Validation failures (`invalid_audio`,
+`unsupported_audio`, `audio_too_large`) show the server's feedback and require a
+replacement file. Failed transcription leaves the saved clip available to retry.

@@ -228,6 +228,21 @@
               <span id="save-state" class="save-state"></span>
             </span>
             <div class="sheet-actions">
+              <button id="upload-audio" class="chip" type="button" aria-describedby="upload-format">
+                Upload WAV…
+              </button>
+              <input
+                id="audio-file"
+                class="visually-hidden"
+                type="file"
+                accept=".wav,audio/wav,audio/x-wav"
+                tabindex="-1"
+                aria-label="Choose WAV recording"
+              />
+              <span id="upload-format" class="visually-hidden"
+                >16 kHz mono 16-bit PCM WAV. Upload attaches a clip; use its Transcribe button to
+                add text at the cursor.</span
+              >
               <button id="share" class="chip" type="button" disabled>
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path

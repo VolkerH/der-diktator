@@ -16,6 +16,8 @@ import { MicrophoneRecorder } from "./recorder.js";
 
 const recordButton = /** @type {HTMLButtonElement} */ (document.getElementById("record"));
 const stopButton = /** @type {HTMLButtonElement} */ (document.getElementById("stop"));
+const uploadButton = /** @type {HTMLButtonElement} */ (document.getElementById("upload-audio"));
+const audioFile = /** @type {HTMLInputElement} */ (document.getElementById("audio-file"));
 const copyButton = /** @type {HTMLButtonElement} */ (document.getElementById("copy"));
 const newChatButton = /** @type {HTMLButtonElement} */ (document.getElementById("new-chat"));
 const menuButton = /** @type {HTMLButtonElement} */ (document.getElementById("menu"));
@@ -135,6 +137,8 @@ let insertion = { text: "", start: 0, end: 0 };
 /** A recording the server could not store; it stays in this tab for a retry.
  * @type {Blob | null} */
 let unsaved = null;
+/** An external attachment retries storage only, independently of model readiness. */
+let unsavedUpload = false;
 /** @type {string | null} */
 let unsavedUrl = null;
 /** Which clip the shared player has loaded, and whether it is playing. */
@@ -199,12 +203,14 @@ function pushLevel() {
 function updateControls() {
   const active = recording || busy;
   models.lock(active);
+  uploadButton.disabled = active || Boolean(titleEdit) || Boolean(unsaved);
+  audioFile.disabled = uploadButton.disabled;
   liveMode.disabled = active || !modelLive;
   stopButton.textContent = liveMode.checked ? "Stop" : "Stop & transcribe";
   transcript.placeholder = liveMode.checked
     ? "Your words will appear here as you speak."
     : "Your words will appear here after you stop recording.";
-  recordButton.disabled = active || Boolean(titleEdit) || !modelReady;
+  recordButton.disabled = active || Boolean(titleEdit) || unsavedUpload || !modelReady;
   recordButton.hidden = recording;
   stopButton.hidden = !recording;
   stopButton.disabled = !recording || busy;
@@ -548,7 +554,9 @@ function renderClips() {
       "unsaved",
       "Unsaved",
       unsavedUrl,
-      "Save and transcribe this recording at the cursor",
+      unsavedUpload
+        ? "Retry saving this uploaded recording"
+        : "Save and transcribe this recording at the cursor",
       retryUnsaved,
     );
     item.classList.toggle("unsaved", true);
@@ -591,6 +599,7 @@ function discardUnsaved() {
   if (unsavedUrl) URL.revokeObjectURL(unsavedUrl);
   if (playbackKey === "unsaved") stopPlayback();
   unsaved = null;
+  unsavedUpload = false;
   unsavedUrl = null;
 }
 
@@ -1458,7 +1467,14 @@ async function transcribeClip(recordingId) {
 
 async function retryUnsaved() {
   const audio = unsaved;
-  if (!audio || !modelReady || recording || busy) return;
+  if (!audio || (!unsavedUpload && !modelReady) || recording || busy) return;
+  if (unsavedUpload) {
+    await runBusy(async () => {
+      insertion = captureInsertion();
+      await attachUpload(audio);
+    }, "Your uploaded recording is kept in this tab. Retry saving from its clip.");
+    return;
+  }
   recordingModel = models.selected();
   await runBusy(async () => {
     insertion = captureInsertion();
@@ -1466,8 +1482,44 @@ async function retryUnsaved() {
   }, "Your recording is kept in this tab. You can retry.");
 }
 
+/** Attach without transcribing or changing the editor. Validation belongs to the API.
+ * @param {Blob} audio */
+async function attachUpload(audio) {
+  status.textContent = "Uploading your WAV recording…";
+  const stored = await storeRecording(audio);
+  if (stored instanceof Error) {
+    const invalid =
+      stored instanceof ApiRequestError &&
+      ["invalid_audio", "unsupported_audio", "audio_too_large"].includes(stored.code ?? "");
+    if (invalid) {
+      discardUnsaved();
+      renderClips();
+    } else {
+      unsavedUpload = true;
+      renderClips();
+    }
+    throw stored;
+  }
+  status.textContent = "WAV attached. Use its Transcribe button to add text at the cursor.";
+}
+
+uploadButton.addEventListener("click", () => {
+  if (!recording && !busy && !titleEdit && !unsaved) audioFile.click();
+});
+audioFile.addEventListener("change", async () => {
+  const file = audioFile.files?.[0];
+  audioFile.value = ""; // Picking the same file again must trigger change after rejection.
+  if (!file || recording || busy || titleEdit || unsaved) return;
+  // Browser MIME guesses vary; send original bytes with the API's canonical WAV type.
+  const audio = new Blob([file], { type: "audio/wav" });
+  await runBusy(async () => {
+    insertion = captureInsertion();
+    await attachUpload(audio);
+  }, "Upload failed. Choose a compatible WAV or retry the unsaved clip.");
+});
+
 recordButton.addEventListener("click", async () => {
-  if (recording || busy || !modelReady) return;
+  if (recording || busy || unsavedUpload || !modelReady) return;
   recordingModel = models.selected();
   hideError();
   if (!window.isSecureContext || !navigator.mediaDevices) {
