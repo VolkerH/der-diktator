@@ -147,7 +147,10 @@
       </aside>
       <div id="scrim" class="scrim" hidden></div>
 
-      <main>
+      <main id="chat-window">
+        <div id="audio-drop-hint" class="audio-drop-hint" aria-hidden="true" hidden>
+          Drop one WAV recording here
+        </div>
         <header class="app-bar">
           <button
             id="menu"
@@ -228,6 +231,32 @@
               <span id="save-state" class="save-state"></span>
             </span>
             <div class="sheet-actions">
+              <button
+                id="upload-audio"
+                class="chip attachment-button"
+                type="button"
+                aria-label="Attach WAV recording"
+                title="Attach WAV recording or drop it into the chat"
+                aria-describedby="upload-format"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="m21 11-8.5 8.5a6 6 0 0 1-8.5-8.5l9-9a4 4 0 0 1 5.7 5.7l-9 9a2 2 0 0 1-2.8-2.8l8.5-8.5"
+                  />
+                </svg>
+              </button>
+              <input
+                id="audio-file"
+                class="visually-hidden"
+                type="file"
+                accept=".wav,audio/wav,audio/x-wav"
+                tabindex="-1"
+                aria-label="Choose WAV recording"
+              />
+              <span id="upload-format" class="visually-hidden"
+                >16 kHz mono 16-bit PCM WAV. Upload attaches a clip; use its Transcribe button to
+                add text at the cursor.</span
+              >
               <button id="share" class="chip" type="button" disabled>
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path

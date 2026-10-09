@@ -16,6 +16,10 @@ import { MicrophoneRecorder } from "./recorder.js";
 
 const recordButton = /** @type {HTMLButtonElement} */ (document.getElementById("record"));
 const stopButton = /** @type {HTMLButtonElement} */ (document.getElementById("stop"));
+const uploadButton = /** @type {HTMLButtonElement} */ (document.getElementById("upload-audio"));
+const chatWindow = /** @type {HTMLElement} */ (document.getElementById("chat-window"));
+const dropHint = /** @type {HTMLElement} */ (document.getElementById("audio-drop-hint"));
+const audioFile = /** @type {HTMLInputElement} */ (document.getElementById("audio-file"));
 const copyButton = /** @type {HTMLButtonElement} */ (document.getElementById("copy"));
 const newChatButton = /** @type {HTMLButtonElement} */ (document.getElementById("new-chat"));
 const menuButton = /** @type {HTMLButtonElement} */ (document.getElementById("menu"));
@@ -135,6 +139,8 @@ let insertion = { text: "", start: 0, end: 0 };
 /** A recording the server could not store; it stays in this tab for a retry.
  * @type {Blob | null} */
 let unsaved = null;
+/** An external attachment retries storage only, independently of model readiness. */
+let unsavedUpload = false;
 /** @type {string | null} */
 let unsavedUrl = null;
 /** Which clip the shared player has loaded, and whether it is playing. */
@@ -199,12 +205,14 @@ function pushLevel() {
 function updateControls() {
   const active = recording || busy;
   models.lock(active);
+  uploadButton.disabled = active || Boolean(titleEdit) || Boolean(unsaved);
+  audioFile.disabled = uploadButton.disabled;
   liveMode.disabled = active || !modelLive;
   stopButton.textContent = liveMode.checked ? "Stop" : "Stop & transcribe";
   transcript.placeholder = liveMode.checked
     ? "Your words will appear here as you speak."
     : "Your words will appear here after you stop recording.";
-  recordButton.disabled = active || Boolean(titleEdit) || !modelReady;
+  recordButton.disabled = active || Boolean(titleEdit) || unsavedUpload || !modelReady;
   recordButton.hidden = recording;
   stopButton.hidden = !recording;
   stopButton.disabled = !recording || busy;
@@ -548,7 +556,9 @@ function renderClips() {
       "unsaved",
       "Unsaved",
       unsavedUrl,
-      "Save and transcribe this recording at the cursor",
+      unsavedUpload
+        ? "Retry saving this uploaded recording"
+        : "Save and transcribe this recording at the cursor",
       retryUnsaved,
     );
     item.classList.toggle("unsaved", true);
@@ -591,6 +601,7 @@ function discardUnsaved() {
   if (unsavedUrl) URL.revokeObjectURL(unsavedUrl);
   if (playbackKey === "unsaved") stopPlayback();
   unsaved = null;
+  unsavedUpload = false;
   unsavedUrl = null;
 }
 
@@ -1458,7 +1469,14 @@ async function transcribeClip(recordingId) {
 
 async function retryUnsaved() {
   const audio = unsaved;
-  if (!audio || !modelReady || recording || busy) return;
+  if (!audio || (!unsavedUpload && !modelReady) || recording || busy) return;
+  if (unsavedUpload) {
+    await runBusy(async () => {
+      insertion = captureInsertion();
+      await attachUpload(audio);
+    }, "Your uploaded recording is kept in this tab. Retry saving from its clip.");
+    return;
+  }
   recordingModel = models.selected();
   await runBusy(async () => {
     insertion = captureInsertion();
@@ -1466,8 +1484,100 @@ async function retryUnsaved() {
   }, "Your recording is kept in this tab. You can retry.");
 }
 
+/** Attach without transcribing or changing the editor. Validation belongs to the API.
+ * @param {Blob} audio */
+async function attachUpload(audio) {
+  status.textContent = "Uploading your WAV recording…";
+  const stored = await storeRecording(audio);
+  if (stored instanceof Error) {
+    const invalid =
+      stored instanceof ApiRequestError &&
+      ["invalid_audio", "unsupported_audio", "audio_too_large"].includes(stored.code ?? "");
+    if (invalid) {
+      discardUnsaved();
+      renderClips();
+    } else {
+      unsavedUpload = true;
+      renderClips();
+    }
+    throw stored;
+  }
+  status.textContent = "WAV attached. Use its Transcribe button to add text at the cursor.";
+}
+
+uploadButton.addEventListener("click", () => {
+  if (!recording && !busy && !titleEdit && !unsaved) audioFile.click();
+});
+/** Picker and drop share the same guards, original bytes and retry-safe upload.
+ * @param {File | undefined} file */
+async function uploadFile(file) {
+  if (!file || recording || busy || titleEdit || unsaved) return;
+  const audio = new Blob([file], { type: "audio/wav" });
+  await runBusy(async () => {
+    insertion = captureInsertion();
+    await attachUpload(audio);
+  }, "Upload failed. Choose a compatible WAV or retry the unsaved clip.");
+}
+
+audioFile.addEventListener("change", async () => {
+  const file = audioFile.files?.[0];
+  audioFile.value = ""; // Picking the same file again must trigger change after rejection.
+  await uploadFile(file);
+});
+
+/** Ignore ordinary text/link drags so editor drag-selection still works.
+ * @param {DragEvent} event */
+function isFileDrag(event) {
+  return Boolean(event.dataTransfer && Array.from(event.dataTransfer.types).includes("Files"));
+}
+
+/** @param {DragEvent} event */
+function showDropTarget(event) {
+  if (!isFileDrag(event)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const available = !uploadButton.disabled && !document.querySelector("dialog[open]");
+  if (event.dataTransfer) event.dataTransfer.dropEffect = available ? "copy" : "none";
+  dropHint.textContent = available
+    ? "Drop one WAV recording here"
+    : "Finish the current action before attaching a WAV recording.";
+  dropHint.hidden = false;
+}
+chatWindow.addEventListener("dragenter", showDropTarget);
+chatWindow.addEventListener("dragover", showDropTarget);
+chatWindow.addEventListener("dragleave", (event) => {
+  if (!chatWindow.contains(/** @type {Node | null} */ (event.relatedTarget)))
+    dropHint.hidden = true;
+});
+chatWindow.addEventListener("drop", async (event) => {
+  dropHint.hidden = true;
+  if (!isFileDrag(event)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (uploadButton.disabled || document.querySelector("dialog[open]")) return;
+  const files = event.dataTransfer?.files;
+  if (!files || files.length !== 1) {
+    showError(new Error("Attach one WAV recording at a time."));
+    return;
+  }
+  await uploadFile(files[0]);
+});
+// A file dropped outside the chat must not navigate away from an unsaved draft.
+for (const type of ["dragover", "drop"]) {
+  window.addEventListener(type, (event) => {
+    if (!isFileDrag(/** @type {DragEvent} */ (event))) return;
+    event.preventDefault();
+    dropHint.hidden = true;
+    const transfer = /** @type {DragEvent} */ (event).dataTransfer;
+    if (transfer) transfer.dropEffect = "none";
+  });
+}
+window.addEventListener("dragend", () => {
+  dropHint.hidden = true;
+});
+
 recordButton.addEventListener("click", async () => {
-  if (recording || busy || !modelReady) return;
+  if (recording || busy || unsavedUpload || !modelReady) return;
   recordingModel = models.selected();
   hideError();
   if (!window.isSecureContext || !navigator.mediaDevices) {
