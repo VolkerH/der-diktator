@@ -169,3 +169,39 @@ async def test_interval_api_persistence_reset_and_strict_validation(tmp_path: Pa
         assert reset.json()["recording_interval_seconds"] == min(
             1800, settings.max_duration_seconds
         )
+
+
+def test_default_change_invalidates_validator_without_overwriting_explicit_interval(
+    service: ChatService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    preferences = PreferenceService(service.engine)
+    initial = preferences.get(LOCAL_USER_ID)
+    saved = preferences.update(
+        LOCAL_USER_ID,
+        PreferenceUpdate(recording_interval_seconds=1800),
+        initial.etag(LOCAL_USER_ID),
+    )
+    monkeypatch.setattr("diktator.preferences.DEFAULT_RECORDING_INTERVAL_SECONDS", 1200)
+    current = preferences.get(LOCAL_USER_ID)
+    assert current.recording_interval_seconds == 1800
+    assert current.default_recording_interval_seconds == 1200
+    assert current.revision == saved.revision
+    assert current.etag(LOCAL_USER_ID) != saved.etag(LOCAL_USER_ID)
+    reset = preferences.update(
+        LOCAL_USER_ID,
+        PreferenceUpdate(reset=["recording_interval_seconds"]),
+        current.etag(LOCAL_USER_ID),
+    )
+    assert reset.recording_interval_seconds == 1200
+
+
+def test_whole_minute_ceiling_is_inclusive(service: ChatService) -> None:
+    preferences = PreferenceService(service.engine, hard_limit_seconds=3600)
+    initial = preferences.get(LOCAL_USER_ID)
+    saved = preferences.update(
+        LOCAL_USER_ID,
+        PreferenceUpdate(recording_interval_seconds=3600),
+        initial.etag(LOCAL_USER_ID),
+    )
+    assert saved.recording_interval_seconds == 3600
+    assert not saved.recording_interval_constrained
