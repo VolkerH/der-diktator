@@ -30,6 +30,7 @@ class EffectiveSettings(BaseModel):
     model_selection: Literal["instance_model_api"] = "instance_model_api"
     upload_timeout_seconds: float
     client_timeout_margin_seconds: float
+    client_upload_timeout_ms: int
     policy_revision: str
     limits: list[EffectiveLimit]
 
@@ -62,6 +63,7 @@ def effective_settings(settings: Settings) -> EffectiveSettings:
             "|".join(limit.model_dump_json() for limit in limits)
             + f"|{settings.recording_policy.upload_timeout_seconds}"
             + f"|{settings.recording_policy.client_timeout_margin_seconds}"
+            + f"|{settings.recording_policy.client_deadlines_ms.upload}"
         ).encode()
     ).hexdigest()
     return EffectiveSettings(
@@ -69,4 +71,5 @@ def effective_settings(settings: Settings) -> EffectiveSettings:
         limits=limits,
         upload_timeout_seconds=settings.recording_policy.upload_timeout_seconds,
         client_timeout_margin_seconds=settings.recording_policy.client_timeout_margin_seconds,
+        client_upload_timeout_ms=settings.recording_policy.client_deadlines_ms.upload,
     )

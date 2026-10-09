@@ -8,7 +8,7 @@ remains instance state owned by the model API.
 
 `GET /api/settings` returns a typed `EffectiveSettings` snapshot in OpenAPI:
 `profile_scope`, `operator_editable: false`, `model_selection`, `policy_revision`,
-`upload_timeout_seconds`, `client_timeout_margin_seconds`, and `limits`. Each limit has `id`, `label`, integer `value`, `unit`,
+`upload_timeout_seconds`, `client_timeout_margin_seconds`, `client_upload_timeout_ms`, and `limits`. Each limit has `id`, `label`, integer `value`, `unit`,
 `source: application_configuration`, `editable: false`, and
 `restart_required: true`. The source identifies the running application's frozen
 configuration, including injected configuration; it does not infer whether an

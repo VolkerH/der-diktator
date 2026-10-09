@@ -507,10 +507,12 @@ async def test_engine_stream_configuration_errors_are_coded(
             closing = await asyncio.wait_for(connection.outgoing.get(), timeout=2)
             assert closing["type"] == "websocket.close"
         assert not manager.streaming
+        assert manager.require("phonon-2") is manager.backend
 
 
-async def test_engine_disconnect_before_configuration_releases_stream_without_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("configured", [False, True])
+async def test_engine_idle_disconnect_keeps_loaded_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configured: bool
 ) -> None:
     from diktator.inference import server
     from diktator.inference.manager import ModelManager
@@ -533,12 +535,18 @@ async def test_engine_disconnect_before_configuration_releases_stream_without_er
         await manager.job
         async with engine_connector(app)("ws://engine") as connection:
             assert isinstance(connection, AsgiEngineStream)
+            if configured:
+                await connection.send('{"sample_rate":16000,"format":"pcm_s16le"}')
+                await connection.send(b"")
+                await asyncio.sleep(0)
             await connection.incoming.put({"type": "websocket.disconnect", "code": 1001})
             closing = await asyncio.wait_for(connection.outgoing.get(), timeout=2)
             assert closing["type"] == "websocket.close"
             assert connection.outgoing.empty()
         assert not manager.streaming
         assert native.sent.empty()
+        assert manager.backend is not None and manager.require("phonon-2") is manager.backend
+        assert manager.status().models[0].state == "ready"
 
 
 @pytest.mark.parametrize(
@@ -550,6 +558,7 @@ async def test_engine_disconnect_before_configuration_releases_stream_without_er
         "native_error",
         "normal_done",
         "connect_error",
+        "noaudio_end",
     ],
 )
 async def test_engine_route_distinguishes_native_done_from_uncertain_teardown(
@@ -580,19 +589,30 @@ async def test_engine_route_distinguishes_native_done_from_uncertain_teardown(
         await assert_admission_is_closed(manager)
         backend.allow_stop.set()
 
-    verifier = asyncio.create_task(confirm_stop()) if termination != "normal_done" else None
+    verifier = (
+        asyncio.create_task(confirm_stop())
+        if termination not in {"normal_done", "connect_error"}
+        else None
+    )
     try:
         async with engine_connector(app)("ws://engine") as connection:
             assert isinstance(connection, AsgiEngineStream)
             if termination != "connect_error":
                 await connection.send('{"sample_rate":16000,"format":"pcm_s16le"}')
+                assert native.sent.empty()
+                if termination != "noaudio_end":
+                    await connection.send(b"\0\0")
+                else:
+                    await connection.send('{"type":"end"}')
                 assert json.loads(await native.sent.get()) == {
                     "sample_rate": 16000,
                     "format": "pcm_s16le",
                 }
-                await connection.send(b"\0\0")
-                assert await native.sent.get() == b"\0\0"
-                if termination != "capture_disconnect":
+                if termination == "noaudio_end":
+                    assert json.loads(await native.sent.get()) == {"type": "end"}
+                else:
+                    assert await native.sent.get() == b"\0\0"
+                if termination not in {"capture_disconnect", "noaudio_end"}:
                     await connection.send('{"type":"end"}')
                     assert json.loads(await native.sent.get()) == {"type": "end"}
             if termination == "normal_done":
@@ -601,23 +621,114 @@ async def test_engine_route_distinguishes_native_done_from_uncertain_teardown(
             elif termination == "native_error":
                 await native.incoming.put('{"type":"error","message":"native failure"}')
                 assert json.loads(await connection.recv())["code"] == "engine_error"
-            elif termination in {"timeout", "connect_error"}:
+            elif termination in {"timeout", "connect_error", "noaudio_end"}:
                 assert json.loads(await connection.recv())["code"] == (
-                    "engine_timeout" if termination == "timeout" else "engine_unavailable"
+                    "engine_unavailable" if termination == "connect_error" else "engine_timeout"
                 )
             else:
                 await connection.incoming.put({"type": "websocket.disconnect", "code": 1001})
             if verifier is not None:
                 await asyncio.wait_for(verifier, timeout=2)
-        if termination == "normal_done":
+        if termination in {"normal_done", "connect_error"}:
             assert manager.backend is backend and backend.close_calls == 0
             assert not manager.busy
         else:
             assert backend.close_calls == 1 and not backend.native_pending
-            assert manager.backend is None and not manager.busy
+            assert manager.job is not None
+            await manager.job
+            assert manager.backend is not backend and not manager.busy
+            assert manager.require("phonon-2") is manager.backend
     finally:
         if verifier is not None:
             verifier.cancel()
             await asyncio.gather(verifier, return_exceptions=True)
         backend.allow_stop.set()
         await manager.close()
+
+
+@pytest.mark.parametrize("failure", ["native_error", "timeout", "rejected_frame"])
+async def test_live_failure_recovers_model_and_transcribes_complete_stored_clip_through_api(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    from diktator.inference import server
+    from tests.test_audio import make_wav
+    from tests.test_live_ownership import ready_manager
+
+    manager, backend = ready_manager(tmp_path / "models")
+    native = FakeEngine()
+
+    @asynccontextmanager
+    async def native_connection(_url: str) -> AsyncIterator[EngineStream]:
+        yield native
+
+    monkeypatch.setattr(server, "connect_engine", native_connection)
+    policy = RecordingPolicy(live_finalization_timeout_seconds=0.01)
+    engine_app = server.create_engine(manager, Settings(recording_policy=policy))
+    web_app = create_app(
+        Settings(data_directory=tmp_path / "chats", recording_policy=policy),
+        transport=httpx.ASGITransport(app=engine_app),
+    )
+    async with (
+        web_app.router.lifespan_context(web_app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=web_app), base_url="http://web"
+        ) as client,
+    ):
+        chat = (await client.post("/api/chats")).json()
+        clip_url = f"/api/chats/{chat['id']}/recordings/{'a' * 32}"
+        assert (
+            await client.put(clip_url, content=make_wav(), headers={"Content-Type": "audio/wav"})
+        ).status_code == 201
+        async with engine_connector(engine_app)("ws://engine") as connection:
+            await connection.send('{"sample_rate":16000,"format":"pcm_s16le"}')
+            await connection.send(b"\0\0")
+            await native.sent.get()  # deferred configuration
+            assert await native.sent.get() == b"\0\0"
+            if failure == "native_error":
+                await native.incoming.put('{"type":"error","message":"decoder failed"}')
+            elif failure == "timeout":
+                await connection.send('{"type":"end"}')
+            else:
+                await connection.send(b"odd")
+            await backend.stop_started.wait()
+            assert (await client.post(f"{clip_url}/transcribe")).json()["code"] == "model_busy"
+            backend.allow_stop.set()
+            assert json.loads(await connection.recv())["type"] == "error"
+        assert manager.job is not None
+        await manager.job
+        result = await client.post(f"{clip_url}/transcribe")
+        assert result.status_code == 200
+        assert result.json()["text"] == "Hallo, this is mixed dictation."
+        assert (await client.get(clip_url)).content == make_wav()
+    await manager.close()
+
+
+async def test_first_native_configuration_write_failure_keeps_ownership_until_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from diktator.inference import server
+    from tests.test_live_ownership import assert_admission_is_closed, ready_manager
+
+    manager, backend = ready_manager(tmp_path)
+    native = FakeEngine()
+
+    async def failed_send(_message: str | bytes) -> None:
+        raise OSError("configuration may have partially arrived")
+
+    monkeypatch.setattr(native, "send", failed_send)
+
+    @asynccontextmanager
+    async def native_connection(_url: str) -> AsyncIterator[EngineStream]:
+        yield native
+
+    monkeypatch.setattr(server, "connect_engine", native_connection)
+    app = server.create_engine(manager)
+    async with engine_connector(app)("ws://engine") as connection:
+        await connection.send('{"sample_rate":16000,"format":"pcm_s16le"}')
+        await connection.send(b"\0\0")
+        await backend.stop_started.wait()
+        await assert_admission_is_closed(manager)
+        backend.allow_stop.set()
+        assert json.loads(await connection.recv())["code"] == "engine_unavailable"
+    assert backend.close_calls == 1
+    await manager.close()

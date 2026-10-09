@@ -2835,6 +2835,27 @@
         "title": "ChatTitle",
         "description": "Shared title metadata, independently writable from transcript and audio."
       },
+      "ClientDeadlines": {
+        "properties": {
+          "upload": {
+            "type": "integer",
+            "title": "Upload"
+          },
+          "batch": {
+            "type": "integer",
+            "title": "Batch"
+          },
+          "live": {
+            "type": "integer",
+            "title": "Live"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["upload", "batch", "live"],
+        "title": "ClientDeadlines",
+        "description": "Backend-derived maximum client waits in integer milliseconds."
+      },
       "DraftExport": {
         "properties": {
           "format": {
@@ -2926,6 +2947,10 @@
             "type": "number",
             "title": "Client Timeout Margin Seconds"
           },
+          "client_upload_timeout_ms": {
+            "type": "integer",
+            "title": "Client Upload Timeout Ms"
+          },
           "policy_revision": {
             "type": "string",
             "title": "Policy Revision"
@@ -2942,6 +2967,7 @@
         "required": [
           "upload_timeout_seconds",
           "client_timeout_margin_seconds",
+          "client_upload_timeout_ms",
           "policy_revision",
           "limits"
         ],
@@ -3368,6 +3394,10 @@
             "type": "string",
             "title": "Preference Etag"
           },
+          "client_deadlines_ms": {
+            "$ref": "#/components/schemas/ClientDeadlines",
+            "readOnly": true
+          },
           "max_pcm_bytes": {
             "type": "integer",
             "title": "Max Pcm Bytes",
@@ -3386,7 +3416,13 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "required": ["preference_etag", "max_pcm_bytes", "max_audio_bytes", "policy_revision"],
+        "required": [
+          "preference_etag",
+          "client_deadlines_ms",
+          "max_pcm_bytes",
+          "max_audio_bytes",
+          "policy_revision"
+        ],
         "title": "PublicRecordingPolicy",
         "description": "Agreed limits with the validator of one read of the shared local preferences."
       },

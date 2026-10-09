@@ -377,6 +377,27 @@
         "title": "ApiError",
         "description": "An actionable public failure; context never contains internal diagnostics."
       },
+      "ClientDeadlines": {
+        "properties": {
+          "upload": {
+            "type": "integer",
+            "title": "Upload"
+          },
+          "batch": {
+            "type": "integer",
+            "title": "Batch"
+          },
+          "live": {
+            "type": "integer",
+            "title": "Live"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": ["upload", "batch", "live"],
+        "title": "ClientDeadlines",
+        "description": "Backend-derived maximum client waits in integer milliseconds."
+      },
       "ModelStatus": {
         "properties": {
           "id": {
@@ -532,6 +553,10 @@
             "title": "Client Timeout Margin Seconds",
             "default": 10.0
           },
+          "client_deadlines_ms": {
+            "$ref": "#/components/schemas/ClientDeadlines",
+            "readOnly": true
+          },
           "max_pcm_bytes": {
             "type": "integer",
             "title": "Max Pcm Bytes",
@@ -550,7 +575,7 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "required": ["max_pcm_bytes", "max_audio_bytes", "policy_revision"],
+        "required": ["client_deadlines_ms", "max_pcm_bytes", "max_audio_bytes", "policy_revision"],
         "title": "RecordingPolicy",
         "description": "Enforcement and waiting budgets; changing these requires a process restart."
       },

@@ -8,6 +8,15 @@ from typing import Literal, Self, override
 from pydantic import BaseModel, ConfigDict, computed_field, model_validator
 
 
+class ClientDeadlines(BaseModel):
+    """Backend-derived maximum client waits in integer milliseconds."""
+
+    model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
+    upload: int
+    batch: int
+    live: int
+
+
 class RecordingPolicy(BaseModel):
     """Enforcement and waiting budgets; changing these requires a process restart."""
 
@@ -41,15 +50,22 @@ class RecordingPolicy(BaseModel):
                 raise ValueError("Timeout budgets must be positive finite seconds.")
         # Browser timer APIs use a signed 32-bit millisecond delay. A finite
         # operator budget can still overflow that clock and fire immediately.
-        client_deadlines = (
-            2 * self.upload_timeout_seconds
-            + self.batch_timeout_seconds
-            + 3 * self.client_timeout_margin_seconds,
-            self.live_finalization_timeout_seconds + 2 * self.client_timeout_margin_seconds,
-        )
-        if max(client_deadlines) > 2_147_483.647:
+        if max(self.client_deadlines_ms.model_dump().values()) > 2_147_483_647:
             raise ValueError("Combined browser deadlines exceed the supported timer range.")
         return self
+
+    @computed_field
+    @property
+    def client_deadlines_ms(self) -> ClientDeadlines:
+        margin = self.client_timeout_margin_seconds
+        seconds = {
+            "upload": self.upload_timeout_seconds + margin,
+            "batch": 2 * self.upload_timeout_seconds + self.batch_timeout_seconds + 3 * margin,
+            "live": self.live_finalization_timeout_seconds + 2 * margin,
+        }
+        if any(not math.isfinite(value) or value > 2_147_483.647 for value in seconds.values()):
+            raise ValueError("Combined browser deadlines exceed the supported timer range.")
+        return ClientDeadlines(**{key: math.ceil(value * 1000) for key, value in seconds.items()})
 
     @computed_field
     @property

@@ -24,10 +24,14 @@ class ModelConflict(ApiFailure):
 
 @dataclass
 class StreamReservation:
-    """Native ownership can be released normally only after an upstream done event."""
+    """Track native work separately from a client connection awaiting capture."""
 
     endpoint: str
     completed: bool = False
+    forwarded: bool = False
+
+    def forward(self) -> None:
+        self.forwarded = True
 
     def complete(self) -> None:
         self.completed = True
@@ -212,7 +216,7 @@ class ModelManager:
         try:
             yield reservation
         finally:
-            if reservation.completed:
+            if reservation.completed or not reservation.forwarded:
                 self.streaming = False
             else:
                 # WebSocket closure alone is no acknowledgement of native decode
@@ -238,10 +242,14 @@ class ModelManager:
         if self.backend is backend:
             self.backend = None
             self.active = None
-        self.errors[model_id] = (
-            "Live transcription stopped before completion. Choose Use model to reload it."
-        )
         self.streaming = False
+        if self.shutdown is None:
+            # Reserve recovery before yielding. The owned load survives the
+            # requesting socket, just like an explicit activation operation.
+            self.errors.pop(model_id, None)
+            self.job_model, self.job_kind = model_id, "load"
+            self.message = "Reloading model after interrupted live transcription…"
+            self.job = asyncio.create_task(self._activate(model_id))
 
     async def start(self) -> None:
         preferred = self.store.preference()

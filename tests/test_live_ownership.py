@@ -11,7 +11,7 @@ from diktator.inference.manager import ModelConflict, ModelManager
 from diktator.inference.process import stop_process
 from diktator.inference.store import ModelStore
 from tests.test_audio import make_wav
-from tests.test_models import FakeBackend
+from tests.test_models import FakeBackend, install_fixture
 
 pytestmark = pytest.mark.anyio
 
@@ -44,7 +44,11 @@ class PendingNativeBackend(FakeBackend):
 
 def ready_manager(tmp_path: Path) -> tuple[ModelManager, PendingNativeBackend]:
     backend = PendingNativeBackend()
-    manager = ModelManager(ModelStore(tmp_path))
+    store = ModelStore(tmp_path)
+    install_fixture(store, "phonon-2")
+    replacement = FakeBackend()
+    replacement.finish.set()
+    manager = ModelManager(store, lambda _: replacement)
     manager.backend, manager.active = backend, "phonon-2"
     return manager, backend
 
@@ -74,7 +78,8 @@ async def test_abnormal_exit_keeps_native_reserved_through_repeated_cleanup_canc
     finish_capture = asyncio.Event()
 
     async def request() -> None:
-        async with manager.stream("phonon-2"):
+        async with manager.stream("phonon-2") as reservation:
+            reservation.forward()
             entered.set()
             await finish_capture.wait()
             if termination == "timeout":
@@ -102,8 +107,11 @@ async def test_abnormal_exit_keeps_native_reserved_through_repeated_cleanup_canc
     await manager.stream_cleanup
     assert not backend.native_pending
     assert not manager.busy
-    assert manager.backend is None and manager.active is None
-    assert manager.status().active is None
+    assert manager.job is not None
+    await manager.job
+    assert manager.backend is not backend
+    assert manager.require("phonon-2") is manager.backend
+    assert manager.status().active == "phonon-2"
     assert backend.close_calls == 1
     await manager.close()
     assert backend.close_calls == 1
@@ -127,8 +135,8 @@ async def test_failed_cleanup_keeps_reservation_and_reports_honest_state(tmp_pat
     backend.fail_stop = True
     backend.allow_stop.set()
     with pytest.raises(RuntimeError):
-        async with manager.stream("phonon-2"):
-            pass
+        async with manager.stream("phonon-2") as reservation:
+            reservation.forward()
     assert backend.native_pending
     await assert_admission_is_closed(manager)
     assert manager.status().models[0].state == "error"
@@ -150,6 +158,7 @@ async def test_shutdown_adopts_cleanup_once_and_survives_requester_cancellation(
 
     async def recording() -> None:
         async with manager.stream("phonon-2") as reservation:
+            reservation.forward()
             entered.set()
             await exit_stream.wait()
             if not already_cleaning:
@@ -208,8 +217,8 @@ async def test_owned_cleanup_kills_and_reaps_uncooperative_child(
     monkeypatch.setattr(backend, "close", stop_owned_child)
 
     async def disconnected() -> None:
-        async with manager.stream("phonon-2"):
-            pass
+        async with manager.stream("phonon-2") as reservation:
+            reservation.forward()
 
     request = asyncio.create_task(disconnected())
     try:
@@ -223,9 +232,55 @@ async def test_owned_cleanup_kills_and_reaps_uncooperative_child(
         assert manager.stream_cleanup is not None
         await asyncio.wait_for(manager.stream_cleanup, timeout=2)
         assert child.returncode is not None
-        assert not manager.busy and manager.backend is None
+        assert not manager.busy and manager.backend is not backend
         assert backend.close_calls == 1
     finally:
         if child.returncode is None:
             await stop_process(child, grace_seconds=0.01)
         await manager.close()
+
+
+async def test_shutdown_waits_for_recovery_load_then_stops_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager, backend = ready_manager(tmp_path)
+    replacement = FakeBackend()
+    load_started, allow_load = asyncio.Event(), asyncio.Event()
+
+    async def load(_directory: Path) -> None:
+        load_started.set()
+        await allow_load.wait()
+        replacement.loaded = True
+
+    monkeypatch.setattr(replacement, "load", load)
+    manager.factory = lambda _: replacement
+    backend.allow_stop.set()
+    async with manager.stream("phonon-2") as reservation:
+        reservation.forward()
+    await load_started.wait()
+    closing = asyncio.create_task(manager.close())
+    await asyncio.sleep(0)
+    assert manager.busy and not replacement.closed
+    allow_load.set()
+    await closing
+    assert replacement.closed and backend.close_calls == 1
+
+
+async def test_failed_recovery_load_reports_error_and_requires_explicit_activation(
+    tmp_path: Path,
+) -> None:
+    manager, backend = ready_manager(tmp_path)
+    replacement = FakeBackend()
+    replacement.fail_load = True
+    manager.factory = lambda _: replacement
+    backend.allow_stop.set()
+    async with manager.stream("phonon-2") as reservation:
+        reservation.forward()
+    assert manager.job is not None
+    await manager.job
+    assert not manager.busy and manager.backend is None
+    assert manager.status().models[0].state == "error"
+    assert "Use model" in manager.status().models[0].message
+    with pytest.raises(ModelConflict, match="not active"):
+        await manager.transcribe("phonon-2", make_wav())
+    await manager.close()

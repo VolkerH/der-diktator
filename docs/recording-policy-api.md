@@ -54,6 +54,7 @@ Engine `GET /recording-policy` returns these typed fields:
   "batch_timeout_seconds": 180.0,
   "live_finalization_timeout_seconds": 180.0,
   "client_timeout_margin_seconds": 10.0,
+  "client_deadlines_ms": { "upload": 190000, "batch": 570000, "live": 200000 },
   "max_pcm_bytes": 19200000,
   "max_audio_bytes": 20000044,
   "policy_revision": "sha256-of-canonical-policy"
@@ -70,6 +71,9 @@ not a promise of model readiness or survival across service restart.
 A missing/old engine capability, malformed policy, changed revision or disagreement
 returns 503 `configuration_mismatch`. An unreachable/unavailable engine returns
 503 `engine_unavailable`; a discovery timeout returns 504 `engine_timeout`.
+`configuration_mismatch` requires the operator to restart both services with
+matching configuration inputs. Clients show the mismatch and retain audio; they
+do not automatically retry discovery or inference for this failure.
 The browser obtains discovery before opening its microphone. Browser, TUI and other
 clients can use the same endpoint; every web inference admission also rechecks
 agreement, including existing clients that never request discovery.
@@ -83,9 +87,13 @@ idempotency key. PCM configuration stays `{"sample_rate":16000,"format":"pcm_s16
 
 `GET /api/settings` remains a web-only snapshot with its separate display revision;
 it does not attest engine agreement. It adds `upload_timeout_seconds` and
-`client_timeout_margin_seconds`. Audio save clients read these without engine
+`client_timeout_margin_seconds` plus the derived integer `client_upload_timeout_ms`.
+Audio save clients use the published deadline without engine
 discovery, so short WAV upload/playback/export remain usable when inference is
 unavailable or mismatched. The settings revision covers these added budgets too.
+A failed or malformed settings read does not prevent the browser from saving: it
+uses its earlier generic 190,000 ms wait. That wait may expire before an increased
+operator budget; retained WAV bytes and upload identity allow explicit recovery.
 Preference ETags still cover their existing representation; policy-derived interval
 fields and preference validation are delivered with the complete interval feature.
 
@@ -96,23 +104,41 @@ Upload timeouts return 408 `upload_timeout`. The engine's batch timeout returns
 The web's upstream batch read wait uses the batch budget plus one margin, while
 its write wait uses the upload budget plus one margin. Connect/pool waits are five
 seconds.
-The browser's direct batch deadline permits two upload phases, one batch phase
-and three margins: `2 * upload + batch + 3 * margin`. Stored-clip inference uses
-that same conservative deadline. Each upload's browser wait is `upload + margin`.
-For live completion, the engine waits `live_finalization`, the web waits
-`live_finalization + margin`, and the browser waits `live_finalization + 2 * margin`.
+The backend publishes typed integer `client_deadlines_ms` fields `upload`, `batch`
+and `live`; all clients consume these values without reproducing arithmetic.
+The backend derives batch from two upload phases, one batch phase and three
+margins, upload from one upload phase plus one margin, and live from finalization
+plus two margins. Stored-clip inference uses the same conservative batch deadline.
+For live completion the engine waits `live_finalization`, and the web waits
+`live_finalization + margin` before the published client deadline.
 Capture duration is a sample budget, independent of these post-capture waits.
 Larger waits do not guarantee that every model finishes within them.
 
-Only upstream native `done` acknowledges successful live completion and permits
-reuse of the loaded backend. A disconnect, timeout, error or rejected configuration
-after native reservation triggers an owned stop/reap task. It keeps inference,
-activation and deletion blocked until stop is confirmed. Repeated cancellation of
-the requesting connection cannot cancel cleanup; shutdown adopts the same cleanup.
+The engine validates live configuration but defers forwarding it to Fermion until
+the first accepted nonempty PCM frame or `end`. This matters because Fermion
+0.2.10 `server.py::_ws_run` calls `eng.warm()` after configuration, before waiting
+for PCM. No-configuration, configuration-only, and empty-frame disconnects now
+leave the native decoder idle and keep the model loaded, including browser
+microphone denial after `ready`. Any first native send marks uncertain ownership
+before the write, including a write that fails after partial delivery.
+
+After forwarding native work, only upstream `done` acknowledges successful
+completion and permits reuse. Disconnect, timeout, error or frame rejection starts
+an owned stop/reap task, blocking inference, activation and deletion until stop is
+confirmed. Repeated cancellation cannot cancel cleanup; shutdown adopts that task.
 A failed stop keeps admission busy and reports a model error requiring engine
-restart. Successful abnormal cleanup unloads the model and reports that it must
-be activated again. A rejected admission before reservation does not stop another
-owner's work. Shutdown cannot reopen admission on a late native `done`.
+restart. Successful cleanup reloads the interrupted model as an owned activation
+job; it never starts activation during shutdown. Shutdown that begins during reload
+waits for loading and then closes the replacement. Failed reload exposes a model
+error and requires explicit activation. A rejected admission before reservation
+does not stop another owner's work. Late `done` cannot reopen shutdown admission.
+
+The browser saves its complete WAV after a live failure, then polls model status
+within the published batch deadline until the recorded model is ready and idle.
+It submits batch inference once. Cleanup/reload failure, service failure, model
+switch or readiness deadline expiry leaves the clip and restored editor available
+and displays recovery instructions. It never reactivates a different selected model
+or repeats a failed inference request automatically.
 
 Terminal `partial`/`final`/`done`/`error` event meanings remain compatible. `ready`
 still acknowledges the web relay connection; a later model admission failure is
@@ -120,7 +146,7 @@ possible. Transport closure never means successful completion. Clients retain
 captured audio through finalization and preserve the WAV/upload identifier after
 failure for explicit recovery. Saving audio and starting inference remain separate
 operations. A retry during native decoding or cleanup can return `model_busy`;
-there is no automatic unchanged retry, durable job result or exactly-once guarantee.
+there is no automatic unchanged inference retry, durable job result or exactly-once guarantee.
 
 Validation uses fake native backends, ASGI clients, synthetic audio and a tiny owned
 subprocess for stop/kill/reap. It establishes policy/software ownership behavior,

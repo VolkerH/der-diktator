@@ -1,6 +1,6 @@
 import { request } from "./request.js";
 
-/** @typedef {{ protocol_version: number, policy_revision: string, hard_limit_seconds: number, max_audio_bytes: number, max_pcm_bytes: number, max_stream_frame_bytes: number, upload_timeout_seconds: number, batch_timeout_seconds: number, live_finalization_timeout_seconds: number, client_timeout_margin_seconds: number, preference_etag: string }} RecordingPolicy */
+/** @typedef {{ protocol_version: number, policy_revision: string, hard_limit_seconds: number, max_audio_bytes: number, max_pcm_bytes: number, max_stream_frame_bytes: number, upload_timeout_seconds: number, batch_timeout_seconds: number, live_finalization_timeout_seconds: number, client_timeout_margin_seconds: number, client_deadlines_ms: {upload: number, batch: number, live: number}, preference_etag: string }} RecordingPolicy */
 
 /** Discovery does not reserve a model. The server checks agreement again at admission.
  * @returns {Promise<Readonly<RecordingPolicy>>} */
@@ -17,32 +17,34 @@ export async function recordingPolicy() {
       "batch_timeout_seconds",
       "live_finalization_timeout_seconds",
       "client_timeout_margin_seconds",
-    ].every((name) => Number.isFinite(body[name]) && body[name] > 0)
+    ].every((name) => Number.isFinite(body[name]) && body[name] > 0) ||
+    !["upload", "batch", "live"].every((name) => validDeadline(body?.client_deadlines_ms?.[name]))
   )
     throw new Error("The recording policy is unavailable. Restart both services and retry.");
+  Object.freeze(body.client_deadlines_ms);
   return Object.freeze(body);
 }
 
 /** @param {RecordingPolicy} policy @param {"upload" | "batch" | "live"} operation */
 export function recordingTimeoutMs(policy, operation) {
-  const seconds =
-    operation === "upload"
-      ? policy.upload_timeout_seconds
-      : operation === "live"
-        ? policy.live_finalization_timeout_seconds + policy.client_timeout_margin_seconds
-        : policy.upload_timeout_seconds * 2 +
-          policy.batch_timeout_seconds +
-          policy.client_timeout_margin_seconds * 2;
-  return Math.ceil((seconds + policy.client_timeout_margin_seconds) * 1000);
+  return policy.client_deadlines_ms[operation];
+}
+
+/** @param {unknown} value */
+function validDeadline(value) {
+  return (
+    typeof value === "number" && Number.isInteger(value) && value > 0 && value <= 2_147_483_647
+  );
 }
 
 /** Saving captured or attached audio remains available without an inference engine.
  * @returns {Promise<number>} */
 export async function uploadTimeoutMs() {
-  const { body } = await request("/api/settings");
-  const seconds = body?.upload_timeout_seconds;
-  const margin = body?.client_timeout_margin_seconds;
-  if (!Number.isFinite(seconds) || seconds <= 0 || !Number.isFinite(margin) || margin <= 0)
-    throw new Error("The upload deadline is unavailable. Keep the recording and retry saving.");
-  return Math.ceil((seconds + margin) * 1000);
+  try {
+    const { body } = await request("/api/settings", {}, 5000);
+    if (validDeadline(body?.client_upload_timeout_ms)) return body.client_upload_timeout_ms;
+  } catch {
+    // Discovery is advisory for saving: the server still enforces upload limits.
+  }
+  return 190_000;
 }

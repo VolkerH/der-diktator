@@ -52,6 +52,11 @@ async def web_client(
 def test_startup_policy_is_immutable_and_preserves_existing_defaults() -> None:
     policy = RecordingPolicy()
     assert policy.hard_limit_seconds == 600
+    assert policy.client_deadlines_ms.model_dump() == {
+        "upload": 190_000,
+        "batch": 570_000,
+        "live": 200_000,
+    }
     assert policy.max_pcm_bytes == 19_200_000
     assert policy.max_audio_bytes == 20_000_044
     assert policy == Settings().recording_policy
@@ -75,6 +80,7 @@ def test_startup_policy_is_immutable_and_preserves_existing_defaults() -> None:
         {"max_stream_frame_bytes": 1_048_578},
         {"upload_timeout_seconds": 0},
         {"upload_timeout_seconds": 1e10},
+        {"upload_timeout_seconds": 1e308},
         {"batch_timeout_seconds": float("inf")},
         {"live_finalization_timeout_seconds": float("nan")},
         {"client_timeout_margin_seconds": -1},
@@ -163,6 +169,12 @@ async def test_discovery_agrees_without_reserving_model_or_creating_preferences(
             "configuration_mismatch",
         ),
         (200, RecordingPolicy().model_dump() | {"max_audio_bytes": 1}, "configuration_mismatch"),
+        (
+            200,
+            RecordingPolicy().model_dump()
+            | {"client_deadlines_ms": {"upload": 1, "batch": 2, "live": 3}},
+            "configuration_mismatch",
+        ),
         (503, {"private": "native traceback"}, "engine_unavailable"),
     ],
 )

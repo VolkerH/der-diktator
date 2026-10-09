@@ -156,8 +156,16 @@ def create_engine(manager: ModelManager | None = None, settings: Settings | None
                     ) from error
                 if config != {"sample_rate": 16000, "format": "pcm_s16le"}:
                     raise StreamError("Unsupported live audio format.", "unsupported_audio", 415)
-                await upstream.send('{"sample_rate":16000,"format":"pcm_s16le"}')
-                await relay_stream(browser, upstream, settings, on_done=reservation.complete)
+                # Fermion 0.2.10 warms the decoder on configuration. Keep it
+                # idle until capture actually supplies PCM or an end control.
+                await relay_stream(
+                    browser,
+                    upstream,
+                    settings,
+                    on_done=reservation.complete,
+                    on_forward=reservation.forward,
+                    initial_message='{"sample_rate":16000,"format":"pcm_s16le"}',
+                )
         except WebSocketDisconnect:
             pass
         except (

@@ -89,6 +89,8 @@ async def relay_stream(
     settings: Settings,
     *,
     on_done: Callable[[], None] | None = None,
+    on_forward: Callable[[], None] | None = None,
+    initial_message: str | None = None,
     finalization_margin_seconds: float = 0,
 ) -> None:
     """Run both directions concurrently, keeping the engine open through finalization."""
@@ -96,6 +98,19 @@ async def relay_stream(
     async def upload_audio() -> None:
         received_bytes = 0
         max_bytes = settings.max_duration_seconds * 16_000 * 2
+        initialized = False
+
+        async def forward(message: str | bytes) -> None:
+            nonlocal initialized
+            # Mark uncertain native ownership before either send: a failed
+            # write can still have delivered data to the decoder.
+            if on_forward is not None:
+                on_forward()
+            if not initialized and initial_message is not None:
+                await engine.send(initial_message)
+            initialized = True
+            await engine.send(message)
+
         while True:
             frame = await browser.receive()
             if frame["type"] == "websocket.disconnect":
@@ -117,7 +132,8 @@ async def relay_stream(
                     raise StreamError(
                         "The recording exceeds the allowed duration limit.", "invalid_audio", 400
                     )
-                await engine.send(audio)
+                if audio:
+                    await forward(audio)
                 continue
             try:
                 control = json.loads(frame.get("text") or "")
@@ -129,7 +145,7 @@ async def relay_stream(
                 raise StreamError(
                     "Only an end message is accepted during recording.", "validation_error", 422
                 )
-            await engine.send(json.dumps(control))
+            await forward(json.dumps(control))
             return
 
     async def receive_transcripts() -> None:
