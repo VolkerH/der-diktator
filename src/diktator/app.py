@@ -36,6 +36,7 @@ from diktator.chats import (
 )
 from diktator.config import Settings
 from diktator.db.rows import LOCAL_USER_ID
+from diktator.effective_settings import EffectiveSettings, effective_settings
 from diktator.engine import EngineClient, Transcription
 from diktator.errors import (
     ApiFailure,
@@ -194,6 +195,13 @@ def create_app(
     async def transcribe(request: Request, model: ModelId = "phonon-2") -> Transcription:
         recording, _info = await read_recording(request)
         return await engine.transcribe(recording, model)
+
+    @app.get("/api/settings", description=(
+        "Read non-secret limits enforced by the running application. Operator fields "
+        "are read-only. The revision identifies this snapshot, not engine policy agreement."
+    ))
+    def get_settings() -> EffectiveSettings:
+        return effective_settings(settings)
 
     def preferences() -> PreferenceService:
         return PreferenceService(app.state.storage.engine)
