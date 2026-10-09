@@ -196,10 +196,13 @@ def create_app(
         recording, _info = await read_recording(request)
         return await engine.transcribe(recording, model)
 
-    @app.get("/api/settings", description=(
-        "Read non-secret limits enforced by the running application. Operator fields "
-        "are read-only. The revision identifies this snapshot, not engine policy agreement."
-    ))
+    @app.get(
+        "/api/settings",
+        description=(
+            "Read non-secret limits enforced by the running application. Operator fields "
+            "are read-only. The revision identifies this snapshot, not engine policy agreement."
+        ),
+    )
     def get_settings() -> EffectiveSettings:
         return effective_settings(settings)
 

@@ -36,18 +36,26 @@ def effective_settings(settings: Settings) -> EffectiveSettings:
     """Describe web enforcement only; this does not attest an engine policy handshake."""
     limits = [
         EffectiveLimit(
-            id="recording_seconds", label="Recording duration", value=settings.max_duration_seconds,
+            id="recording_seconds",
+            label="Recording duration",
+            value=settings.max_duration_seconds,
             unit="seconds",
         ),
         EffectiveLimit(
-            id="audio_bytes", label="Audio upload size", value=settings.max_audio_bytes,
+            id="audio_bytes",
+            label="Audio upload size",
+            value=settings.max_audio_bytes,
             unit="bytes",
         ),
         EffectiveLimit(
-            id="text_characters", label="Transcript length", value=settings.max_text_characters,
+            id="text_characters",
+            label="Transcript length",
+            value=settings.max_text_characters,
             unit="characters",
         ),
     ]
     # Revision identifies this public snapshot, not an authorization or engine agreement.
-    revision = hashlib.sha256("|".join(limit.model_dump_json() for limit in limits).encode()).hexdigest()
+    revision = hashlib.sha256(
+        "|".join(limit.model_dump_json() for limit in limits).encode()
+    ).hexdigest()
     return EffectiveSettings(policy_revision=revision, limits=limits)
